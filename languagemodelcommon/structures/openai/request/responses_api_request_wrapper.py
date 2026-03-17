@@ -1,4 +1,3 @@
-import sys
 import time
 from datetime import datetime, UTC
 from typing import AsyncIterable, Literal, Union, override, Optional, List, Any, cast
@@ -28,12 +27,7 @@ from languagemodelcommon.structures.openai.message.responses_api_message_wrapper
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
-
-logger.add(
-    sys.stderr,
-    level=SRC_LOG_LEVELS["RESPONSES"],
-)
+from languagemodelcommon.utilities.logger.log_levels import logger
 
 
 class ResponsesApiRequestWrapper(ChatRequestWrapper):

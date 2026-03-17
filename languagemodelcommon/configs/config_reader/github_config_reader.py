@@ -2,7 +2,6 @@ import asyncio
 import httpx
 import json
 import os
-import sys
 import time
 
 from typing import List, Tuple, Optional, Any, Dict
@@ -10,9 +9,7 @@ from urllib.parse import urlparse, unquote
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["CONFIG"])
+from languagemodelcommon.utilities.logger.log_levels import logger
 
 
 class GitHubConfigReader:

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import sys
 
 from pathlib import Path
 from typing import Any, List, Optional, cast
@@ -26,11 +25,8 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
+from languagemodelcommon.utilities.logger.log_levels import logger
 from languagemodelcommon.utilities.url_parser import UrlParser
-
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["CONFIG"])
 
 
 class ConfigReader:

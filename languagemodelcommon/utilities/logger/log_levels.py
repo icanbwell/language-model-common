@@ -1,26 +1,27 @@
 __all__ = ["logger", "SRC_LOG_LEVELS"]
 
+import logging
 import os
 import sys
-from loguru import logger
 
 
 GLOBAL_LOG_LEVEL = os.environ.get("LOG_LEVEL", "").upper()
-if GLOBAL_LOG_LEVEL:
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        level=GLOBAL_LOG_LEVEL,
-        format="{time} {level} {name} [{file}:{line}] {message}",
-    )
-else:
+if not GLOBAL_LOG_LEVEL:
     GLOBAL_LOG_LEVEL = "INFO"
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        level=GLOBAL_LOG_LEVEL,
-        format="{time} {level} {name} [{file}:{line}] {message}",
+
+logger = logging.getLogger("languagemodelcommon")
+logger.handlers.clear()
+logger.propagate = False
+logger.setLevel(getattr(logging, GLOBAL_LOG_LEVEL, logging.INFO))
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(getattr(logging, GLOBAL_LOG_LEVEL, logging.INFO))
+handler.setFormatter(
+    logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s [%(filename)s:%(lineno)d] %(message)s"
     )
+)
+logger.addHandler(handler)
 
 logger.info(f"GLOBAL LOG_LEVEL: {GLOBAL_LOG_LEVEL}")
 

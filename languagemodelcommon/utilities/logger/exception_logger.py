@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import traceback
@@ -7,9 +8,7 @@ from typing import List, Optional
 from languagemodelcommon.utilities.logger.exception_formatter import (
     ExceptionFormatter,
 )
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["ERRORS"])
+from languagemodelcommon.utilities.logger.log_levels import logger
 
 # Default generic error message when not exposing technical details
 DEFAULT_GENERIC_ERROR_MESSAGE = (
@@ -19,6 +18,14 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 
 
 class ExceptionLogger:
+    @staticmethod
+    def _exc_info_from_error(
+        error: Exception | ExceptionGroup,
+    ) -> tuple[type[BaseException], BaseException, object] | None:
+        if isinstance(error, BaseException):
+            return type(error), error, error.__traceback__
+        return None
+
     @staticmethod
     def get_user_friendly_message(
         error: Exception | ExceptionGroup,
@@ -47,11 +54,13 @@ class ExceptionLogger:
             A user-friendly error message string
         """
         exception_details = ExceptionLogger.extract_error_details(error)
+        exc_info = ExceptionLogger._exc_info_from_error(error)
         if exception_details:
-            logger.opt(exception=error).exception(exception_details)
+            logger.error(exception_details, exc_info=exc_info)
         else:
-            logger.opt(exception=error).exception(
+            logger.error(
                 "Unhandled exception while generating user-friendly message",
+                exc_info=exc_info,
             )
         if enable_debug_logging:
             return exception_details or ExceptionFormatter.format_generic_message(
@@ -169,9 +178,7 @@ class ExceptionLogger:
             error_lines: List[str] = []
             error_lines.extend(messages)
 
-            # Get log level from the environment variable
-            log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-            if logger.level("DEBUG").no <= logger.level(log_level).no:
+            if logger.isEnabledFor(logging.DEBUG):
                 error_lines.append("Traceback:")
                 # # Add traceback details
                 for frame in tb_details:

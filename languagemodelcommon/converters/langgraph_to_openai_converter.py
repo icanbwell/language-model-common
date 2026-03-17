@@ -1,6 +1,5 @@
 import os
 import re
-import sys
 import traceback
 import uuid
 from typing import (
@@ -55,10 +54,8 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
+from languagemodelcommon.utilities.logger.log_levels import logger
 from languagemodelcommon.utilities.request_information import RequestInformation
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["LLM"])
 
 
 class LangGraphToOpenAIConverter:

@@ -65,7 +65,6 @@ setup(
         "langchain-community>=0.4",
         "langchain-core>=1.0.0",
         "langgraph>=1.0.0",
-        "loguru>=0.7.3",
         "oidcauthlib>=2.0.11",
         "openai>=2.5.0",
         "pydantic>=2.0,<3.0.0",

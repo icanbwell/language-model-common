@@ -1,15 +1,12 @@
 import asyncio
 import time
-import sys
 
 from typing import Optional, List, override
 from uuid import uuid4, UUID
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.utilities.cache.expiring_cache import ExpiringCache
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["CACHE"])
+from languagemodelcommon.utilities.logger.log_levels import logger
 
 
 class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):

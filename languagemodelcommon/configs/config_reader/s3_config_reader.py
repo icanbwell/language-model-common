@@ -1,16 +1,13 @@
 import boto3
 import json
-import sys
 
 from typing import List
 from botocore.exceptions import ClientError
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
+from languagemodelcommon.utilities.logger.log_levels import logger
 from languagemodelcommon.utilities.url_parser import UrlParser
-
-logger.add(sys.stderr, level=SRC_LOG_LEVELS["CONFIG"])
 
 
 class S3ConfigReader:
