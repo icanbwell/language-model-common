@@ -68,7 +68,7 @@ setup(
         "loguru>=0.7.3",
         "oidcauthlib>=2.0.11",
         "openai>=2.5.0",
-        "pydantic<3.0.0,>=2.0",
+        "pydantic>=2.0,<3.0.0",
         "tiktoken>=0.7.0",
     ],
     classifiers=[

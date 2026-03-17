@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import traceback
+import uuid
 from typing import (
     Any,
     List,
@@ -21,6 +22,7 @@ from langchain_ai_skills_framework.loaders.skill_loader import SkillLoaderProtoc
 from langchain_community.adapters.openai import (
     convert_message_to_dict,
 )
+from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
@@ -34,14 +36,11 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 from openai.types import CompletionUsage
 from starlette.responses import StreamingResponse, JSONResponse
+from langgraph.graph import StateGraph
 
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
-from languagemodelcommon.langgraph import (
-    HealthSafetyConfig,
-    create_agent_graph,
-)
-from languagemodelcommon.langgraph.state import MyMessagesState
+from languagemodelcommon.state.messages_state import MyMessagesState
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
@@ -682,8 +681,6 @@ class LangGraphToOpenAIConverter:
         tools: Sequence[BaseTool],
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
-        enable_health_safety: bool | None = None,
-        health_safety_config: HealthSafetyConfig | None = None,
         system_prompts: List[str] | None = None,
         skill_loader: SkillLoaderProtocol | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
@@ -710,16 +707,36 @@ class LangGraphToOpenAIConverter:
                 "skill_loader must be SkillLoaderProtocol, got "
                 f"{type(resolved_skill_loader)}"
             )
-        return await create_agent_graph(
-            llm=llm,
+        # Build system prompt from config if provided
+        system_prompt: str | None = None
+        if system_prompts:
+            # Strip and filter empty prompts to avoid accidental separators
+            cleaned_prompts = [p.strip() for p in system_prompts if p and p.strip()]
+            if cleaned_prompts:
+                system_prompt = "\n\n".join(cleaned_prompts)
+                logger.debug(
+                    f"[GRAPH] {uuid.uuid4()} Using system prompt from config ({len(system_prompt)} chars): {system_prompt} )"
+                )
+
+        # Create the react agent with optional system prompt
+        react_agent_runnable = create_agent(
+            model=llm,
             tools=tools,
+            state_schema=MyMessagesState,
             store=store,
             checkpointer=checkpointer,
-            enable_health_safety=enable_health_safety,
-            health_safety_config=health_safety_config,
-            system_prompts=system_prompts,
-            skill_loader=resolved_skill_loader,
+            system_prompt=system_prompt,
+            middleware=[SkillMiddleware(skill_loader=skill_loader)],
         )
+
+        # Build the workflow
+        workflow: StateGraph[MyMessagesState] = StateGraph(MyMessagesState)
+        workflow.add_node("react_agent", react_agent_runnable)
+        workflow.set_entry_point("react_agent")
+
+        compiled_state_graph = workflow.compile()
+
+        return compiled_state_graph  # type: ignore[return-value]
 
     @staticmethod
     def create_state(

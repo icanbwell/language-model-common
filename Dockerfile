@@ -41,10 +41,6 @@ RUN mkdir -p /usr/local/bin && ls -halt /usr/local/bin
 RUN python -c "import platform; print(platform.platform()); print(platform.architecture())"
 RUN python -c "import sys; print(sys.platform, sys.version, sys.maxsize > 2**32)"
 
-# Debug pip installation and list installed packages with verbosity
-RUN pip debug --verbose
-RUN pip list -v
-
 # Stage 2: Final runtime image for the application
 # This stage creates a minimal image with only the runtime dependencies and the application code.
 FROM public.ecr.aws/docker/library/python:3.12-alpine3.20
@@ -66,7 +62,6 @@ RUN pip install --no-cache-dir pipenv
 
 # Set environment variables for project configuration
 ENV PROJECT_DIR=/usr/src/languagemodelcommon
-ENV FLASK_APP=languagemodelcommon.api
 ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
 
 # Create the directory for Prometheus metrics

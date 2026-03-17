@@ -15,7 +15,6 @@ boto3 = ">=1.34.59"
 fastapi = ">=0.110.0"
 httpx = { version = ">=0.27.2", extras = ["http2"] }
 langchain = ">=1.0.0"
-langchain-ai-skills-framework = ">=1.0.2"
 langchain-aws = ">=1.0.0"
 langchain-community = ">=0.4"
 langchain-core = ">=1.0.0"
@@ -25,6 +24,8 @@ oidcauthlib = ">=2.0.11"
 openai = ">=2.5.0"
 pydantic = ">=2.0,<3.0.0"
 tiktoken = ">=0.7.0"
+# langchain-ai-skills-framework is a Python library for building AI skills in LangChain
+langchain-ai-skills-framework = ">=1.0.2"
 
 [dev-packages]
 setuptools=">=60.9.3"
@@ -42,6 +43,11 @@ bandit = ">=1.8.3"
 ruff = ">=0.11.5"
 # pytest-cov is needed for measuring test coverage
 pytest-cov = ">=6.1.1"
+# types-boto3 provides type hints for boto3
+types-boto3 = { version = ">=1.40.0"}
+types-botocore = { version = ">=1.0.2" }
+types-boto3-bedrock = ">=1.40.0"
+types-boto3-bedrock-runtime = ">=1.40.0"
 
 # These dependencies are required for pipenv-setup.  They conflict with ones above, so we install these
 # only when running pipenv-setup
