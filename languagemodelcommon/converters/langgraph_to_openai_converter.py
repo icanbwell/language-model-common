@@ -161,7 +161,7 @@ class LangGraphToOpenAIConverter:
             )
         except Exception as e:
             tb = traceback.format_exc()
-            logger.exception(f"Exception in _stream_resp_async_generator: {e}\n{tb}")
+            logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
             # if the request is not enabled for debug logging, return a generic error message instead of the actual error
             error_message: str
             if request_information.enable_debug_logging:
@@ -256,7 +256,7 @@ class LangGraphToOpenAIConverter:
                     )
                 )
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_json:
-                    logger.info(f"Returning content: {content_json}")
+                    logger.info("Returning content: %s", content_json)
 
                 return JSONResponse(content=content_json)
             except* TokenRetrievalError as e:
@@ -289,7 +289,9 @@ class LangGraphToOpenAIConverter:
                 # if there is just one exception, we can log it directly
                 if len(e.exceptions) > 0:
                     logger.exception(
-                        f"ExceptionGroup in call_agent_with_input: {type(first_exception2)} {first_exception2}",
+                        "ExceptionGroup in call_agent_with_input: %s %s",
+                        type(first_exception2),
+                        first_exception2,
                     )
                 # Get the traceback for the first exception
                 stack = "".join(
@@ -420,7 +422,7 @@ class LangGraphToOpenAIConverter:
         ]
         messages: List[ChatMessageWrapper] = [s for s in system_messages] + new_messages
 
-        logger.debug(f"Streaming response {request_information.request_id} from agent")
+        logger.debug("Streaming response %s from agent", request_information.request_id)
         generator: AsyncGenerator[str, None] = self._stream_resp_async_generator(
             chat_request_wrapper=chat_request_wrapper,
             compiled_state_graph=compiled_state_graph,
@@ -469,9 +471,9 @@ class LangGraphToOpenAIConverter:
             output: Dict[str, Any] = await compiled_state_graph.ainvoke(
                 input=input_, config=config
             )
-        except AttributeError as e:
+        except AttributeError:
             # Fallback if errorfactory is not available
-            logger.exception(f"AttributeError in throttling handling: {e}")
+            logger.exception("AttributeError in throttling handling")
             raise
         except Exception as e:
             # Try to catch ThrottlingException dynamically
@@ -479,7 +481,7 @@ class LangGraphToOpenAIConverter:
                 hasattr(e, "__class__")
                 and e.__class__.__name__ == "ThrottlingException"
             ):
-                logger.exception(f"AWS ThrottlingException: {e}")
+                logger.exception("AWS ThrottlingException: %s", e)
                 raise HTTPException(
                     status_code=429,
                     detail="AWS request throttled. Please try again later.",
@@ -535,7 +537,7 @@ class LangGraphToOpenAIConverter:
                 convert_message_to_dict(m) for m in messages
             ]
             logger.exception(
-                "ToolException occurred: {}. Messages: {}",
+                "ToolException occurred: %s. Messages: %s",
                 e,
                 messages_dict,
             )
@@ -545,7 +547,7 @@ class LangGraphToOpenAIConverter:
         except Exception as e:
             messages_dict = [convert_message_to_dict(m) for m in messages]
             logger.exception(
-                "Exception occurred while streaming graph with messages: {}. Messages: {}",
+                "Exception occurred while streaming graph with messages: %s. Messages: %s",
                 e,
                 messages_dict,
             )
@@ -716,7 +718,10 @@ class LangGraphToOpenAIConverter:
             if cleaned_prompts:
                 system_prompt = "\n\n".join(cleaned_prompts)
                 logger.debug(
-                    f"[GRAPH] {uuid.uuid4()} Using system prompt from config ({len(system_prompt)} chars): {system_prompt} )"
+                    "[GRAPH] %s Using system prompt from config (%s chars): %s )",
+                    uuid.uuid4(),
+                    len(system_prompt),
+                    system_prompt,
                 )
 
         # Create the react agent with optional system prompt

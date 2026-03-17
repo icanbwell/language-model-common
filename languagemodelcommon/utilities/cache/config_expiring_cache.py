@@ -54,8 +54,12 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
         current_time: float = time.time()
         cache_is_valid: bool = current_time - self._cache_timestamp < self._ttl
         logger.debug(
-            f"ExpiringCache with id: {self._identifier} cache is valid: {cache_is_valid}. "
-            f"current time({current_time}) - cache_timestamp({self._cache_timestamp}) < ttl ({self._ttl})"
+            "ExpiringCache with id: %s cache is valid: %s. current time(%s) - cache_timestamp(%s) < ttl (%s)",
+            self._identifier,
+            cache_is_valid,
+            current_time,
+            self._cache_timestamp,
+            self._ttl,
         )
         return cache_is_valid
 
@@ -81,7 +85,9 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
             self._cache = value
             self._cache_timestamp = time.time()
             logger.debug(
-                f"ExpiringCache with id: {self._identifier} set cache with timestamp: {self._cache_timestamp}"
+                "ExpiringCache with id: %s set cache with timestamp: %s",
+                self._identifier,
+                self._cache_timestamp,
             )
 
     @override
@@ -92,7 +98,7 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
         async with self._lock:
             self._cache = None
             self._cache_timestamp = None
-            logger.debug(f"ExpiringCache with id: {self._identifier} cleared cache")
+            logger.debug("ExpiringCache with id: %s cleared cache", self._identifier)
 
     @override
     async def create(
@@ -109,5 +115,5 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
         async with self._lock:
             self._cache = init_value if init_value is not None else None
             self._cache_timestamp = time.time()
-            logger.info(f"ExpiringCache with id: {self._identifier} created cache")
+            logger.info("ExpiringCache with id: %s created cache", self._identifier)
             return self._cache

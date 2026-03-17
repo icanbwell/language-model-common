@@ -80,7 +80,8 @@ class GitHubConfigReader:
                     wait_time = reset_time - time.time()
                     if wait_time > 0:
                         logger.warning(
-                            f"Rate limit exceeded. Waiting for {wait_time:.2f} seconds"
+                            "Rate limit exceeded. Waiting for %.2f seconds",
+                            wait_time,
                         )
                         await asyncio.sleep(wait_time)
                         return await self._make_request(
@@ -97,7 +98,9 @@ class GitHubConfigReader:
 
                 delay = self.base_delay * (2**retry_count)  # Exponential backoff
                 logger.warning(
-                    f"Request failed with status {response.status_code}. Retrying in {delay} seconds..."
+                    "Request failed with status %s. Retrying in %s seconds...",
+                    response.status_code,
+                    delay,
                 )
                 await asyncio.sleep(delay)
                 return await self._make_request(
@@ -110,7 +113,7 @@ class GitHubConfigReader:
             if retry_count >= self.max_retries:
                 raise
             delay = self.base_delay * (2**retry_count)
-            logger.warning(f"Request error: {str(e)}. Retrying in {delay} seconds...")
+            logger.warning("Request error: %s. Retrying in %s seconds...", e, delay)
             await asyncio.sleep(delay)
             return await self._make_request(
                 client=client, url=url, headers=headers, retry_count=retry_count + 1
@@ -120,7 +123,7 @@ class GitHubConfigReader:
         """
         Read model configurations from JSON files stored in a GitHub repository
         """
-        logger.info(f"Reading model configurations from GitHub: {github_url}")
+        logger.info("Reading model configurations from GitHub: %s", github_url)
 
         # Parse the GitHub URL
         repo_url, path, branch = self.parse_github_url(github_url)
@@ -133,9 +136,8 @@ class GitHubConfigReader:
             )
             # Store in cache
             return models
-        except Exception as e:
-            logger.error(f"Error reading model configurations from Github: {str(e)}")
-            logger.exception(e)
+        except Exception:
+            logger.exception("Error reading model configurations from GitHub")
             return []
 
     async def _read_model_configs(
@@ -156,7 +158,7 @@ class GitHubConfigReader:
         if not branch:
             raise ValueError("branch must not be empty or None")
 
-        logger.info(f"Reading model configurations from GitHub: {repo_url}/{path}")
+        logger.info("Reading model configurations from GitHub: %s/%s", repo_url, path)
         configs: List[ChatModelConfig] = []
 
         async with httpx.AsyncClient() as client:
@@ -196,14 +198,14 @@ class GitHubConfigReader:
                         data = substitute_env_vars(file_response.json())
                         return ChatModelConfig(**data)
                     except httpx.RequestError as e:
-                        logger.error(f"Error reading file {item['name']}: {str(e)}")
+                        logger.error("Error reading file %s: %s", item["name"], e)
                     except json.JSONDecodeError as e:
-                        logger.error(
-                            f"Error parsing JSON from {item['name']}: {str(e)}"
-                        )
+                        logger.error("Error parsing JSON from %s: %s", item["name"], e)
                     except Exception as e:
                         logger.error(
-                            f"Unexpected error processing {item['name']}: {str(e)}"
+                            "Unexpected error processing %s: %s",
+                            item["name"],
+                            e,
                         )
                     return None
 
@@ -219,5 +221,5 @@ class GitHubConfigReader:
                 return configs
 
             except Exception as e:
-                logger.error(f"Error reading configs from GitHub: {str(e)}")
+                logger.error("Error reading configs from GitHub: %s", e)
                 raise

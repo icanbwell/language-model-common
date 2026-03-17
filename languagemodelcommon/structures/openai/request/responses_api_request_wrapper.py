@@ -192,7 +192,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             return ""
 
         logger.debug(
-            f"Creating SSE message for request_id: {request_id} from source: {source}"
+            "Creating SSE message for request_id: %s from source: %s",
+            request_id,
+            source,
         )
 
         message: ResponseTextDeltaEvent = ResponseTextDeltaEvent(
@@ -231,7 +233,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         self, *, request_id: str, usage_metadata: UsageMetadata | None, source: str
     ) -> str:
         logger.debug(
-            f"Creating final SSE message for request_id: {request_id} from source: {source}"
+            "Creating final SSE message for request_id: %s from source: %s",
+            request_id,
+            source,
         )
         # Format the final SSE message chunk
         message: ResponseTextDoneEvent = ResponseTextDoneEvent(

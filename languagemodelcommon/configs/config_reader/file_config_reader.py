@@ -19,7 +19,7 @@ class FileConfigReader:
     def _read_model_configs(
         self, config_path: str, exclude_dirs: set[str] | None = None
     ) -> List[ChatModelConfig]:
-        logger.info(f"Reading model configurations from {config_path}")
+        logger.info("Reading model configurations from %s", config_path)
         config_folder: Path = Path(config_path)
         excluded = exclude_dirs or set()
         # read all the .json files recursively in the config folder

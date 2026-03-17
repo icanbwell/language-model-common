@@ -202,9 +202,9 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case _:
-                    logger.debug(f"Skipped event type: {event_type}")
-        except Exception as e:
-            logger.exception(f"Error handling langchain event: {e}")
+                    logger.debug("Skipped event type: %s", event_type)
+        except Exception:
+            logger.exception("Error handling langchain event")
 
     async def _handle_on_chat_model_stream(
         self,
@@ -229,7 +229,7 @@ class LangGraphStreamingManager:
                     )
                 # content_text = "<<" + content_text + ">>"
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_text:
-                    logger.debug(f"Returning content: {content_text}")
+                    logger.debug("Returning content: %s", content_text)
                 if content_text:
                     buffered_chunk = await self._buffer_stream_content(
                         request_id=str(request_information.request_id),
@@ -293,7 +293,7 @@ class LangGraphStreamingManager:
     ) -> AsyncGenerator[str, None]:
         """Record tool start time and emit debug SSE showing which MCP tool is running."""
         tool_name: Optional[str] = event["name"] if "name" in event else None
-        logger.debug(f"on_tool_start: {tool_name}: {event}")
+        logger.debug("on_tool_start: %s: %s", tool_name, event)
         data = event["data"] if "data" in event else {}
         tool_input: Optional[Dict[str, Any]] = data.get("input")
         tool_input_display: Optional[Dict[str, Any]] = (
@@ -310,7 +310,7 @@ class LangGraphStreamingManager:
         tool_key: str = self.make_tool_key(tool_name, tool_input)
         tool_start_times[tool_key] = time.time()
         if tool_name:
-            logger.debug(f"on_tool_start: {tool_name} {tool_input_display}")
+            logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
             mapper: ToolFriendlyNameMapper | None = (
                 request_information.tool_friendly_name_mapper
             )
@@ -364,7 +364,7 @@ class LangGraphStreamingManager:
         tool_start_times: dict[str, float],
     ) -> AsyncGenerator[str, None]:
         """Emit debug SSE when MCP tool completes, including runtime and optional raw output."""
-        logger.debug(f"on_tool_end: {event}")
+        logger.debug("on_tool_end: %s", event)
         data = event["data"] if "data" in event else {}
         tool_message: Optional[ToolMessage] = data.get("output")
         tool_name2: Optional[str] = None
@@ -382,16 +382,20 @@ class LangGraphStreamingManager:
         if start_time is not None:
             elapsed: float = time.time() - start_time
             runtime_str = f"{elapsed:.2f}s"
-            logger.debug(f"Tool {tool_name2} completed in {elapsed:.2f} seconds.")
+            logger.debug("Tool %s completed in %.2f seconds.", tool_name2, elapsed)
         else:
             logger.warning(
-                f"Tool {tool_name2} end event received without matching start event."
+                "Tool %s end event received without matching start event.",
+                tool_name2,
             )
         if tool_message:
             artifact: Optional[Any] = tool_message.artifact
 
             logger.debug(
-                f"Tool {tool_name2} has artifact of type {type(artifact)}: {artifact}"
+                "Tool %s has artifact of type %s: %s",
+                tool_name2,
+                type(artifact),
+                artifact,
             )
 
             return_raw_tool_output: bool = (
@@ -549,7 +553,10 @@ class LangGraphStreamingManager:
             elapsed: float = time.time() - start_time
             runtime_str = f"{elapsed:.2f}s"
         logger.error(
-            f"Tool error in {tool_name}: {error_message} [runtime: {runtime_str}]"
+            "Tool error in %s: %s [runtime: %s]",
+            tool_name,
+            error_message,
+            runtime_str,
         )
         content_text: str = f"\n\n> Tool {tool_name} encountered an error: {error_message} [runtime: {runtime_str}]\n"
         yield chat_request_wrapper.create_sse_message(

@@ -158,7 +158,9 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
     ) -> str:
 
         logger.debug(
-            f"Creating SSE message with content: {content} from source: {source}"
+            "Creating SSE message with content: %s from source: %s",
+            content,
+            source,
         )
         completion_usage_metadata: CompletionUsage | None = (
             (self.convert_usage_meta_data_to_openai(usages=[usage_metadata]))
@@ -266,7 +268,7 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
     def create_final_sse_message(
         self, *, request_id: str, usage_metadata: UsageMetadata | None, source: str
     ) -> str:
-        logger.debug(f"Creating final SSE message from source: {source}")
+        logger.debug("Creating final SSE message from source: %s", source)
         return "data: [DONE]\n\n"
 
     @override

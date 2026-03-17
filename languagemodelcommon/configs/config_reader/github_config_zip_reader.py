@@ -88,21 +88,27 @@ class GitHubConfigZipDownloader:
                         return response.content
                 except Exception as e1:
                     logger.error(
-                        f"Download attempt {attempt + 1} failed URL: {url}, token: {_mask_token(self.github_token)} {type(e1)}: {str(e1)},"
+                        "Download attempt %s failed URL: %s, token: %s %s: %s",
+                        attempt + 1,
+                        url,
+                        _mask_token(self.github_token),
+                        type(e1),
+                        e1,
                     )
 
                     # Exponential backoff
                     await asyncio.sleep(self.base_delay * (2**attempt))
 
             raise RuntimeError(
-                f"Failed to download ZIP after {self.max_retries} attempts URL: {url}, token: {_mask_token(self.github_token)}"
+                "Failed to download ZIP after %s attempts URL: %s, token: %s"
+                % (self.max_retries, url, _mask_token(self.github_token))
             )
 
         try:
             # Download ZIP archive
-            logger.info(f"Downloading ZIP from: {zip_url}")
+            logger.info("Downloading ZIP from: %s", zip_url)
             zip_content = await download_with_retry(zip_url)
-            logger.info(f"Downloaded ZIP from {zip_url}")
+            logger.info("Downloaded ZIP from %s", zip_url)
 
             # Create a temporary file to save the ZIP
             with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_zip:
@@ -110,7 +116,7 @@ class GitHubConfigZipDownloader:
                 temp_zip_path = temp_zip.name
 
             # Extract ZIP archive
-            logger.info(f"Extracting ZIP to: {target_path}")
+            logger.info("Extracting ZIP to: %s", target_path)
             with zipfile.ZipFile(temp_zip_path, "r") as zip_ref:
                 # Validate all members for path traversal before extraction
                 safe_target = os.path.abspath(target_path)
@@ -140,7 +146,7 @@ class GitHubConfigZipDownloader:
             return extracted_path
 
         except Exception as e:
-            logger.error(f"Error downloading ZIP: {str(e)}")
+            logger.error("Error downloading ZIP: %s", e)
             raise
 
     @staticmethod
@@ -170,9 +176,9 @@ class GitHubConfigZipDownloader:
                             config = substitute_env_vars(json.load(f))
                             configs.append(ChatModelConfig(**config))
                     except json.JSONDecodeError as e:
-                        logger.error(f"Error parsing JSON from {file}: {str(e)}")
+                        logger.error("Error parsing JSON from %s: %s", file, e)
                     except Exception as e:
-                        logger.error(f"Unexpected error processing {file}: {str(e)}")
+                        logger.error("Unexpected error processing %s: %s", file, e)
 
         # sort the configs by name
         configs.sort(key=lambda x: x.name)
@@ -218,5 +224,5 @@ class GitHubConfigZipDownloader:
             return configs
 
         except Exception as e:
-            logger.error(f"Error retrieving model configs: {str(e)}")
+            logger.error("Error retrieving model configs: %s", e)
             return []

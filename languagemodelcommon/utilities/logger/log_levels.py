@@ -23,7 +23,7 @@ handler.setFormatter(
 )
 logger.addHandler(handler)
 
-logger.info(f"GLOBAL LOG_LEVEL: {GLOBAL_LOG_LEVEL}")
+logger.info("GLOBAL LOG_LEVEL: %s", GLOBAL_LOG_LEVEL)
 
 log_sources = [
     "HTTP_TRACING",
@@ -55,4 +55,4 @@ for source in log_sources:
     if not src_level:
         src_level = GLOBAL_LOG_LEVEL
     SRC_LOG_LEVELS[source] = src_level
-    logger.info(f"{log_env_var}: {SRC_LOG_LEVELS[source]}")
+    logger.info("%s: %s", log_env_var, SRC_LOG_LEVELS[source])

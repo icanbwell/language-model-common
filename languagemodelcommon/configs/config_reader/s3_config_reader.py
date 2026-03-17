@@ -26,7 +26,7 @@ class S3ConfigReader:
         if not prefix:
             raise ValueError("prefix must not be empty or None")
 
-        logger.info(f"Reading model configurations from S3: {bucket_name}/{prefix}")
+        logger.info("Reading model configurations from S3: %s/%s", bucket_name, prefix)
 
         configs: List[ChatModelConfig] = []
 
@@ -56,12 +56,10 @@ class S3ConfigReader:
                                 configs.append(ChatModelConfig(**data))
 
                             except ClientError as e:
-                                logger.error(
-                                    f"Error reading file {obj['Key']}: {str(e)}"
-                                )
+                                logger.error("Error reading file %s: %s", obj["Key"], e)
                             except json.JSONDecodeError as e:
                                 logger.error(
-                                    f"Error parsing JSON from {obj['Key']}: {str(e)}"
+                                    "Error parsing JSON from %s: %s", obj["Key"], e
                                 )
 
             # sort the configs by name
@@ -69,5 +67,5 @@ class S3ConfigReader:
             return configs
 
         except Exception as e:
-            logger.error(f"Error reading configs from S3: {str(e)}")
+            logger.error("Error reading configs from S3: %s", e)
             raise

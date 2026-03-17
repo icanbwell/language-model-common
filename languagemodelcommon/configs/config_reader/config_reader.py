@@ -90,22 +90,26 @@ class ConfigReader:
         cached_configs: List[ChatModelConfig] | None = await self._cache.get()
         if cached_configs is not None:
             logger.debug(
-                f"ConfigReader with id: {self._identifier} using cached model configurations"
+                "ConfigReader with id: %s using cached model configurations",
+                self._identifier,
             )
             return cached_configs
-        logger.info(f"ConfigReader with id: {self._identifier} cache is empty")
+        logger.info("ConfigReader with id: %s cache is empty", self._identifier)
 
         async with self._lock:
             cached_configs = await self._cache.get()
             if cached_configs is not None:
                 logger.debug(
-                    f"ConfigReader with id: {self._identifier} using cached model configurations"
+                    "ConfigReader with id: %s using cached model configurations",
+                    self._identifier,
                 )
                 return cached_configs
 
             default_config_path = self._resolve_default_config_path(config_path)
             logger.info(
-                f"ConfigReader with id: {self._identifier} reading model configurations from {default_config_path}"
+                "ConfigReader with id: %s reading model configurations from %s",
+                self._identifier,
+                default_config_path,
             )
 
             try:
@@ -116,7 +120,9 @@ class ConfigReader:
                         models_testing_path=models_testing_path,
                     )
                     logger.info(
-                        f"ConfigReader with id:  {self._identifier} loaded {len(models)} model configurations from GitHub Zip"
+                        "ConfigReader with id: %s loaded %s model configurations from GitHub Zip",
+                        self._identifier,
+                        len(models),
                     )
                     if not models and default_config_path != config_path:
                         models = await GitHubConfigZipDownloader().read_model_configs(
@@ -147,11 +153,10 @@ class ConfigReader:
                             )
                             models.extend(models_testing)
             except Exception as e:
-                logger.error(
-                    "Using config backup since got error reading model configurations: "
-                    f"{str(e)}"
+                logger.exception(
+                    "Using config backup since got error reading model configurations: %s",
+                    e,
                 )
-                logger.exception(e)
                 models = []
 
             await self._cache.set(models)
@@ -178,7 +183,9 @@ class ConfigReader:
                 )
             return await self.read_models_from_path_async(override_path)
         except Exception as e:
-            logger.warning(f"Failed to load client overrides from {override_path}: {e}")
+            logger.warning(
+                "Failed to load client overrides from %s: %s", override_path, e
+            )
             return []
 
     async def read_models_from_path_async(
@@ -188,21 +195,27 @@ class ConfigReader:
         if config_path.startswith("s3"):
             models = await S3ConfigReader().read_model_configs(s3_url=config_path)
             logger.info(
-                f"ConfigReader with id:  {self._identifier} loaded {len(models)} model configurations from S3"
+                "ConfigReader with id: %s loaded %s model configurations from S3",
+                self._identifier,
+                len(models),
             )
         elif UrlParser.is_github_url(config_path):
             models = await GitHubConfigReader().read_model_configs(
                 github_url=config_path
             )
             logger.info(
-                f"ConfigReader with id:  {self._identifier} loaded {len(models)} model configurations from GitHub"
+                "ConfigReader with id: %s loaded %s model configurations from GitHub",
+                self._identifier,
+                len(models),
             )
         else:
             models = FileConfigReader().read_model_configs(
                 config_path=config_path, exclude_dirs=exclude_dirs
             )
             logger.info(
-                f"ConfigReader with id:  {self._identifier} loaded {len(models)} model configurations from file system"
+                "ConfigReader with id: %s loaded %s model configurations from file system",
+                self._identifier,
+                len(models),
             )
         return models
 
@@ -218,7 +231,7 @@ class ConfigReader:
             return None
         # Validate client_id to prevent path traversal
         if not ConfigReader._is_valid_client_id(client_id):
-            logger.warning(f"Invalid client_id format: {client_id}")
+            logger.warning("Invalid client_id format: %s", client_id)
             return None
         if config_path.startswith("s3") or UrlParser.is_github_url(config_path):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
@@ -229,7 +242,8 @@ class ConfigReader:
             override_folder.resolve().relative_to(config_folder.resolve())
         except ValueError:
             logger.warning(
-                f"Client config path traversal attempt detected: {override_folder}"
+                "Client config path traversal attempt detected: %s",
+                override_folder,
             )
             return None
         if override_folder.exists():
@@ -368,4 +382,4 @@ class ConfigReader:
 
     async def clear_cache(self) -> None:
         await self._cache.clear()
-        logger.info(f"ConfigReader with id:  {self._identifier} cleared cache")
+        logger.info("ConfigReader with id: %s cleared cache", self._identifier)
