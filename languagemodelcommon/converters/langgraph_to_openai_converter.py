@@ -51,7 +51,7 @@ from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
 from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
-from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger

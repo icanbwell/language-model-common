@@ -4,7 +4,7 @@ import re
 from typing import Protocol, runtime_checkable
 from pathlib import Path
 
-from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 

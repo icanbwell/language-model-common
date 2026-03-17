@@ -1,6 +1,6 @@
 from typing import Mapping
 
-from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.header_reader.header_reader import HeaderReader

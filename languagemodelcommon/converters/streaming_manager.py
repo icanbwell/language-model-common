@@ -52,7 +52,7 @@ from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
 from languagemodelcommon.utilities.chat_message_helpers import (
     iter_message_content_text_chunks,
 )
-from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS,
     LanguageModelCommonEnvironmentVariables,
 )
