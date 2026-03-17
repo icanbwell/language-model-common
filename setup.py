@@ -9,7 +9,7 @@ from os import path, getcwd
 # noinspection SpellCheckingInspection
 package_name = "languagemodelcommon"
 
-with open("README.md", "r") as fh:
+with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 try:
