@@ -53,9 +53,10 @@ from languagemodelcommon.utilities.chat_message_helpers import (
     iter_message_content_text_chunks,
 )
 from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
-    BaileyAIEnvironmentVariables,
     DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS,
+    LanguageModelCommonEnvironmentVariables,
 )
+
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.text_humanizer import Humanizer
@@ -87,7 +88,7 @@ class LangGraphStreamingManager:
         self,
         *,
         token_reducer: TokenReducer,
-        environment_variables: BaileyAIEnvironmentVariables,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
         if self.token_reducer is None:
@@ -95,15 +96,17 @@ class LangGraphStreamingManager:
         if not isinstance(self.token_reducer, TokenReducer):
             raise TypeError("token_reducer must be an instance of TokenReducer")
 
-        self.environment_variables: BaileyAIEnvironmentVariables = environment_variables
+        self.environment_variables: LanguageModelCommonEnvironmentVariables = (
+            environment_variables
+        )
         if self.environment_variables is None:
             raise ValueError("environment_variables must not be None")
         if not isinstance(
             self.environment_variables,
-            BaileyAIEnvironmentVariables,
+            LanguageModelCommonEnvironmentVariables,
         ):
             raise TypeError(
-                "environment_variables must be an instance of BaileyAIEnvironmentVariables"
+                "environment_variables must be an instance of LanguageModelCommonVariables"
             )
 
         configured_interval = (

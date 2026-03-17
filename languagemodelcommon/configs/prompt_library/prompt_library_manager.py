@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 from pathlib import Path
 
 from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
-    BaileyAIEnvironmentVariables,
+    LanguageModelCommonEnvironmentVariables,
 )
 
 
@@ -24,7 +24,7 @@ class PromptLibraryManager:
         environment_variables: PromptLibraryEnvironmentVariables,
     ) -> None:
         if environment_variables is None:
-            environment_variables = BaileyAIEnvironmentVariables()
+            environment_variables = LanguageModelCommonEnvironmentVariables()
         if not isinstance(environment_variables, PromptLibraryEnvironmentVariables):
             raise TypeError(
                 "environment_variables must implement PromptLibraryEnvironmentVariables"

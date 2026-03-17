@@ -52,7 +52,7 @@ from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
 )
 from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
-    BaileyAIEnvironmentVariables,
+    LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS, logger
@@ -65,18 +65,22 @@ class LangGraphToOpenAIConverter:
     def __init__(
         self,
         *,
-        environment_variables: BaileyAIEnvironmentVariables,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
         token_reducer: TokenReducer,
         streaming_manager: LangGraphStreamingManager,
         skill_loader: SkillLoaderProtocol,
     ) -> None:
         if environment_variables is None:
             raise ValueError("environment_variables must not be None")
-        if not isinstance(environment_variables, BaileyAIEnvironmentVariables):
+        if not isinstance(
+            environment_variables, LanguageModelCommonEnvironmentVariables
+        ):
             raise TypeError(
                 f"environment_variables must be EnvironmentVariables, got {type(environment_variables)}"
             )
-        self.environment_variables: BaileyAIEnvironmentVariables = environment_variables
+        self.environment_variables: LanguageModelCommonEnvironmentVariables = (
+            environment_variables
+        )
 
         if token_reducer is None:
             raise ValueError("token_reducer must not be None")

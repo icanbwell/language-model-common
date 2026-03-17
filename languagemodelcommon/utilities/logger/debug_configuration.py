@@ -1,7 +1,7 @@
 from typing import Mapping
 
 from languagemodelcommon.utilities.environment.baileyai_environment_variables import (
-    BaileyAIEnvironmentVariables,
+    LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.header_reader.header_reader import HeaderReader
 
@@ -10,7 +10,7 @@ class DebugConfiguration:
     @staticmethod
     def is_request_enabled_for_debug_logging(
         *,
-        environment_variables: BaileyAIEnvironmentVariables,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
         headers: Mapping[str, str],
     ) -> bool:
 
