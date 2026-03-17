@@ -7,7 +7,7 @@ from os import path, getcwd
 # from https://packaging.python.org/tutorials/packaging-projects/
 
 # noinspection SpellCheckingInspection
-package_name = "languagemodelcommon"
+package_name = "language-model-common"
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
