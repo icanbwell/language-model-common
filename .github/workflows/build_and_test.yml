@@ -67,7 +67,7 @@ jobs:
       # Publish all test results in the GitHub UI
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@v2 # https://github.com/pmeier/pytest-results-action
+        uses: pmeier/pytest-results-action@v0.8.0 # https://github.com/pmeier/pytest-results-action
         with:
           # A list of JUnit XML files, directories containing the former, and wildcard
           # patterns to process.
