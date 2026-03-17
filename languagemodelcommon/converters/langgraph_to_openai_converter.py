@@ -18,7 +18,10 @@ from typing import (
 import botocore
 from botocore.exceptions import TokenRetrievalError
 from fastapi import HTTPException
-from langchain_ai_skills_framework.loaders.skill_loader import SkillLoaderProtocol
+from langchain_ai_skills_framework.loaders.skill_loader import (
+    SkillLoaderProtocol,
+)
+from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
 from langchain_community.adapters.openai import (
     convert_message_to_dict,
 )
@@ -682,7 +685,7 @@ class LangGraphToOpenAIConverter:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        skill_loader: SkillLoaderProtocol | None = None,
+        skill_loader: SkillLoaderProtocol,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
         Create a graph for the language model asynchronously.
@@ -695,9 +698,6 @@ class LangGraphToOpenAIConverter:
             tools: List of tools available to the agent
             store: Optional store for persistence
             checkpointer: Optional checkpointer for state management
-            enable_health_safety: Whether to enable health safety evaluation.
-                                   If None, reads from HEALTH_SAFETY_ENABLE_EVALUATOR env var.
-            health_safety_config: Optional configuration for the health safety evaluator
             system_prompts: Optional list of system prompts to prepend to the agent
             skill_loader: Optional override for the skill loader (per-request scoping)
         """
