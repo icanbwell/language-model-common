@@ -1,0 +1,13 @@
+version: '3.5'
+services:
+  dev:
+    user: root
+    build:
+      dockerfile: Dockerfile
+      context: .
+    volumes:
+      - ./:/usr/src/languagemodelcommon
+    container_name: languagemodelcommon_dev
+    working_dir: /usr/src/languagemodelcommon
+    env_file:
+      - docker.env
