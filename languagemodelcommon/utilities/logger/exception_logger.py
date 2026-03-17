@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import traceback
+from types import TracebackType
 
 from typing import List, Optional
 
@@ -21,7 +22,7 @@ class ExceptionLogger:
     @staticmethod
     def _exc_info_from_error(
         error: Exception | ExceptionGroup,
-    ) -> tuple[type[BaseException], BaseException, object] | None:
+    ) -> tuple[type[BaseException], BaseException, TracebackType | None] | None:
         if isinstance(error, BaseException):
             return type(error), error, error.__traceback__
         return None
