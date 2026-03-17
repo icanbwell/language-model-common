@@ -55,7 +55,22 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/icanbwell/language-model-common",
     packages=find_packages(),
-    install_requires=[],
+    install_requires=[
+        "boto3>=1.34.59",
+        "fastapi>=0.110.0",
+        "httpx[http2]>=0.27.2",
+        "langchain>=1.0.0",
+        "langchain-ai-skills-framework>=1.0.2",
+        "langchain-aws>=1.0.0",
+        "langchain-community>=0.4",
+        "langchain-core>=1.0.0",
+        "langgraph>=1.0.0",
+        "loguru>=0.7.3",
+        "oidcauthlib>=2.0.11",
+        "openai>=2.5.0",
+        "pydantic<3.0.0,>=2.0",
+        "tiktoken>=0.7.0",
+    ],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Programming Language :: Python :: 3",
@@ -66,5 +81,5 @@ setup(
     dependency_links=[],
     include_package_data=True,
     zip_safe=False,
-    package_data={"languagemodelcommon": ["py.typed"]}
+    package_data={"languagemodelcommon": ["py.typed"]},
 )
