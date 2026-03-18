@@ -7,6 +7,7 @@ from langchain_ai_skills_framework.loaders.skill_loader import (
 )
 from oidcauthlib.container.simple_container import SimpleContainer
 
+from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
@@ -15,6 +16,7 @@ from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
+from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 from languagemodelcommon.utilities.cache import ConfigExpiringCache
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -99,6 +101,7 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
+                file_manager_factory=c.resolve(FileManagerFactory),
                 token_reducer=c.resolve(TokenReducer),
             ),
         )
@@ -106,6 +109,18 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             SkillLoaderProtocol,
             lambda c: c.resolve(SkillDirectoryLoader),
+        )
+
+        container.singleton(
+            FileManagerFactory,
+            lambda c: FileManagerFactory(
+                aws_client_factory=c.resolve(AwsClientFactory),
+            ),
+        )
+
+        container.singleton(
+            AwsClientFactory,
+            lambda c: AwsClientFactory(),
         )
 
         return container

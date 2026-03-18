@@ -45,6 +45,7 @@ from langchain_core.runnables.schema import (
     EventData,
 )
 
+from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
@@ -63,6 +64,7 @@ from languagemodelcommon.utilities.text_humanizer import Humanizer
 from languagemodelcommon.utilities.tool_friendly_name_mapper import (
     ToolFriendlyNameMapper,
 )
+from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__file__)
 logger.setLevel(SRC_LOG_LEVELS["LLM"])
@@ -88,6 +90,7 @@ class LangGraphStreamingManager:
         self,
         *,
         token_reducer: TokenReducer,
+        file_manager_factory: FileManagerFactory,
         environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
@@ -95,6 +98,14 @@ class LangGraphStreamingManager:
             raise ValueError("token_reducer must not be None")
         if not isinstance(self.token_reducer, TokenReducer):
             raise TypeError("token_reducer must be an instance of TokenReducer")
+
+        self.file_manager_factory: FileManagerFactory = file_manager_factory
+        if self.file_manager_factory is None:
+            raise ValueError("file_manager_factory must not be None")
+        if not isinstance(self.file_manager_factory, FileManagerFactory):
+            raise TypeError(
+                "file_manager_factory must be an instance of FileManagerFactory"
+            )
 
         self.environment_variables: LanguageModelCommonEnvironmentVariables = (
             environment_variables
@@ -420,8 +431,66 @@ class LangGraphStreamingManager:
                 tool_message_content: str = self.convert_message_content_into_string(
                     tool_message=tool_message
                 )
+                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+                    logger.debug(
+                        f"Returning artifact: {artifact if artifact else tool_message_content}"
+                    )
 
+                tool_message_content_length: int = len(tool_message_content)
                 token_count: int = self.token_reducer.count_tokens(tool_message_content)
+                file_url: Optional[str] = None
+                if (
+                    tool_message_content_length
+                    > self.environment_variables.maximum_inline_tool_output_size
+                ):
+                    # Save to file and provide link
+                    output_folder = os.environ.get("IMAGE_GENERATION_PATH")
+                    if output_folder:
+                        file_manager = self.file_manager_factory.get_file_manager(
+                            folder=output_folder
+                        )
+                        filename = f"tool_output_{tool_name2}_{int(time.time())}.txt"
+                        file_path: Optional[str] = await file_manager.save_file_async(
+                            file_data=tool_message_content.encode("utf-8"),
+                            folder=output_folder,
+                            filename=filename,
+                            content_type="text/plain",
+                        )
+                        if file_path:
+                            tool_message_content = (
+                                ""  # clear the content since we're using a file
+                            )
+                            if structured_data_without_result:
+                                tool_message_content += (
+                                    "\n--- Structured Content (w/o result) ---\n"
+                                )
+                                tool_message_content += json.dumps(
+                                    structured_data_without_result, indent=2
+                                )
+                                tool_message_content += (
+                                    "\n--- End Structured Content ---\n"
+                                )
+                            try:
+                                file_url = UrlParser.get_url_for_file_name(filename)
+                                if file_url is not None:
+                                    tool_message_content += f"\n(URL: {file_url})"
+                                else:
+                                    tool_message_content += (
+                                        "\nTool output file URL could not be generated."
+                                    )
+                            except KeyError:
+                                tool_message_content += "\nTool output file URL could not be generated due to missing IMAGE_GENERATION_URL environment variable."
+                        else:
+                            tool_message_content = (
+                                "Tool output too large to display inline, "
+                                "and failed to save to file."
+                            )
+                    else:
+                        tool_message_content = (
+                            f"Tool output too large to display inline,"
+                            f" {tool_message_content_length} > {self.environment_variables.maximum_inline_tool_output_size}"
+                            " and TOOL_OUTPUT_FILE_PATH is not set."
+                        )
 
                 tool_progress_message: str = (
                     (
@@ -441,8 +510,18 @@ class LangGraphStreamingManager:
                     usage_metadata=None,
                     source="on_tool_end",
                 )
-                if debug_message:
-                    yield debug_message
+                if file_url:
+                    # send a follow-up message with the file URL
+                    content_text: str = f"\n\n[Click to download {tool_message.name} Output]({file_url})\n\n"
+                    yield chat_request_wrapper.create_sse_message(
+                        request_id=request_information.request_id,
+                        content=content_text,
+                        usage_metadata=None,
+                        source="on_tool_end",
+                    )
+                else:
+                    if debug_message:
+                        yield debug_message
         else:
             logger.debug("on_tool_end: no tool message output")
             content_text = f"\n\n> Tool completed with no output.{runtime_str}\n"
