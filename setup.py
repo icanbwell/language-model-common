@@ -79,6 +79,7 @@ setup(
         "simple-container>=1.0.1",
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
+        "beautifulsoup4>=4.12.3",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",

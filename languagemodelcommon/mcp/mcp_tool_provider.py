@@ -30,8 +30,9 @@ from languagemodelcommon.mcp.interceptors.tracing import (
 from languagemodelcommon.mcp.interceptors.truncation import (
     TruncationMcpCallInterceptor,
 )
-from languagemodelcommon.utilities.environment.language_model_common_environment_variables import \
-    LanguageModelCommonEnvironmentVariables
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.logger.logging_transport import (
     LoggingTransport,

@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "c1da2b57228866ee0dc30dfdda5d02cc2bd780e6f5e5464d93fe124fab688aae"
+            "sha256": "74af5fe7f4d718f2dafaa331c545a364853619098591914b2ea8ae5196bd453a"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -224,6 +224,7 @@
                 "sha256:0918bfe44902e6ad8d57732ba310582e98da931428d231a5ecb9e7c703a735bb",
                 "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86"
             ],
+            "index": "pypi",
             "markers": "python_full_version >= '3.7.0'",
             "version": "==4.14.3"
         },
@@ -4473,6 +4474,15 @@
             "markers": "python_version >= '3.8'",
             "version": "==0.31.3"
         },
+        "types-beautifulsoup4": {
+            "hashes": [
+                "sha256:5923399d4a1ba9cc8f0096fe334cc732e130269541d66261bb42ab039c0376ee",
+                "sha256:aa19dd73b33b70d6296adf92da8ab8a0c945c507e6fb7d5db553415cc77b417e"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.9'",
+            "version": "==4.12.0.20250516"
+        },
         "types-boto3": {
             "hashes": [
                 "sha256:0e4361ffa8738b3d5b6db1cd6e39a47f6deb38708fd9bb0a67100c104d466d84",
@@ -4524,6 +4534,14 @@
             ],
             "version": "==1.0.2"
         },
+        "types-html5lib": {
+            "hashes": [
+                "sha256:1a6a3ac5394aa12bf547fae5d5eff91dceec46b6d07c4367d9b39a37f42f201a",
+                "sha256:2a3fc935de788a4d2659f4535002a421e05bea5e172b649d33232e99d4272d08"
+            ],
+            "markers": "python_version >= '3.9'",
+            "version": "==1.1.11.20251117"
+        },
         "types-requests": {
             "hashes": [
                 "sha256:018a11ac158f801bfa84857ddec1650750e393df8a004a8a9ae2a9bec6fcb24f",
@@ -4540,6 +4558,14 @@
             ],
             "markers": "python_version >= '3.9'",
             "version": "==0.16.0"
+        },
+        "types-webencodings": {
+            "hashes": [
+                "sha256:2378e2ceccced3d41bb5e21387586e7b5305e11519fc6b0659c629f23b2e5de4",
+                "sha256:e21f81ff750795faffddaffd70a3d8bfff77d006f22c27e393eb7812586249d8"
+            ],
+            "markers": "python_version >= '3.9'",
+            "version": "==0.5.0.20251108"
         },
         "typing-extensions": {
             "hashes": [

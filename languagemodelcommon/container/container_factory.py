@@ -5,8 +5,14 @@ from langchain_ai_skills_framework.loaders.skill_loader import (
     SkillDirectoryLoader,
     SkillLoaderProtocol,
 )
+from oidcauthlib.auth.auth_manager import AuthManager
+from oidcauthlib.auth.config.auth_config_reader import AuthConfigReader
 from oidcauthlib.container.simple_container import SimpleContainer
 
+from languagemodelcommon.auth.token_exchange.token_exchange_manager import (
+    TokenExchangeManager,
+)
+from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
@@ -26,6 +32,9 @@ from languagemodelcommon.image_generation.managers.image_generation_manager impo
 from languagemodelcommon.image_generation.providers.image_generation_provider import (
     ImageGenerationProvider,
 )
+from languagemodelcommon.mcp.interceptors.tracing import TracingMcpCallInterceptor
+from languagemodelcommon.mcp.interceptors.truncation import TruncationMcpCallInterceptor
+from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from languagemodelcommon.utilities.cache import ConfigExpiringCache
@@ -167,6 +176,47 @@ class LanguageModelCommonContainerFactory:
             lambda c: OCRExtractorFactory(
                 aws_client_factory=c.resolve(AwsClientFactory),
                 file_manager_factory=c.resolve(FileManagerFactory),
+            ),
+        )
+
+        container.singleton(
+            TruncationMcpCallInterceptor,
+            lambda c: TruncationMcpCallInterceptor(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                token_reducer=c.resolve(TokenReducer),
+            ),
+        )
+
+        container.singleton(
+            TracingMcpCallInterceptor,
+            lambda c: TracingMcpCallInterceptor(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+            ),
+        )
+
+        container.singleton(
+            MCPToolProvider,
+            lambda c: MCPToolProvider(
+                tool_auth_manager=c.resolve(ToolAuthManager),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                token_reducer=c.resolve(TokenReducer),
+                tracing_interceptor=c.resolve(TracingMcpCallInterceptor),
+                truncation_interceptor=c.resolve(TruncationMcpCallInterceptor),
+            ),
+        )
+
+        container.singleton(
+            ToolAuthManager,
+            lambda c: ToolAuthManager(
+                auth_manager=c.resolve(AuthManager),
+                token_exchange_manager=c.resolve(TokenExchangeManager),
+                auth_config_reader=c.resolve(AuthConfigReader),
             ),
         )
 
