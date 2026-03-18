@@ -49,7 +49,7 @@ from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
-from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )

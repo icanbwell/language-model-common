@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
 
 def _long_text() -> str:

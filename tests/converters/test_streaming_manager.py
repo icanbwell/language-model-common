@@ -3,7 +3,7 @@ from collections.abc import Callable
 import pytest
 
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
-from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )

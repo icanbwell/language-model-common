@@ -48,7 +48,7 @@ from langchain_core.runnables.schema import (
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
-from languagemodelcommon.utilities.auth.token_reducer import TokenReducer
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.chat_message_helpers import (
     iter_message_content_text_chunks,
 )
