@@ -89,8 +89,6 @@ types-boto3-bedrock-runtime = ">=1.40.0"
 moto = { version = ">=5.1.11", extras = ["s3"] }
 # respx is a Python library for mocking HTTP requests in tests
 respx = ">=0.22.0"
-# pytest-httpx is a Python library for mocking HTTPX tests
-pytest-httpx = ">=0.35.0"
 # types-beautifulsoup is a Python library for typing BeautifulSoup
 types-beautifulsoup4 = ">=4.12.0"
 
