@@ -24,7 +24,9 @@ openai = ">=2.5.0"
 pydantic = ">=2.0,<3.0.0"
 tiktoken = ">=0.7.0"
 # langchain-ai-skills-framework is a Python library for building AI skills in LangChain
-langchain-ai-skills-framework = ">=1.0.2"
+langchain-ai-skills-framework = ">=1.0.4"
+# simple-container is a Python library for working with containers
+simple-container = ">=1.0.1"
 
 [dev-packages]
 setuptools=">=60.9.3"

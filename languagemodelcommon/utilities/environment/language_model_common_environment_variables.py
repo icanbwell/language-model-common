@@ -1,6 +1,18 @@
 import os
 import logging
+from typing import Optional
 
+from langchain_ai_skills_framework.environment.environment_variables import (
+    LangchainAISkillsFrameworkEnvironmentVariables,
+)
+from langchain_ai_skills_framework.loaders.skill_loader import (
+    SkillLoaderEnvironmentVariables,
+)
+from simple_container.environment.environment_variables import EnvironmentVariables
+
+from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
+    PromptLibraryEnvironmentVariables,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +26,12 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 )
 
 
-class LanguageModelCommonEnvironmentVariables:
+class LanguageModelCommonEnvironmentVariables(
+    EnvironmentVariables,
+    LangchainAISkillsFrameworkEnvironmentVariables,
+    PromptLibraryEnvironmentVariables,
+    SkillLoaderEnvironmentVariables,
+):
     @property
     def streaming_buffer_flush_interval_seconds(self) -> float:
         """Interval in seconds for flushing the streaming buffer when processing LLM responses."""
@@ -39,3 +56,10 @@ class LanguageModelCommonEnvironmentVariables:
             "GENERIC_ERROR_MESSAGE",
             DEFAULT_GENERIC_ERROR_MESSAGE,
         )
+
+    @property
+    def prompt_library_path(self) -> Optional[str]:
+        configured = os.environ.get("PROMPT_LIBRARY_PATH")
+        if configured and configured.strip():
+            return configured
+        return None
