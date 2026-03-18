@@ -33,6 +33,8 @@ langchain-core = ">=1.2.5"
 langgraph = ">=1.0.0"
 # pydantic is a Python library for data validation
 pydantic = ">=2.0,<3.0.0"  # needed by langchain
+# for testing the MCP client
+mcp = ">=1.11.0"
 # langchain_mcp_adapters is a Python library for working with MCP adapters in LangChain
 langchain_mcp_adapters = ">=0.2.1"
 # langmem is a Python library for managing language model memory
@@ -54,6 +56,8 @@ simple-container = ">=1.0.1"
 pypdf = ">=6.6.0"
 # markdownify is a Python library for converting HTML to Markdown
 markdownify = ">=0.14.1"
+# beautifulsoup4 is a Python library for parsing HTML and XML
+beautifulsoup4 = ">=4.12.3"
 
 [dev-packages]
 setuptools=">=60.9.3"
@@ -71,6 +75,9 @@ bandit = ">=1.8.3"
 ruff = ">=0.11.5"
 # pytest-cov is needed for measuring test coverage
 pytest-cov = ">=6.1.1"
+# pytest-httpx is a Python library for mocking HTTPX tests
+pytest-httpx = ">=0.35.0"
+types-requests = ">=2.32.4"
 # types-boto3 provides type hints for boto3
 types-botocore = { version = ">=1.0.2" }
 types-boto3 = { version = ">=1.40.0" }
@@ -78,6 +85,14 @@ types-boto3-bedrock = ">=1.40.0"
 types-boto3-s3 = ">=1.40.0"
 types-boto3-textract = ">=1.40.0"
 types-boto3-bedrock-runtime = ">=1.40.0"
+# moto is a Python library for mocking AWS services
+moto = { version = ">=5.1.11", extras = ["s3"] }
+# respx is a Python library for mocking HTTP requests in tests
+respx = ">=0.22.0"
+# pytest-httpx is a Python library for mocking HTTPX tests
+pytest-httpx = ">=0.35.0"
+# types-beautifulsoup is a Python library for typing BeautifulSoup
+types-beautifulsoup4 = ">=4.12.0"
 
 # These dependencies are required for pipenv-setup.  They conflict with ones above, so we install these
 # only when running pipenv-setup
