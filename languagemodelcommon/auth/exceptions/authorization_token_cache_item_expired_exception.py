@@ -2,7 +2,7 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
     AuthorizationNeededException,
 )
 
-from language_model_gateway.gateway.auth.models.token_cache_item import TokenCacheItem
+from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
 
 
 class AuthorizationTokenCacheItemExpiredException(AuthorizationNeededException):

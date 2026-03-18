@@ -17,21 +17,21 @@ from languagemodelcommon.configs.schemas.config_schema import AuthenticationConf
 from oidcauthlib.auth.config.auth_config_reader import (
     AuthConfigReader,
 )
-from language_model_gateway.gateway.auth.exceptions.authorization_token_cache_item_expired_exception import (
+from languagemodelcommon.auth.exceptions.authorization_token_cache_item_expired_exception import (
     AuthorizationTokenCacheItemExpiredException,
 )
-from language_model_gateway.gateway.auth.exceptions.authorization_token_cache_item_not_found_exception import (
+from languagemodelcommon.auth.exceptions.authorization_token_cache_item_not_found_exception import (
     AuthorizationTokenCacheItemNotFoundException,
 )
 from oidcauthlib.auth.models.token import Token
 
 from oidcauthlib.auth.token_reader import TokenReader
 
-from language_model_gateway.gateway.auth.models.token_cache_item import TokenCacheItem
-from language_model_gateway.gateway.utilities.language_model_gateway_environment_variables import (
+from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
+from languagemodelcommon.utilities.language_model_gateway_environment_variables import (
     LanguageModelGatewayEnvironmentVariables,
 )
-from language_model_gateway.gateway.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS["TOKEN_EXCHANGE"])

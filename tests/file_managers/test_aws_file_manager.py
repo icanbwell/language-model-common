@@ -7,11 +7,11 @@ from moto import mock_aws
 from starlette.responses import Response, StreamingResponse
 from boto3 import Session
 
-from language_model_gateway.gateway.aws.aws_client_factory import AwsClientFactory
-from language_model_gateway.gateway.file_managers.aws_s3_file_manager import (
+from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
+from languagemodelcommon.file_managers.aws_s3_file_manager import (
     AwsS3FileManager,
 )
-from language_model_gateway.gateway.utilities.s3_url import S3Url
+from languagemodelcommon.utilities.s3_url import S3Url
 from tests.gateway.mocks.mock_aws_client_factory import MockAwsClientFactory
 from types_boto3_s3.client import S3Client
 

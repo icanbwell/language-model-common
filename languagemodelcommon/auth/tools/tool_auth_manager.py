@@ -6,14 +6,14 @@ from oidcauthlib.auth.auth_manager import AuthManager
 from oidcauthlib.auth.config.auth_config_reader import AuthConfigReader
 
 from languagemodelcommon.configs.schemas.config_schema import AuthenticationConfig
-from language_model_gateway.gateway.auth.exceptions.authorization_token_cache_item_expired_exception import (
+from languagemodelcommon.auth.exceptions.authorization_token_cache_item_expired_exception import (
     AuthorizationTokenCacheItemExpiredException,
 )
-from language_model_gateway.gateway.auth.models.token_cache_item import TokenCacheItem
-from language_model_gateway.gateway.auth.token_exchange.token_exchange_manager import (
+from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
+from languagemodelcommon.auth.token_exchange.token_exchange_manager import (
     TokenExchangeManager,
 )
-from language_model_gateway.gateway.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS["AUTH"])

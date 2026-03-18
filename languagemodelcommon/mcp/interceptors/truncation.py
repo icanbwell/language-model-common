@@ -15,10 +15,10 @@ from mcp.types import (
     CallToolResult,
 )
 
-from language_model_gateway.gateway.utilities.language_model_gateway_environment_variables import (
+from languagemodelcommon.utilities.language_model_gateway_environment_variables import (
     LanguageModelGatewayEnvironmentVariables,
 )
-from language_model_gateway.gateway.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.token_reducer.token_reducer import (
     TokenReducer,
 )

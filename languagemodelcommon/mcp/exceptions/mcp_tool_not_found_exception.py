@@ -1,4 +1,4 @@
-from language_model_gateway.gateway.mcp.exceptions.mcp_tool_exception import (
+from languagemodelcommon.mcp.exceptions.mcp_tool_exception import (
     McpToolException,
 )
 

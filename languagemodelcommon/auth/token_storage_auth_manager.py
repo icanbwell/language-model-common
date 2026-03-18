@@ -17,14 +17,14 @@ from oidcauthlib.utilities.environment.abstract_environment_variables import (
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from language_model_gateway.gateway.auth.models.token_cache_item import TokenCacheItem
-from language_model_gateway.gateway.auth.token_exchange.token_exchange_manager import (
+from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
+from languagemodelcommon.auth.token_exchange.token_exchange_manager import (
     TokenExchangeManager,
 )
-from language_model_gateway.gateway.utilities.auth_success_page import (
+from languagemodelcommon.utilities.auth_success_page import (
     build_auth_success_page,
 )
-from language_model_gateway.gateway.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS["AUTH"])
