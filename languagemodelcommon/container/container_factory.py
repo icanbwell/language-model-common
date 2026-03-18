@@ -27,6 +27,11 @@ class LanguageModelCommonContainerFactory:
     def register_services_in_container(
         *, container: SimpleContainer
     ) -> SimpleContainer:
+
+        container.singleton(
+            LanguageModelCommonEnvironmentVariables,
+            lambda c: LanguageModelCommonEnvironmentVariables(),
+        )
         # we want only one instance of the cache so we use singleton
         container.singleton(
             ConfigExpiringCache,

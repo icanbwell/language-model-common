@@ -45,9 +45,11 @@ ruff = ">=0.11.5"
 # pytest-cov is needed for measuring test coverage
 pytest-cov = ">=6.1.1"
 # types-boto3 provides type hints for boto3
-types-boto3 = { version = ">=1.40.0"}
 types-botocore = { version = ">=1.0.2" }
+types-boto3 = { version = ">=1.40.0" }
 types-boto3-bedrock = ">=1.40.0"
+types-boto3-s3 = ">=1.40.0"
+types-boto3-textract = ">=1.40.0"
 types-boto3-bedrock-runtime = ">=1.40.0"
 
 # These dependencies are required for pipenv-setup.  They conflict with ones above, so we install these
