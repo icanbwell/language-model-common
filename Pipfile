@@ -27,6 +27,8 @@ tiktoken = ">=0.7.0"
 langchain-ai-skills-framework = ">=1.0.4"
 # simple-container is a Python library for working with containers
 simple-container = ">=1.0.1"
+# pypdf is a Python library for working with PDFs
+pypdf = ">=6.6.0"
 
 [dev-packages]
 setuptools=">=60.9.3"
