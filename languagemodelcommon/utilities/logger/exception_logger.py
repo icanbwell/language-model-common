@@ -212,3 +212,4 @@ class ExceptionLogger:
             extract_nested_exceptions(error)
 
             return "\n\n".join(error_details)
+        return None

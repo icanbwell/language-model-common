@@ -16,7 +16,7 @@ from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReduc
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
-from tests.mocks.mock_aws_client_factory import MockAwsClientFactory
+from languagemodelcommon.mocks.mock_aws_client_factory import MockAwsClientFactory
 
 
 class _FakeClock:
