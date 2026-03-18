@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
+    PromptLibraryEnvironmentVariables,
+)
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
-    PromptLibraryEnvironmentVariables,
 )
 
 

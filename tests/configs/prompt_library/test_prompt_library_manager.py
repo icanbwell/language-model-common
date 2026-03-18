@@ -1,8 +1,10 @@
 import pytest
 from pathlib import Path
 
-from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
+from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
+)
+from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
 

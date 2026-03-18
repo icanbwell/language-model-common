@@ -1,18 +1,11 @@
 from __future__ import annotations
 
 import re
-from typing import Protocol, runtime_checkable
 from pathlib import Path
 
-from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-    LanguageModelCommonEnvironmentVariables,
+from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
+    PromptLibraryEnvironmentVariables,
 )
-
-
-@runtime_checkable
-class PromptLibraryEnvironmentVariables(Protocol):
-    @property
-    def prompt_library_path(self) -> str | None: ...
 
 
 class PromptLibraryManager:
@@ -23,8 +16,6 @@ class PromptLibraryManager:
         *,
         environment_variables: PromptLibraryEnvironmentVariables,
     ) -> None:
-        if environment_variables is None:
-            environment_variables = LanguageModelCommonEnvironmentVariables()
         if not isinstance(environment_variables, PromptLibraryEnvironmentVariables):
             raise TypeError(
                 "environment_variables must implement PromptLibraryEnvironmentVariables"

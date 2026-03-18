@@ -9,7 +9,7 @@ from langchain_ai_skills_framework.loaders.skill_loader import (
     SkillLoaderEnvironmentVariables,
 )
 
-from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
+from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
 
