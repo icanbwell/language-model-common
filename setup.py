@@ -80,6 +80,7 @@ setup(
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
         "beautifulsoup4>=4.12.3",
+        "oidcauthlib>=2.0.18",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
