@@ -12,7 +12,7 @@ from languagemodelcommon.file_managers.aws_s3_file_manager import (
     AwsS3FileManager,
 )
 from languagemodelcommon.utilities.s3_url import S3Url
-from tests.gateway.mocks.mock_aws_client_factory import MockAwsClientFactory
+from tests.mocks.mock_aws_client_factory import MockAwsClientFactory
 from types_boto3_s3.client import S3Client
 
 

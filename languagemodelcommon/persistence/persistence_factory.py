@@ -8,7 +8,10 @@ from langgraph.store.memory import InMemoryStore
 from langgraph.store.base import BaseStore
 from langgraph.store.mongodb import MongoDBStore
 
-from language_model_gateway.utilities.mongo_url_utils import MongoUrlHelpers
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
+from languagemodelcommon.utilities.mongo_url_utils import MongoUrlHelpers
 
 
 class PersistenceFactory:
@@ -19,7 +22,7 @@ class PersistenceFactory:
     """
 
     def __init__(
-        self, *, environment_variables: LanguageModelGatewayEnvironmentVariables
+        self, *, environment_variables: LanguageModelCommonEnvironmentVariables
     ) -> None:
         self._environment_variables = environment_variables
 

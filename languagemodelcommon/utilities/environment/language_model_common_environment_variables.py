@@ -8,6 +8,9 @@ from langchain_ai_skills_framework.environment.environment_variables import (
 from langchain_ai_skills_framework.loaders.skill_loader import (
     SkillLoaderEnvironmentVariables,
 )
+from oidcauthlib.utilities.environment.oidc_environment_variables import (
+    OidcEnvironmentVariables,
+)
 
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
@@ -29,6 +32,7 @@ class LanguageModelCommonEnvironmentVariables(
     LangchainAISkillsFrameworkEnvironmentVariables,
     PromptLibraryEnvironmentVariables,
     SkillLoaderEnvironmentVariables,
+    OidcEnvironmentVariables,
 ):
     @property
     def streaming_buffer_flush_interval_seconds(self) -> float:
@@ -66,3 +70,45 @@ class LanguageModelCommonEnvironmentVariables(
     def maximum_inline_tool_output_size(self) -> int:
         """Maximum size in characters for tool output to be inlined in responses."""
         return int(os.environ.get("MAXIMUM_INLINE_TOOL_OUTPUT_SIZE", "100"))
+
+    @property
+    def enable_llm_memory(self) -> bool:
+        return self.str2bool(os.environ.get("ENABLE_LLM_MEMORY", "false"))
+
+    @property
+    def llm_storage_type(self) -> str:
+        return os.environ.get("LLM_STORAGE_TYPE", "memory")
+
+    @property
+    def mongo_llm_storage_uri(self) -> Optional[str]:
+        return os.environ.get("MONGO_LLM_STORAGE_URI") or self.mongo_uri
+
+    @property
+    def mongo_llm_storage_db_name(self) -> Optional[str]:
+        return os.environ.get("MONGO_LLM_STORAGE_DB_NAME", "llm_storage")
+
+    @property
+    def mongo_llm_storage_db_username(self) -> Optional[str]:
+        return os.environ.get("MONGO_LLM_STORAGE_DB_USERNAME") or self.mongo_db_username
+
+    @property
+    def mongo_llm_storage_db_password(self) -> Optional[str]:
+        return os.environ.get("MONGO_LLM_STORAGE_DB_PASSWORD") or self.mongo_db_password
+
+    @property
+    def mongo_llm_storage_store_collection_name(self) -> str:
+        return os.environ.get("MONGO_LLM_STORAGE_STORE_COLLECTION_NAME", "stores")
+
+    @property
+    def mongo_llm_storage_checkpointer_collection_name(self) -> str:
+        return os.environ.get(
+            "MONGO_LLM_STORAGE_CHECKPOINTER_COLLECTION_NAME", "checkpoints"
+        )
+
+    @property
+    def enable_llm_store(self) -> bool:
+        return self.str2bool(os.environ.get("ENABLE_LLM_STORE", "false"))
+
+    @property
+    def enable_llm_checkpointer(self) -> bool:
+        return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
