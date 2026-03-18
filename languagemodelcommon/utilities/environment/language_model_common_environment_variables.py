@@ -8,7 +8,6 @@ from langchain_ai_skills_framework.environment.environment_variables import (
 from langchain_ai_skills_framework.loaders.skill_loader import (
     SkillLoaderEnvironmentVariables,
 )
-from simple_container.environment.environment_variables import EnvironmentVariables
 
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryEnvironmentVariables,
@@ -27,7 +26,6 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 
 
 class LanguageModelCommonEnvironmentVariables(
-    EnvironmentVariables,
     LangchainAISkillsFrameworkEnvironmentVariables,
     PromptLibraryEnvironmentVariables,
     SkillLoaderEnvironmentVariables,
