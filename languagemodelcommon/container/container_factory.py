@@ -17,6 +17,9 @@ from languagemodelcommon.converters.langgraph_to_openai_converter import (
 )
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
+from languagemodelcommon.image_generation.image_generator_factory import ImageGeneratorFactory
+from languagemodelcommon.image_generation.managers.image_generation_manager import ImageGenerationManager
+from languagemodelcommon.image_generation.providers.image_generation_provider import ImageGenerationProvider
 from languagemodelcommon.utilities.cache import ConfigExpiringCache
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -121,6 +124,35 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             AwsClientFactory,
             lambda c: AwsClientFactory(),
+        )
+
+        container.singleton(
+            ImageGeneratorFactory,
+            lambda c: ImageGeneratorFactory(
+                aws_client_factory=c.resolve(AwsClientFactory)
+            ),
+        )
+
+        container.singleton(
+            ImageGenerationProvider,
+            lambda c: ImageGenerationProvider(
+                image_generator_factory=c.resolve(ImageGeneratorFactory),
+                file_manager_factory=c.resolve(FileManagerFactory),
+            ),
+        )
+        container.singleton(
+            ImageGenerationManager,
+            lambda c: ImageGenerationManager(
+                image_generation_provider=c.resolve(ImageGenerationProvider)
+            ),
+        )
+
+        container.singleton(
+            OCRExtractorFactory,
+            lambda c: OCRExtractorFactory(
+                aws_client_factory=c.resolve(AwsClientFactory),
+                file_manager_factory=c.resolve(FileManagerFactory),
+            ),
         )
 
         return container
