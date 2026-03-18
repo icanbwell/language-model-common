@@ -6,6 +6,7 @@ from langchain_core.messages import AnyMessage
 from langchain_core.messages.ai import UsageMetadata
 from starlette.responses import StreamingResponse, JSONResponse
 
+from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
@@ -20,6 +21,8 @@ class ChatRequestWrapper(abc.ABC):
     @abstractmethod
     def model(self) -> str: ...
 
+    """messages: The messages in the chat request.  This is used for tools that need to read the messages in the chat request, such as a tool that extracts a JSON object from the message content."""
+
     @property
     @abstractmethod
     def messages(self) -> list[ChatMessageWrapper]: ...
@@ -28,15 +31,15 @@ class ChatRequestWrapper(abc.ABC):
     @abstractmethod
     def messages(self, value: list[ChatMessageWrapper]) -> None: ...
 
-    @abstractmethod
-    def append_message(self, *, message: ChatMessageWrapper) -> None: ...
-
     """ Append a message to the messages in the chat request.  This is used for tools that need to add a message to the end of the messages, such as a tool that adds a system message to the end of the messages."""
 
     @abstractmethod
-    def create_system_message(self, *, content: str) -> ChatMessageWrapper: ...
+    def append_message(self, *, message: ChatMessageWrapper) -> None: ...
 
     """ Create a system message and append it to the messages in the chat request.  This is used for tools that need to add a system message to the messages, such as a tool that adds a system message to the beginning of the messages."""
+
+    @abstractmethod
+    def create_system_message(self, *, content: str) -> ChatMessageWrapper: ...
 
     """stream: Whether the response should be streamed back in chunks as they are generated, or returned all at once after the model has finished generating.  This is used for tools that need to know whether the response will be streamed or not, such as a tool that extracts a JSON object from the message content and needs to know whether to expect multiple messages with partial content or just one message with the full content."""
 
@@ -107,6 +110,11 @@ class ChatRequestWrapper(abc.ABC):
 
     @abstractmethod
     def to_dict(self) -> dict[str, Any]: ...
+
+    """get_tools: Get a list of tools that should be used for this chat request.  This is used for tools that need to know which tools to use for a given chat request, such as a tool that extracts a JSON object from the message content and needs to know which tool to use to extract the JSON object."""
+
+    @abstractmethod
+    def get_tools(self) -> list[AgentConfig]: ...
 
     """stream_response: Stream the response back in chunks as they are generated.  This is used for tools that need to stream the response back, such as a tool that extracts a JSON object from the message content and needs to receive the content in chunks as it is generated."""
 
