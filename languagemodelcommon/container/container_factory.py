@@ -17,9 +17,17 @@ from languagemodelcommon.converters.langgraph_to_openai_converter import (
 )
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
-from languagemodelcommon.image_generation.image_generator_factory import ImageGeneratorFactory
-from languagemodelcommon.image_generation.managers.image_generation_manager import ImageGenerationManager
-from languagemodelcommon.image_generation.providers.image_generation_provider import ImageGenerationProvider
+from languagemodelcommon.image_generation.image_generator_factory import (
+    ImageGeneratorFactory,
+)
+from languagemodelcommon.image_generation.managers.image_generation_manager import (
+    ImageGenerationManager,
+)
+from languagemodelcommon.image_generation.providers.image_generation_provider import (
+    ImageGenerationProvider,
+)
+from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
+from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from languagemodelcommon.utilities.cache import ConfigExpiringCache
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -144,6 +152,13 @@ class LanguageModelCommonContainerFactory:
             ImageGenerationManager,
             lambda c: ImageGenerationManager(
                 image_generation_provider=c.resolve(ImageGenerationProvider)
+            ),
+        )
+
+        container.singleton(
+            PersistenceFactory,
+            lambda c: PersistenceFactory(
+                environment_variables=c.resolve(LanguageModelCommonEnvironmentVariables)
             ),
         )
 
