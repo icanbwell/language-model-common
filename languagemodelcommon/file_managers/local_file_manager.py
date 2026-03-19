@@ -16,6 +16,22 @@ logger.setLevel(SRC_LOG_LEVELS["FILES"])
 
 
 class LocalFileManager(FileManager):
+    @staticmethod
+    def _resolve_safe_path(
+        *, folder: str, relative_path: str, create_folder: bool = False
+    ) -> Path:
+        base_path = Path(folder).resolve()
+        if create_folder:
+            makedirs(base_path, exist_ok=True)
+
+        resolved_path = (base_path / relative_path).resolve()
+        try:
+            resolved_path.relative_to(base_path)
+        except ValueError as ex:
+            raise ValueError("Invalid file path") from ex
+
+        return resolved_path
+
     @override
     async def save_file_async(
         self,
@@ -38,9 +54,9 @@ class LocalFileManager(FileManager):
 
     @override
     def get_full_path(self, *, filename: str, folder: str) -> str:
-        image_generation_path = Path(folder)
-        makedirs(image_generation_path, exist_ok=True)
-        file_path: Path = image_generation_path / filename
+        file_path = self._resolve_safe_path(
+            folder=folder, relative_path=filename, create_folder=True
+        )
         return str(file_path)
 
     # @override
@@ -64,8 +80,8 @@ class LocalFileManager(FileManager):
     async def read_file_async(
         self, *, folder: str, file_path: str
     ) -> StreamingResponse:
-        full_path: str = str(Path(folder) / Path(file_path))
         try:
+            full_path = self._resolve_safe_path(folder=folder, relative_path=file_path)
             # Determine file size and MIME type
             file_size = os.path.getsize(full_path)
             mime_type, _ = mimetypes.guess_type(full_path)
@@ -85,11 +101,12 @@ class LocalFileManager(FileManager):
                     "Content-Disposition": f'inline; filename="{os.path.basename(full_path)}"',
                 },
             )
+        except ValueError:
+            logger.warning("Invalid file path requested")
+            raise HTTPException(status_code=400, detail="Invalid file path")
         except FileNotFoundError:
-            logger.error(f"File not found: {full_path}")
-            raise HTTPException(status_code=404, detail=f"File not found: {full_path}")
+            logger.error("File not found")
+            raise HTTPException(status_code=404, detail="File not found")
         except PermissionError:
-            logger.error(f"Access forbidden: {full_path}")
-            raise HTTPException(
-                status_code=403, detail=f"Access forbidden: {full_path}"
-            )
+            logger.error("Access forbidden")
+            raise HTTPException(status_code=403, detail="Access forbidden")
