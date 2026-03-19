@@ -1,0 +1,36 @@
+"""
+Custom state class for LangGraph message handling.
+
+This module defines the state schema used by LangGraph agents in BaileyAI,
+extending the base AgentStatePydantic with additional metadata fields.
+"""
+
+from typing import Optional
+
+from langchain.agents import AgentState
+from langchain_core.messages.ai import UsageMetadata
+
+
+class MyMessagesState(AgentState):
+    """
+    Custom state class that extends AgentStatePydantic to include additional metadata.
+    """
+
+    usage_metadata: Optional[UsageMetadata]
+    """ Metadata about the usage of the agent, if available."""
+
+    auth_token: Optional[str]
+    """ The authentication token associated with the request, if available."""
+
+    # https://langchain-ai.github.io/langgraph/how-tos/memory/add-memory/#read-short-term
+    user_id: Optional[str]
+    """ The user ID associated with the request, if available."""
+
+    conversation_thread_id: Optional[str]
+    """ The conversation thread identifier for the request, if applicable."""
+
+    passed_evaluation: Optional[bool]
+    """ Flag indicating whether the agent passed an evaluation, if applicable."""
+
+    evaluation_notes: Optional[str]
+    """ Notes related to the evaluation of the agent, if applicable."""

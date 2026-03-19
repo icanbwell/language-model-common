@@ -1,0 +1,11 @@
+.DS_Store
+.git
+.github
+.idea
+.mypy_cache
+.pytest_cache
+tmp
+Makefile
+tests
+tests_integration
+__pycache__
