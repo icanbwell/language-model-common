@@ -57,6 +57,48 @@ def test_find_json_configs_reads_and_sorts(monkeypatch: Any, tmp_path: Any) -> N
     assert [c.name for c in configs] == ["A", "B"]
 
 
+def test_find_json_configs_blocks_directory_traversal(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    outside_dir = tmp_path.parent / "outside-configs"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    (outside_dir / "leak.json").write_text('{"name": "LEAK", "id": "leak"}')
+
+    monkeypatch.setattr(
+        "languagemodelcommon.configs.config_reader.github_config_zip_reader.ChatModelConfig",
+        lambda **kwargs: type("C", (), kwargs)(),
+    )
+
+    downloader = GitHubConfigZipDownloader()
+    configs = downloader._find_json_configs(
+        str(tmp_path), config_dir="../outside-configs"
+    )
+
+    assert configs == []
+
+
+def test_find_json_configs_skips_symlink_escape(
+    monkeypatch: Any, tmp_path: Any
+) -> None:
+    allowed_dir = tmp_path / "configs"
+    allowed_dir.mkdir(parents=True, exist_ok=True)
+    (allowed_dir / "safe.json").write_text('{"name": "SAFE", "id": "safe"}')
+
+    outside_file = tmp_path.parent / "outside-secret.json"
+    outside_file.write_text('{"name": "LEAK", "id": "leak"}')
+    (allowed_dir / "linked-secret.json").symlink_to(outside_file)
+
+    monkeypatch.setattr(
+        "languagemodelcommon.configs.config_reader.github_config_zip_reader.ChatModelConfig",
+        lambda **kwargs: type("C", (), kwargs)(),
+    )
+
+    downloader = GitHubConfigZipDownloader()
+    configs = downloader._find_json_configs(str(tmp_path), config_dir="configs")
+
+    assert [c.name for c in configs] == ["SAFE"]
+
+
 @pytest.mark.asyncio
 @patch.object(GitHubConfigZipDownloader, "download_zip", new_callable=AsyncMock)
 @patch.object(GitHubConfigZipDownloader, "_find_json_configs")

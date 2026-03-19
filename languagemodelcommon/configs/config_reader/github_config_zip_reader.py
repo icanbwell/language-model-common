@@ -163,8 +163,23 @@ class GitHubConfigZipDownloader:
         """
         configs: List[ChatModelConfig] = []
 
-        # Determine search path
-        search_path = os.path.join(repo_path, config_dir) if config_dir else repo_path
+        repo_root = os.path.realpath(repo_path)
+        search_path = (
+            os.path.realpath(os.path.join(repo_root, config_dir))
+            if config_dir
+            else repo_root
+        )
+
+        try:
+            if os.path.commonpath([repo_root, search_path]) != repo_root:
+                logger.warning("Skipping config directory outside repository root")
+                return configs
+        except ValueError:
+            logger.warning("Skipping invalid config directory path")
+            return configs
+
+        if not os.path.isdir(search_path):
+            return configs
 
         # Walk through directory
         for root, _, files in os.walk(search_path):
@@ -172,7 +187,16 @@ class GitHubConfigZipDownloader:
                 if file.endswith(".json"):
                     try:
                         file_path = os.path.join(root, file)
-                        with open(file_path, "r", encoding="utf-8") as f:
+                        resolved_file_path = os.path.realpath(file_path)
+                        if (
+                            os.path.commonpath([search_path, resolved_file_path])
+                            != search_path
+                        ):
+                            logger.warning(
+                                "Skipping config file outside allowed directory"
+                            )
+                            continue
+                        with open(resolved_file_path, "r", encoding="utf-8") as f:
                             config = substitute_env_vars(json.load(f))
                             configs.append(ChatModelConfig(**config))
                     except json.JSONDecodeError as e:
