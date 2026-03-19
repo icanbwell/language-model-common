@@ -450,7 +450,7 @@ class LangGraphStreamingManager:
                 tool_message_content_length: int = len(tool_message_content)
                 token_count: int = self.token_reducer.count_tokens(tool_message_content)
                 file_url: Optional[str] = None
-                if (
+                if self.environment_variables.write_tool_output_to_file and (
                     tool_message_content_length
                     > self.environment_variables.maximum_inline_tool_output_size
                 ):

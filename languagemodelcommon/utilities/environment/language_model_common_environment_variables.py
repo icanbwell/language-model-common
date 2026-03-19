@@ -112,3 +112,7 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def enable_llm_checkpointer(self) -> bool:
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
+
+    @property
+    def write_tool_output_to_file(self) -> bool:
+        return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
