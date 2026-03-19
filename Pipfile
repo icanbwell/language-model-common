@@ -49,9 +49,9 @@ langgraph-store-mongodb = ">=0.1.0"
 # tiktoken 0.8.0 is missing wheel for tiktoken-0.7.0-cp312-cp312-musllinux_1_2_aarch64.whl: https://pypi.org/simple/tiktoken/
 tiktoken = ">=0.12.0"
 # langchain-ai-skills-framework is a Python library for building AI skills in LangChain
-langchain-ai-skills-framework = ">=1.0.4"
+langchain-ai-skills-framework = ">=1.0.5"
 # simple-container is a Python library for working with containers
-simple-container = ">=1.0.1"
+simple-container = ">=1.0.2"
 # pypdf is a Python library for working with PDFs
 pypdf = ">=6.6.0"
 # markdownify is a Python library for converting HTML to Markdown
@@ -59,7 +59,7 @@ markdownify = ">=0.14.1"
 # beautifulsoup4 is a Python library for parsing HTML and XML
 beautifulsoup4 = ">=4.12.3"
 # oidcauthlib is a Python library for OpenID Connect authentication
-oidcauthlib = ">=3.0.0"
+oidcauthlib = ">=3.0.1"
 
 [dev-packages]
 setuptools=">=60.9.3"
