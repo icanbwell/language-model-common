@@ -67,7 +67,7 @@ setup(
         "langchain-openai>=1.1.6",
         "langchain-core>=1.2.5",
         "langgraph>=1.0.0",
-        "pydantic>=2.0,<3.0.0",
+        "pydantic<3.0.0,>=2.0",
         "mcp>=1.11.0",
         "langchain-mcp-adapters>=0.2.1",
         "langmem>=0.0.30",
@@ -80,7 +80,7 @@ setup(
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
         "beautifulsoup4>=4.12.3",
-        "oidcauthlib>=2.0.18",
+        "oidcauthlib>=3.0.0",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",

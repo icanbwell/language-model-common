@@ -5,7 +5,7 @@ from langchain_ai_skills_framework.loaders.skill_loader import (
     SkillDirectoryLoader,
     SkillLoaderProtocol,
 )
-from oidcauthlib.container.simple_container import SimpleContainer
+from simple_container.container.simple_container import SimpleContainer
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
