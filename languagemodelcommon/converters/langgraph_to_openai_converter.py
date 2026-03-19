@@ -148,6 +148,7 @@ class LangGraphToOpenAIConverter:
                     chat_request_wrapper=chat_request_wrapper,
                     request_information=request_information,
                     tool_start_times=tool_start_times,
+                    user_id=request_information.user_id,
                 ):
                     yield chunk
         except TokenRetrievalError as e:
