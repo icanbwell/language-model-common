@@ -41,7 +41,7 @@ from languagemodelcommon.utilities.chat_message_helpers import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["LLM"])
+logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class ChatCompletionApiRequestWrapper(ChatRequestWrapper):

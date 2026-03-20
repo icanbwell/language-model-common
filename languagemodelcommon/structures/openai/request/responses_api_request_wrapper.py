@@ -32,7 +32,7 @@ from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["LLM"])
+logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class ResponsesApiRequestWrapper(ChatRequestWrapper):

@@ -60,7 +60,7 @@ from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogge
 from languagemodelcommon.utilities.request_information import RequestInformation
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["LLM"])
+logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class LangGraphToOpenAIConverter:

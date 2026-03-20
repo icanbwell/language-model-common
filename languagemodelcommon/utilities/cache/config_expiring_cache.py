@@ -10,7 +10,7 @@ from languagemodelcommon.utilities.cache.expiring_cache import ExpiringCache
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["CONFIG"])
+logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):

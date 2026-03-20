@@ -9,7 +9,7 @@ from languagemodelcommon.utilities.logger.logging_response import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["HTTP"])
+logger.setLevel(SRC_LOG_LEVELS.HTTP)
 
 
 class LoggingTransport(httpx.AsyncBaseTransport):

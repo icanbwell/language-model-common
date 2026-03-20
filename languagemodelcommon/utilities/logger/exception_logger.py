@@ -12,7 +12,7 @@ from languagemodelcommon.utilities.logger.exception_formatter import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["ERRORS"])
+logger.setLevel(SRC_LOG_LEVELS.ERRORS)
 
 # Default generic error message when not exposing technical details
 DEFAULT_GENERIC_ERROR_MESSAGE = (

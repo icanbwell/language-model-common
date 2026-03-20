@@ -31,7 +31,7 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["CONFIG"])
+logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class ConfigReader:

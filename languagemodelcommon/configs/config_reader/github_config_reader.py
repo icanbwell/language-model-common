@@ -14,7 +14,7 @@ from languagemodelcommon.utilities.config_substitution import substitute_env_var
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["CONFIG"])
+logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class GitHubConfigReader:

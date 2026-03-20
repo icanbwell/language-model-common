@@ -12,7 +12,7 @@ from languagemodelcommon.utilities.s3_url import S3Url
 from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["FILES"])
+logger.setLevel(SRC_LOG_LEVELS.FILES)
 
 
 class AwsS3FileManager(FileManager):

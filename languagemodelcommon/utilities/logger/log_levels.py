@@ -36,9 +36,21 @@ log_sources = [
     "CACHE",
     "EVALUATOR",
     "RESPONSES",
+    "TOOLS",
 ]
 
-SRC_LOG_LEVELS = {}
+
+class _SourceLogLevels(dict[str, str]):
+    """Dictionary-backed container that also supports attribute access."""
+
+    def __getattr__(self, name: str) -> str:
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+SRC_LOG_LEVELS = _SourceLogLevels()
 
 for source in log_sources:
     log_env_var = source + "_LOG_LEVEL"

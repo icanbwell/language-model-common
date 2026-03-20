@@ -7,7 +7,7 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.text_humanizer import Humanizer
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["TOOLS"])
+logger.setLevel(SRC_LOG_LEVELS.TOOLS)
 
 
 class ToolFriendlyNameMapper:

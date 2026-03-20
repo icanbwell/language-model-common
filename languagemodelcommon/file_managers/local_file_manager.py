@@ -12,7 +12,7 @@ from languagemodelcommon.file_managers.file_manager import FileManager
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["FILES"])
+logger.setLevel(SRC_LOG_LEVELS.FILES)
 
 
 class LocalFileManager(FileManager):
