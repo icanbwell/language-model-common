@@ -731,9 +731,13 @@ class LangGraphToOpenAIConverter:
                 )
 
         logger.debug(
-            f"Creating LLM graph with tools: {tools=}, store={'provided' if store else 'none'}, "
-            f"checkpointer={'provided' if checkpointer else 'none'}, "
-            f"system_prompt={'provided' if system_prompt else 'none'}, skill_loader={'provided' if skill_loader else 'none'}"
+            "Creating LLM graph with tools: tools=%s, store=%s, checkpointer=%s, "
+            "system_prompt=%s, skill_loader=%s",
+            tools,
+            "provided" if store else "none",
+            "provided" if checkpointer else "none",
+            "provided" if system_prompt else "none",
+            "provided" if skill_loader else "none",
         )
         # Create the react agent with optional system prompt
         react_agent_runnable = create_agent(
