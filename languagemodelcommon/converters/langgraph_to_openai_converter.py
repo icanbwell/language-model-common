@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import traceback
@@ -49,13 +50,17 @@ from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
-from languagemodelcommon.utilities.logger.log_levels import logger
+
 from languagemodelcommon.utilities.request_information import RequestInformation
+
+logger = logging.getLogger(__name__)
+logger.setLevel(SRC_LOG_LEVELS["LLM"])
 
 
 class LangGraphToOpenAIConverter:
@@ -725,6 +730,11 @@ class LangGraphToOpenAIConverter:
                     system_prompt,
                 )
 
+        logger.debug(
+            f"Creating LLM graph with tools: {tools=}, store={'provided' if store else 'none'}, "
+            f"checkpointer={'provided' if checkpointer else 'none'}, "
+            f"system_prompt={'provided' if system_prompt else 'none'}, skill_loader={'provided' if skill_loader else 'none'}"
+        )
         # Create the react agent with optional system prompt
         react_agent_runnable = create_agent(
             model=llm,

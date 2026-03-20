@@ -68,7 +68,7 @@ from languagemodelcommon.utilities.tool_friendly_name_mapper import (
 )
 from languagemodelcommon.utilities.url_parser import UrlParser
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS["LLM"])
 
 
