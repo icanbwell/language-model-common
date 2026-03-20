@@ -17,7 +17,7 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["IMAGE_PROCESSING"])
+logger.setLevel(SRC_LOG_LEVELS.IMAGE_PROCESSING)
 
 
 class AwsOCRExtractor(OCRExtractor):

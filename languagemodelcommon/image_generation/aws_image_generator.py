@@ -16,7 +16,7 @@ from languagemodelcommon.image_generation.image_generator import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["IMAGE_GENERATION"])
+logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
 
 
 class AwsImageGenerator(ImageGenerator):

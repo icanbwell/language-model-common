@@ -1,11 +1,15 @@
 import json
+import logging
 
 from pathlib import Path
 from typing import List
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
-from languagemodelcommon.utilities.logger.log_levels import logger
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class FileConfigReader:

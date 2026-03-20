@@ -1,4 +1,6 @@
 import asyncio
+import logging
+
 import httpx
 import json
 import os
@@ -9,7 +11,10 @@ from typing import List, Optional
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
-from languagemodelcommon.utilities.logger.log_levels import logger
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 def _mask_token(token: Optional[str]) -> str:

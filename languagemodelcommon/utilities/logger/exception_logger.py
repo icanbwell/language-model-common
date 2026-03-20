@@ -9,7 +9,10 @@ from typing import List, Optional
 from languagemodelcommon.utilities.logger.exception_formatter import (
     ExceptionFormatter,
 )
-from languagemodelcommon.utilities.logger.log_levels import logger
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(SRC_LOG_LEVELS.ERRORS)
 
 # Default generic error message when not exposing technical details
 DEFAULT_GENERIC_ERROR_MESSAGE = (

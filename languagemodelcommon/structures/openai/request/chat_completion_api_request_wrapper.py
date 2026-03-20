@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from typing import AsyncIterator, Literal, cast, override, Any, List, Dict, Optional
 
@@ -37,7 +38,10 @@ from languagemodelcommon.utilities.chat_message_helpers import (
     langchain_to_chat_message,
     convert_message_content_to_string,
 )
-from languagemodelcommon.utilities.logger.log_levels import logger
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+logger = logging.getLogger(__name__)
+logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class ChatCompletionApiRequestWrapper(ChatRequestWrapper):

@@ -6,7 +6,7 @@ import httpx
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS["HTTP"])
+logger.setLevel(SRC_LOG_LEVELS.HTTP)
 
 
 class LoggingResponse(httpx.Response):
