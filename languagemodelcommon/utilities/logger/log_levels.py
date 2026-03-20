@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from dataclasses import dataclass
 
 GLOBAL_LOG_LEVEL = os.environ.get("LOG_LEVEL", "").upper()
 if GLOBAL_LOG_LEVEL in logging._nameToLevel:
@@ -16,45 +17,42 @@ else:
 log = logging.getLogger(__name__)
 log.info(f"GLOBAL LOG_LEVEL: {GLOBAL_LOG_LEVEL}")
 
-log_sources = [
-    "HTTP_TRACING",
-    "CONFIG",
-    "INITIALIZATION",
-    "HTTP",
-    "AUTH",
-    "TOKEN_EXCHANGE",
-    "DATABASE",
-    "LLM",
-    "FILES",
-    "IMAGE_GENERATION",
-    "IMAGE_PROCESSING",
-    "MCP",
-    "AGENTS",
-    "ERRORS",
-    "ROUTER",
-    "SERVICES",
-    "CACHE",
-    "EVALUATOR",
-    "RESPONSES",
-    "TOOLS",
-]
+
+@dataclass
+class _SourceLogLevels:
+    """Container for source log levels exposed via dot notation only."""
+
+    HTTP_TRACING: str
+    CONFIG: str
+    INITIALIZATION: str
+    HTTP: str
+    AUTH: str
+    TOKEN_EXCHANGE: str
+    DATABASE: str
+    LLM: str
+    FILES: str
+    IMAGE_GENERATION: str
+    IMAGE_PROCESSING: str
+    MCP: str
+    AGENTS: str
+    ERRORS: str
+    ROUTER: str
+    SERVICES: str
+    CACHE: str
+    EVALUATOR: str
+    RESPONSES: str
+    TOOLS: str
 
 
-class _SourceLogLevels(dict[str, str]):
-    """Dictionary-backed container that also supports attribute access."""
+LOG_SOURCES = tuple(_SourceLogLevels.__annotations__.keys())
+_resolved_levels: dict[str, str] = {}
 
-    def __getattr__(self, name: str) -> str:
-        try:
-            return self[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
-
-
-SRC_LOG_LEVELS = _SourceLogLevels()
-
-for source in log_sources:
+for source in LOG_SOURCES:
     log_env_var = source + "_LOG_LEVEL"
-    SRC_LOG_LEVELS[source] = os.environ.get(log_env_var, "").upper()
-    if SRC_LOG_LEVELS[source] not in logging.getLevelNamesMapping():
-        SRC_LOG_LEVELS[source] = GLOBAL_LOG_LEVEL
-    log.info(f"{log_env_var}: {SRC_LOG_LEVELS[source]}")
+    level = os.environ.get(log_env_var, "").upper()
+    if level not in logging.getLevelNamesMapping():
+        level = GLOBAL_LOG_LEVEL
+    _resolved_levels[source] = level
+    log.info(f"{log_env_var}: {level}")
+
+SRC_LOG_LEVELS = _SourceLogLevels(**_resolved_levels)
