@@ -1,8 +1,9 @@
 import os
 
-from langchain_ai_skills_framework.cache.skill_cache import SkillCache
-from langchain_ai_skills_framework.loaders.skill_loader import (
-    SkillDirectoryLoader,
+from langchain_ai_skills_framework.container.container_factory import (
+    LangchainAISkillsFrameworkContainerFactory,
+)
+from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
 from simple_container.container.simple_container import SimpleContainer
@@ -41,6 +42,10 @@ class LanguageModelCommonContainerFactory:
         *, container: SimpleContainer
     ) -> SimpleContainer:
 
+        LangchainAISkillsFrameworkContainerFactory.register_services_in_container(
+            container=container,
+        )
+
         container.singleton(
             LanguageModelCommonEnvironmentVariables,
             lambda c: LanguageModelCommonEnvironmentVariables(),
@@ -67,25 +72,6 @@ class LanguageModelCommonContainerFactory:
             lambda c: ConfigReader(
                 cache=c.resolve(ConfigExpiringCache),
                 prompt_library_manager=c.resolve(PromptLibraryManager),
-            ),
-        )
-        container.singleton(
-            SkillCache,
-            lambda c: SkillCache(
-                ttl_seconds=(
-                    int(os.environ["SKILLS_CACHE_TIMEOUT_SECONDS"])
-                    if os.environ.get("SKILLS_CACHE_TIMEOUT_SECONDS")
-                    else 60 * 60
-                )
-            ),
-        )
-        container.singleton(
-            SkillDirectoryLoader,
-            lambda c: SkillDirectoryLoader(
-                cache=c.resolve(SkillCache),
-                environment_variables=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ),
             ),
         )
         container.singleton(
@@ -116,12 +102,6 @@ class LanguageModelCommonContainerFactory:
                 token_reducer=c.resolve(TokenReducer),
             ),
         )
-
-        container.singleton(
-            SkillLoaderProtocol,
-            lambda c: c.resolve(SkillDirectoryLoader),
-        )
-
         container.singleton(
             FileManagerFactory,
             lambda c: FileManagerFactory(
