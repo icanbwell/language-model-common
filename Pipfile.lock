@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "29beccd86fb5db36eef5362eb6790f8f0fc85a378d38e75ab69a95cda16eff99"
+            "sha256": "a8086e89461c147b2969e63a46065655d019304402290116bbb21cb075384726"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -28,6 +28,14 @@
             ],
             "markers": "python_version >= '3.9'",
             "version": "==3.3.0"
+        },
+        "aiofiles": {
+            "hashes": [
+                "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2",
+                "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695"
+            ],
+            "markers": "python_version >= '3.9'",
+            "version": "==25.1.0"
         },
         "aiohappyeyeballs": {
             "hashes": [
@@ -1230,12 +1238,12 @@
         },
         "langchain-ai-skills-framework": {
             "hashes": [
-                "sha256:692b209d8e4dbaab628844be56bf78e99876f01bcc9007d085742772ee51ff2d",
-                "sha256:7758c12d123979be12fefa76db868a32b4d59fba37468641d4f8b12ae57149db"
+                "sha256:365d2ca22343bfdab949f0a0df7b41922787448cb1c4d6b3c8f78ffc71e23165",
+                "sha256:f1ae91dd110732df80eaf0ca2de327365879d8cb620d80b62eba23907792abab"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.10'",
-            "version": "==1.0.8"
+            "version": "==1.0.9"
         },
         "langchain-anthropic": {
             "hashes": [
@@ -2253,12 +2261,12 @@
         },
         "pypdf": {
             "hashes": [
-                "sha256:ae052407d33d34de0c86c5c729be6d51010bf36e03035a8f23ab449bca52377d",
-                "sha256:f35a6a022348fae47e092a908339a8f3dc993510c026bb39a96718fc7185e89f"
+                "sha256:662cf29bcb419a36a1365232449624ab40b7c2d0cfc28e54f42eeecd1fd7e844",
+                "sha256:7f850faf2b0d4ab936582c05da32c52214c2b089d61a316627b5bfb5b0dab46c"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.9'",
-            "version": "==6.9.1"
+            "version": "==6.9.2"
         },
         "python-dateutil": {
             "hashes": [

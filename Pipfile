@@ -49,7 +49,7 @@ langgraph-store-mongodb = ">=0.1.0"
 # tiktoken 0.8.0 is missing wheel for tiktoken-0.7.0-cp312-cp312-musllinux_1_2_aarch64.whl: https://pypi.org/simple/tiktoken/
 tiktoken = ">=0.12.0"
 # langchain-ai-skills-framework is a Python library for building AI skills in LangChain
-langchain-ai-skills-framework = ">=1.0.8"
+langchain-ai-skills-framework = ">=1.0.9"
 # simple-container is a Python library for working with containers
 simple-container = ">=1.0.2"
 # pypdf is a Python library for working with PDFs

@@ -75,7 +75,7 @@ setup(
         "langgraph-checkpoint-mongodb>=0.2.1",
         "langgraph-store-mongodb>=0.1.0",
         "tiktoken>=0.12.0",
-        "langchain-ai-skills-framework>=1.0.8",
+        "langchain-ai-skills-framework>=1.0.9",
         "simple-container>=1.0.2",
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
