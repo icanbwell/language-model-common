@@ -8,9 +8,9 @@ EXCEPTION_TYPE_CODES: dict[type[BaseException], str] = {
     KeyError: "102",
     TimeoutError: "103",
     ConnectionError: "104",
-    PermissionError: "105",
+    PermissionError: "401",
     ExceptionGroup: "199",
-    BaileyException: "200",
+    BaileyException: "500",
 }
 
 
