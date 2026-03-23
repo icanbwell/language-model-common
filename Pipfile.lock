@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "b96875930e7a8d9e44867075c9029e57707b9b0e32df18d33ff109bcc783fc76"
+            "sha256": "ef9142f6ad0b02ed020ae96867d78012ee06dd2809b7297e40962f4e57aa61cd"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -990,10 +990,11 @@
         },
         "griffelib": {
             "hashes": [
-                "sha256:01284878c966508b6d6f1dbff9b6fa607bc062d8261c5c7253cb285b06422a7f"
+                "sha256:59f39eabb4c777483a3823e39e8f9e03e69df271a7e49aee64e91a8cfa91bdf5",
+                "sha256:b769eed581c0e857d362fc8fcd8e57ecd2330c124b6104ac8b4c1c86d76970aa"
             ],
             "markers": "python_version >= '3.10'",
-            "version": "==2.0.0"
+            "version": "==2.0.1"
         },
         "h11": {
             "hashes": [
@@ -1205,11 +1206,11 @@
         },
         "jsonpointer": {
             "hashes": [
-                "sha256:f82aa0f745001f169b96473348370b43c3f581446889c41c807bab1db11c8e7b",
-                "sha256:f9b39abd59ba8c1de8a4ff16141605d2a8dacc4dd6cf399672cf237bfe47c211"
+                "sha256:0b801c7db33a904024f6004d526dcc53bbb8a4a0f4e32bfd10beadf60adf1900",
+                "sha256:8ff8b95779d071ba472cf5bc913028df06031797532f08a7d5b602d8b2a488ca"
             ],
             "markers": "python_version >= '3.10'",
-            "version": "==3.1.0"
+            "version": "==3.1.1"
         },
         "jsonschema": {
             "hashes": [
@@ -1238,12 +1239,12 @@
         },
         "langchain-ai-skills-framework": {
             "hashes": [
-                "sha256:69f9e33109697a45114a02487990d316a0e3a5c9b302b75c07b4d179509ab624",
-                "sha256:e20abc80b3e493b4086dc251236b7fdd957e2c4c75df73ce3cd7bd308e8777f0"
+                "sha256:3f4659edc6bce33cb2f3db45446941b2f3e3504de5556c2a443921a933154712",
+                "sha256:c0ad152b0cd60614bd34ab720cbccf5567507230cb72aae3dc7a7f259d54eaf2"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.10'",
-            "version": "==1.0.10"
+            "version": "==1.0.11"
         },
         "langchain-anthropic": {
             "hashes": [
@@ -4814,11 +4815,11 @@
         },
         "types-boto3": {
             "hashes": [
-                "sha256:1b6719ebf4413eba05a15451d3fa88605444ab7816530d488ef717a456bb4498",
-                "sha256:bec5b07d4f433bf70facb3bdc064df828714fa2ba5a6b148711147e4c32bdb1b"
+                "sha256:3791c49c694b5c6d980e38994032eff4ed90ab4f7b1ad4fb34f3501b7fc60d02",
+                "sha256:8013a2dfc1ba398217d2d2dc6b54b37494df65cbae363f9430af4824697cb655"
             ],
             "markers": "python_version >= '3.9'",
-            "version": "==1.42.73"
+            "version": "==1.42.74"
         },
         "types-boto3-bedrock": {
             "hashes": [

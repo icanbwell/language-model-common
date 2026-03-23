@@ -3,7 +3,9 @@ import os
 from langchain_ai_skills_framework.container.container_factory import (
     LangchainAISkillsFrameworkContainerFactory,
 )
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import SkillLoaderProtocol
+from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
+    SkillLoaderProtocol,
+)
 
 from simple_container.container.simple_container import SimpleContainer
 
