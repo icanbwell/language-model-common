@@ -132,6 +132,7 @@ class LangGraphStreamingManager:
         )
 
         self._stream_buffers: dict[str, _StreamBuffer] = {}
+        self._streamed_text_fragments: dict[str, list[str]] = {}
 
     async def handle_langchain_event(
         self,
@@ -145,7 +146,9 @@ class LangGraphStreamingManager:
         """Route a single LangGraph event to the appropriate handler and yield SSE chunks."""
         try:
             event_type: str = event["event"]
-            # logger.debug(f"Received event type: {event_type}: {event}")
+            logger.debug(
+                f"handle_langchain_event: Received event type: {event_type}: {event}"
+            )
             # Events defined here:
             # https://reference.langchain.com/python/langchain_core/language_models/#langchain_core.language_models.BaseChatModel.astream_events
             # https://reference.langchain.com/python/langchain-core/runnables/base/Runnable/astream_events
@@ -252,6 +255,10 @@ class LangGraphStreamingManager:
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_text:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
+                    self._append_streamed_text_fragment(
+                        request_id=str(request_information.request_id),
+                        content_text=content_text,
+                    )
                     buffered_chunk = await self._buffer_stream_content(
                         request_id=str(request_information.request_id),
                         content_text=content_text,
@@ -303,6 +310,9 @@ class LangGraphStreamingManager:
                 usage_metadata=output["usage_metadata"],
                 source="on_chain_end",
             )
+        self._clear_request_streamed_text(
+            request_id=str(request_information.request_id),
+        )
 
     async def _handle_on_tool_start(
         self,
@@ -642,6 +652,9 @@ class LangGraphStreamingManager:
         input_messages: list[BaseMessage] = (
             input_messages_list[0] if input_messages_list else []
         )
+        streamed_output = self._pop_streamed_text(
+            request_id=str(request_information.request_id),
+        )
         # append all the messages into content_text
         content_text = "\n````\n"
         content_text += "> Finished new chat_model with messages:\n"
@@ -650,6 +663,9 @@ class LangGraphStreamingManager:
                 f"--- Message {message_number + 1} by {input_message.type} ---\n"
             )
             content_text += f"{input_message.content}\n"
+        if streamed_output:
+            content_text += "--- Streamed assistant output ---\n"
+            content_text += f"{streamed_output}\n"
         content_text += "````\n"
 
         yield chat_request_wrapper.create_debug_sse_message(
@@ -867,6 +883,27 @@ class LangGraphStreamingManager:
         if force_flush:
             self._stream_buffers.pop(request_id, None)
         return combined
+
+    def _append_streamed_text_fragment(
+        self,
+        *,
+        request_id: str,
+        content_text: str,
+    ) -> None:
+        if not content_text:
+            return
+        fragments = self._streamed_text_fragments.setdefault(request_id, [])
+        fragments.append(content_text)
+
+    def _pop_streamed_text(self, *, request_id: str) -> str | None:
+        fragments = self._streamed_text_fragments.pop(request_id, None)
+        if not fragments:
+            return None
+        combined = "".join(fragments)
+        return combined if combined else None
+
+    def _clear_request_streamed_text(self, *, request_id: str) -> None:
+        self._streamed_text_fragments.pop(request_id, None)
 
     async def _handle_non_text_content_debug(
         self,

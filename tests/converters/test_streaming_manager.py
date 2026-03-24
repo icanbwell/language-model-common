@@ -1,10 +1,11 @@
 from collections.abc import Callable
-from typing import Generator, Any
+from typing import Generator, Any, Optional
 
 import boto3
 import pytest
 from boto3 import Session
 from botocore.client import BaseClient
+from langchain_core.messages import AIMessageChunk
 from moto import mock_aws
 from types_boto3_s3.client import S3Client
 
@@ -16,7 +17,42 @@ from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReduc
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
+from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.mocks.mock_aws_client_factory import MockAwsClientFactory
+
+
+class _FakeChatRequestWrapper:
+    def __init__(self, *, enable_debug_logging: bool) -> None:
+        self.enable_debug_logging = enable_debug_logging
+
+    def create_sse_message(
+        self,
+        *,
+        request_id: str,
+        content: str | None,
+        usage_metadata: Optional[dict[str, Any]],
+        source: str,
+    ) -> str:
+        return content or ""
+
+    def create_debug_sse_message(
+        self,
+        *,
+        request_id: str,
+        content: str | None,
+        usage_metadata: Optional[dict[str, Any]],
+        source: str,
+    ) -> str | None:
+        return content
+
+    def create_final_sse_message(
+        self,
+        *,
+        request_id: str,
+        usage_metadata: Optional[dict[str, Any]],
+        source: str,
+    ) -> str:
+        return "final"
 
 
 class _FakeClock:
@@ -124,3 +160,82 @@ async def test_buffer_flushes_after_interval(
     )
 
     assert flushed == "ab"
+
+
+@pytest.mark.asyncio
+async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
+    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory(10.0)
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=True)
+
+    stream_event = {
+        "event": "on_chat_model_stream",
+        "data": {"chunk": AIMessageChunk(content="Hello world")},
+    }
+    streamed_chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_stream(
+            event=stream_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+    assert streamed_chunks == []
+
+    end_event = {
+        "event": "on_chat_model_end",
+        "data": {"input": {"messages": []}},
+    }
+    debug_chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_end(
+            event=end_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+
+    assert len(debug_chunks) == 1
+    assert "Streamed assistant output" in debug_chunks[0]
+    assert "Hello world" in debug_chunks[0]
+    assert "req-1" not in manager._streamed_text_fragments
+
+
+@pytest.mark.asyncio
+async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
+    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory(10.0)
+    request_information = RequestInformation(request_id="req-2")
+    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=False)
+
+    stream_event = {
+        "event": "on_chat_model_stream",
+        "data": {"chunk": AIMessageChunk(content="partial response")},
+    }
+    _ = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_stream(
+            event=stream_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+    assert "req-2" in manager._streamed_text_fragments
+
+    chain_end_event = {
+        "event": "on_chain_end",
+        "data": {},
+    }
+    _ = [
+        chunk
+        async for chunk in manager._handle_on_chain_end(
+            event=chain_end_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+
+    assert "req-2" not in manager._streamed_text_fragments
