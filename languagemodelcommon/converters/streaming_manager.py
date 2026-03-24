@@ -436,9 +436,6 @@ class LangGraphStreamingManager:
                 artifact,
             )
 
-            return_raw_tool_output: bool = (
-                os.environ.get("RETURN_RAW_TOOL_OUTPUT", "0") == "1"
-            )
             structured_data: dict[str, Any] | None = (
                 artifact if isinstance(artifact, dict) else None
             )
@@ -454,7 +451,7 @@ class LangGraphStreamingManager:
                 if isinstance(structured_content, dict):
                     structured_content.pop("result", None)
 
-            if return_raw_tool_output:
+            if chat_request_wrapper.enable_debug_logging:
                 tool_message_content: str = self.convert_message_content_into_string(
                     tool_message=tool_message
                 )
@@ -533,7 +530,7 @@ class LangGraphStreamingManager:
 ```
 """
                     )
-                    if return_raw_tool_output
+                    if chat_request_wrapper.enable_debug_logging
                     else f"\n> {artifact}" + f" [tokens: {token_count}]"
                 )
                 debug_message = chat_request_wrapper.create_debug_sse_message(
