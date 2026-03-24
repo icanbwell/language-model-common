@@ -257,7 +257,7 @@ class LangGraphStreamingManager:
                             usage_metadata=chunk.usage_metadata,
                             source="on_chat_model_stream",
                         )
-            if request_information.enable_debug_logging:
+            if chat_request_wrapper.enable_debug_logging:
                 async for debug_chunk in self._handle_non_text_content_debug(
                     chat_request_wrapper=chat_request_wrapper,
                     request_information=request_information,
@@ -559,7 +559,7 @@ class LangGraphStreamingManager:
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
         """Emit debug SSE listing input messages when debug logging is enabled (skipped otherwise)."""
-        if not request_information.enable_debug_logging:
+        if not chat_request_wrapper.enable_debug_logging:
             return
 
         data: EventData = event["data"] if "data" in event else {}
