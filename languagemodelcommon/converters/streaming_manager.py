@@ -159,7 +159,13 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case "on_chat_model_end":
-                    pass
+                    async for chunk in self._handle_on_chat_model_end(
+                        event=event,
+                        chat_request_wrapper=chat_request_wrapper,
+                        request_information=request_information,
+                    ):
+                        if chunk:
+                            yield chunk
                 case "on_chain_start":
                     # async for chunk in self._handle_on_chain_start(
                     #     event=event,
@@ -559,12 +565,65 @@ class LangGraphStreamingManager:
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
         """Emit debug SSE listing input messages when debug logging is enabled (skipped otherwise)."""
+
+        yield None  # moved logging to _handle_on_chat_model_end so we get the final messages added by tools
+
+        # if not chat_request_wrapper.enable_debug_logging:
+        #     return
+        #
+        # data: EventData = event["data"] if "data" in event else {}
+        # # {
+        # #     "event": "on_chat_model_start",
+        # #     "name": str,                    # Name of the chat model (e.g., "ChatOpenAI", "gpt-4")
+        # #     "run_id": str,                  # Unique UUID for this execution
+        # #     "parent_ids": List[str],        # List of parent run IDs (v2 only)
+        # #     "tags": List[str],              # Tags for filtering/organization
+        # #     "metadata": Dict[str, Any],     # Additional metadata
+        # #     "data": {
+        # #         "input": {
+        # #             "messages": List[List[BaseMessage]]  # The input messages
+        # #         }
+        # #     }
+        # # }
+        # input_messages_list: list[list[BaseMessage]] = cast(
+        #     list[list[BaseMessage]],
+        #     cast(dict[str, Any], data.get("input", {})).get("messages", []),
+        # )
+        # input_messages: list[BaseMessage] = (
+        #     input_messages_list[0] if input_messages_list else []
+        # )
+        # # append all the messages into content_text
+        # content_text = "```\n"
+        # content_text += "> Starting new chat_model with messages:\n"
+        # for message_number, input_message in enumerate(input_messages):
+        #     content_text += (
+        #         f"--- Message {message_number + 1} by {input_message.type} ---\n"
+        #     )
+        #     content_text += f"{input_message.content}\n"
+        # content_text += "```\n"
+        #
+        # yield chat_request_wrapper.create_debug_sse_message(
+        #     request_id=request_information.request_id,
+        #     content=content_text,
+        #     usage_metadata=None,
+        #     source="on_chat_model_start",
+        # )
+
+    # noinspection PyMethodMayBeStatic
+    async def _handle_on_chat_model_end(
+        self,
+        *,
+        event: StandardStreamEvent | CustomStreamEvent,
+        chat_request_wrapper: ChatRequestWrapper,
+        request_information: RequestInformation,
+    ) -> AsyncGenerator[str | None, None]:
+        """Emit debug SSE listing input messages when debug logging is enabled (skipped otherwise)."""
         if not chat_request_wrapper.enable_debug_logging:
             return
 
         data: EventData = event["data"] if "data" in event else {}
         # {
-        #     "event": "on_chat_model_start",
+        #     "event": "on_chat_model_end",
         #     "name": str,                    # Name of the chat model (e.g., "ChatOpenAI", "gpt-4")
         #     "run_id": str,                  # Unique UUID for this execution
         #     "parent_ids": List[str],        # List of parent run IDs (v2 only)
@@ -584,20 +643,20 @@ class LangGraphStreamingManager:
             input_messages_list[0] if input_messages_list else []
         )
         # append all the messages into content_text
-        content_text = "```\n"
-        content_text += "> Starting new chat_model with messages:\n"
+        content_text = "\n````\n"
+        content_text += "> Finished new chat_model with messages:\n"
         for message_number, input_message in enumerate(input_messages):
             content_text += (
                 f"--- Message {message_number + 1} by {input_message.type} ---\n"
             )
             content_text += f"{input_message.content}\n"
-        content_text += "```\n"
+        content_text += "````\n"
 
         yield chat_request_wrapper.create_debug_sse_message(
             request_id=request_information.request_id,
             content=content_text,
             usage_metadata=None,
-            source="on_chat_model_start",
+            source="on_chat_model_end",
         )
 
     @staticmethod
