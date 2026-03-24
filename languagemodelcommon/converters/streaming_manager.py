@@ -23,8 +23,6 @@ import copy  # For deepcopy
 import json
 import logging
 import os
-import re
-import secrets
 import time
 from dataclasses import dataclass
 from typing import (
@@ -47,7 +45,10 @@ from langchain_core.runnables.schema import (
     EventData,
 )
 
-from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
+from languagemodelcommon.converters.debug_file_writer import (
+    DebugFileWriter,
+    DebugFileWriteResult,
+)
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
@@ -66,7 +67,6 @@ from languagemodelcommon.utilities.text_humanizer import Humanizer
 from languagemodelcommon.utilities.tool_friendly_name_mapper import (
     ToolFriendlyNameMapper,
 )
-from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -92,7 +92,7 @@ class LangGraphStreamingManager:
         self,
         *,
         token_reducer: TokenReducer,
-        file_manager_factory: FileManagerFactory,
+        debug_file_writer: DebugFileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
@@ -101,13 +101,11 @@ class LangGraphStreamingManager:
         if not isinstance(self.token_reducer, TokenReducer):
             raise TypeError("token_reducer must be an instance of TokenReducer")
 
-        self.file_manager_factory: FileManagerFactory = file_manager_factory
-        if self.file_manager_factory is None:
-            raise ValueError("file_manager_factory must not be None")
-        if not isinstance(self.file_manager_factory, FileManagerFactory):
-            raise TypeError(
-                "file_manager_factory must be an instance of FileManagerFactory"
-            )
+        self.debug_file_writer: DebugFileWriter = debug_file_writer
+        if self.debug_file_writer is None:
+            raise ValueError("debug_file_writer must not be None")
+        if not isinstance(self.debug_file_writer, DebugFileWriter):
+            raise TypeError("debug_file_writer must be an instance of DebugFileWriter")
 
         self.environment_variables: LanguageModelCommonEnvironmentVariables = (
             environment_variables
@@ -470,22 +468,20 @@ class LangGraphStreamingManager:
                     # Save to file and provide link
                     output_folder = os.environ.get("IMAGE_GENERATION_PATH")
                     if output_folder:
-                        file_manager = self.file_manager_factory.get_file_manager(
-                            folder=output_folder
-                        )
                         # Use secure filename with user isolation and random token
                         # to prevent enumeration attacks and cross-user data access
-                        filename = self.generate_secure_filename(
+                        filename = self.debug_file_writer.generate_secure_filename(
                             tool_name=tool_name2,
                             user_id=user_id,
                         )
-                        file_path: Optional[str] = await file_manager.save_file_async(
-                            file_data=tool_message_content.encode("utf-8"),
-                            folder=output_folder,
-                            filename=filename,
-                            content_type="text/plain",
+                        write_result: DebugFileWriteResult = (
+                            await self.debug_file_writer.write_content(
+                                content=tool_message_content,
+                                output_folder=output_folder,
+                                filename=filename,
+                            )
                         )
-                        if file_path:
+                        if write_result.file_path:
                             tool_message_content = (
                                 ""  # clear the content since we're using a file
                             )
@@ -499,16 +495,13 @@ class LangGraphStreamingManager:
                                 tool_message_content += (
                                     "\n--- End Structured Content ---\n"
                                 )
-                            try:
-                                file_url = UrlParser.get_url_for_file_name(filename)
-                                if file_url is not None:
-                                    tool_message_content += f"\n(URL: {file_url})"
-                                else:
-                                    tool_message_content += (
-                                        "\nTool output file URL could not be generated."
-                                    )
-                            except KeyError:
-                                tool_message_content += "\nTool output file URL could not be generated due to missing IMAGE_GENERATION_URL environment variable."
+                            file_url = write_result.file_url
+                            if file_url is not None:
+                                tool_message_content += f"\n(URL: {file_url})"
+                            elif write_result.url_error_message:
+                                tool_message_content += (
+                                    f"\n{write_result.url_error_message}"
+                                )
                         else:
                             tool_message_content = (
                                 "Tool output too large to display inline, "
@@ -747,48 +740,6 @@ class LangGraphStreamingManager:
         except Exception:
             tool_input_str = str(tool_input1)
         return f"{tool_name1}:{hash(tool_input_str)}"
-
-    @staticmethod
-    def generate_secure_filename(
-        *,
-        tool_name: Optional[str],
-        user_id: Optional[str],
-    ) -> str:
-        """
-        Generate a secure, non-guessable filename for tool output files.
-        The filename includes:
-        - A cryptographically secure random token (to prevent enumeration)
-        - The tool name and timestamp (for debugging/identification)
-
-        Args:
-            tool_name: The name of the tool that generated the output
-            user_id: The user identifier (currently not embedded in the filename)
-
-        Returns:
-            A secure filename string
-        """
-        # Generate a cryptographically secure random token
-        random_token = secrets.token_urlsafe(16)
-
-        # Note: We intentionally do not embed user_id (or a deterministic hash of it)
-        # in the filename to avoid cross-file linkability or offline guessing of
-        # user identifiers if filenames are exposed outside the service.
-
-        # Sanitize tool name: restrict to a safe subset for filesystem and URLs
-        base_tool_name = tool_name or "unknown"
-        # Replace any character not in [A-Za-z0-9._-] with underscore
-        safe_tool_name = re.sub(r"[^A-Za-z0-9._-]", "_", base_tool_name)
-        # Collapse multiple underscores and strip leading/trailing underscores
-        safe_tool_name = re.sub(r"_+", "_", safe_tool_name).strip("_")
-        if not safe_tool_name:
-            safe_tool_name = "unknown"
-        # Limit length to avoid exceeding filesystem limits when combined with other parts
-        max_tool_name_length = 50
-        safe_tool_name = safe_tool_name[:max_tool_name_length]
-
-        timestamp = int(time.time())
-
-        return f"{safe_tool_name}_{timestamp}_{random_token}.txt"
 
     @staticmethod
     def safe_json(string: str) -> Any:
