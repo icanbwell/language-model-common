@@ -18,9 +18,10 @@ from typing import (
 import botocore
 from botocore.exceptions import TokenRetrievalError
 from fastapi import HTTPException
-from langchain_ai_skills_framework.loaders.skill_loader import (
+from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
+
 from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
 from langchain_community.adapters.openai import (
     convert_message_to_dict,

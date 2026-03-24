@@ -5,9 +5,6 @@ from typing import Optional
 from langchain_ai_skills_framework.environment.environment_variables import (
     LangchainAISkillsFrameworkEnvironmentVariables,
 )
-from langchain_ai_skills_framework.loaders.skill_loader import (
-    SkillLoaderEnvironmentVariables,
-)
 from oidcauthlib.utilities.environment.oidc_environment_variables import (
     OidcEnvironmentVariables,
 )
@@ -31,7 +28,6 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 class LanguageModelCommonEnvironmentVariables(
     LangchainAISkillsFrameworkEnvironmentVariables,
     PromptLibraryEnvironmentVariables,
-    SkillLoaderEnvironmentVariables,
     OidcEnvironmentVariables,
 ):
     @property
