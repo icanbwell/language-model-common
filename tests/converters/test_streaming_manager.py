@@ -1,11 +1,12 @@
 from collections.abc import Callable
-from typing import Generator, Any, Optional
+from typing import Generator, Any, Optional, cast
 
 import boto3
 import pytest
 from boto3 import Session
 from botocore.client import BaseClient
 from langchain_core.messages import AIMessageChunk
+from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
 from moto import mock_aws
 from types_boto3_s3.client import S3Client
 
@@ -13,6 +14,9 @@ from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.file_managers.aws_s3_file_manager import AwsS3FileManager
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
+from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
+    ChatRequestWrapper,
+)
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -168,12 +172,18 @@ async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
 ) -> None:
     manager = streaming_manager_factory(10.0)
     request_information = RequestInformation(request_id="req-1")
-    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=True)
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=True),
+    )
 
-    stream_event = {
-        "event": "on_chat_model_stream",
-        "data": {"chunk": AIMessageChunk(content="Hello world")},
-    }
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="Hello world")},
+        },
+    )
     streamed_chunks = [
         chunk
         async for chunk in manager._handle_on_chat_model_stream(
@@ -184,10 +194,13 @@ async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
     ]
     assert streamed_chunks == []
 
-    end_event = {
-        "event": "on_chat_model_end",
-        "data": {"input": {"messages": []}},
-    }
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_end",
+            "data": {"input": {"messages": []}},
+        },
+    )
     debug_chunks = [
         chunk
         async for chunk in manager._handle_on_chat_model_end(
@@ -195,6 +208,7 @@ async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
             chat_request_wrapper=chat_request_wrapper,
             request_information=request_information,
         )
+        if chunk is not None
     ]
 
     assert len(debug_chunks) == 1
@@ -209,12 +223,18 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
 ) -> None:
     manager = streaming_manager_factory(10.0)
     request_information = RequestInformation(request_id="req-2")
-    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=False)
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
 
-    stream_event = {
-        "event": "on_chat_model_stream",
-        "data": {"chunk": AIMessageChunk(content="partial response")},
-    }
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="partial response")},
+        },
+    )
     _ = [
         chunk
         async for chunk in manager._handle_on_chat_model_stream(
@@ -225,10 +245,13 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
     ]
     assert "req-2" in manager._streamed_text_fragments
 
-    chain_end_event = {
-        "event": "on_chain_end",
-        "data": {},
-    }
+    chain_end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chain_end",
+            "data": {},
+        },
+    )
     _ = [
         chunk
         async for chunk in manager._handle_on_chain_end(
