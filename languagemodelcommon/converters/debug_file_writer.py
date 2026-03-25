@@ -1,3 +1,4 @@
+import os
 import re
 import secrets
 import time
@@ -102,3 +103,23 @@ class DebugFileWriter:
                     "IMAGE_GENERATION_URL environment variable."
                 ),
             )
+
+    async def write_to_file_async(
+        self, *, file_name: str, user_id: str | None, content: str
+    ) -> DebugFileWriteResult | None:
+        output_folder = os.environ.get("IMAGE_GENERATION_PATH")
+        if output_folder:
+            # Use secure filename with user isolation and random token
+            # to prevent enumeration attacks and cross-user data access
+            filename = self.generate_secure_filename(
+                tool_name=file_name,
+                user_id=user_id,
+            )
+            write_result: DebugFileWriteResult = await self.write_content(
+                content=content,
+                output_folder=output_folder,
+                filename=filename,
+            )
+            return write_result
+        else:
+            return None

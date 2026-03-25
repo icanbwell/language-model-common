@@ -466,52 +466,36 @@ class LangGraphStreamingManager:
                     > self.environment_variables.maximum_inline_tool_output_size
                 ):
                     # Save to file and provide link
-                    output_folder = os.environ.get("IMAGE_GENERATION_PATH")
-                    if output_folder:
-                        # Use secure filename with user isolation and random token
-                        # to prevent enumeration attacks and cross-user data access
-                        filename = self.debug_file_writer.generate_secure_filename(
-                            tool_name=tool_name2,
-                            user_id=user_id,
+                    write_result: (
+                        DebugFileWriteResult | None
+                    ) = await self.debug_file_writer.write_to_file_async(
+                        content=tool_message_content,
+                        user_id=user_id,
+                        file_name=tool_name2,
+                    )
+                    if write_result is not None and write_result.file_path:
+                        tool_message_content = (
+                            ""  # clear the content since we're using a file
                         )
-                        write_result: DebugFileWriteResult = (
-                            await self.debug_file_writer.write_content(
-                                content=tool_message_content,
-                                output_folder=output_folder,
-                                filename=filename,
+                        if structured_data_without_result:
+                            tool_message_content += (
+                                "\n--- Structured Content (w/o result) ---\n"
                             )
-                        )
-                        if write_result.file_path:
-                            tool_message_content = (
-                                ""  # clear the content since we're using a file
+                            tool_message_content += json.dumps(
+                                structured_data_without_result, indent=2
                             )
-                            if structured_data_without_result:
-                                tool_message_content += (
-                                    "\n--- Structured Content (w/o result) ---\n"
-                                )
-                                tool_message_content += json.dumps(
-                                    structured_data_without_result, indent=2
-                                )
-                                tool_message_content += (
-                                    "\n--- End Structured Content ---\n"
-                                )
-                            file_url = write_result.file_url
-                            if file_url is not None:
-                                tool_message_content += f"\n(URL: {file_url})"
-                            elif write_result.url_error_message:
-                                tool_message_content += (
-                                    f"\n{write_result.url_error_message}"
-                                )
-                        else:
-                            tool_message_content = (
-                                "Tool output too large to display inline, "
-                                "and failed to save to file."
+                            tool_message_content += "\n--- End Structured Content ---\n"
+                        file_url = write_result.file_url
+                        if file_url is not None:
+                            tool_message_content += f"\n(URL: {file_url})"
+                        elif write_result.url_error_message:
+                            tool_message_content += (
+                                f"\n{write_result.url_error_message}"
                             )
                     else:
                         tool_message_content = (
-                            f"Tool output too large to display inline,"
-                            f" {tool_message_content_length} > {self.environment_variables.maximum_inline_tool_output_size}"
-                            " and TOOL_OUTPUT_FILE_PATH is not set."
+                            "Tool output too large to display inline, "
+                            "and failed to save to file."
                         )
 
                 tool_progress_message: str = (
