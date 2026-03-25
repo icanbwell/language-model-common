@@ -16,7 +16,7 @@ class DebugFileWriteResult:
     url_error_message: Optional[str]
 
 
-class DebugFileWriter:
+class FileWriter:
     def __init__(self, *, file_manager_factory: FileManagerFactory) -> None:
         self.file_manager_factory = file_manager_factory
         if self.file_manager_factory is None:

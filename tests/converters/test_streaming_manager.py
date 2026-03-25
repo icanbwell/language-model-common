@@ -11,7 +11,7 @@ from moto import mock_aws
 from types_boto3_s3.client import S3Client
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
-from languagemodelcommon.converters.debug_file_writer import DebugFileWriter
+from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.file_managers.aws_s3_file_manager import AwsS3FileManager
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
@@ -109,7 +109,7 @@ def streaming_manager_factory(
         return LangGraphStreamingManager(
             token_reducer=TokenReducer(),
             environment_variables=environment_variables,
-            debug_file_writer=DebugFileWriter(
+            debug_file_writer=FileWriter(
                 file_manager_factory=file_manager_factory,
             ),
         )

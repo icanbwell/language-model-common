@@ -45,8 +45,8 @@ from langchain_core.runnables.schema import (
     EventData,
 )
 
-from languagemodelcommon.converters.debug_file_writer import (
-    DebugFileWriter,
+from languagemodelcommon.file_managers.file_writer import (
+    FileWriter,
     DebugFileWriteResult,
 )
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
@@ -92,7 +92,7 @@ class LangGraphStreamingManager:
         self,
         *,
         token_reducer: TokenReducer,
-        debug_file_writer: DebugFileWriter,
+        debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
@@ -101,11 +101,11 @@ class LangGraphStreamingManager:
         if not isinstance(self.token_reducer, TokenReducer):
             raise TypeError("token_reducer must be an instance of TokenReducer")
 
-        self.debug_file_writer: DebugFileWriter = debug_file_writer
+        self.debug_file_writer: FileWriter = debug_file_writer
         if self.debug_file_writer is None:
             raise ValueError("debug_file_writer must not be None")
-        if not isinstance(self.debug_file_writer, DebugFileWriter):
-            raise TypeError("debug_file_writer must be an instance of DebugFileWriter")
+        if not isinstance(self.debug_file_writer, FileWriter):
+            raise TypeError("debug_file_writer must be an instance of FileWriter")
 
         self.environment_variables: LanguageModelCommonEnvironmentVariables = (
             environment_variables

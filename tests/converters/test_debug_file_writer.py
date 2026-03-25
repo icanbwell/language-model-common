@@ -4,13 +4,13 @@ import re
 import pytest
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
-from languagemodelcommon.converters.debug_file_writer import DebugFileWriter
+from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 
 
 @pytest.fixture
-def debug_file_writer() -> DebugFileWriter:
-    return DebugFileWriter(
+def debug_file_writer() -> FileWriter:
+    return FileWriter(
         file_manager_factory=FileManagerFactory(aws_client_factory=AwsClientFactory()),
     )
 
@@ -24,7 +24,7 @@ def debug_file_writer() -> DebugFileWriter:
     ],
 )
 def test_generate_secure_filename(
-    debug_file_writer: DebugFileWriter,
+    debug_file_writer: FileWriter,
     tool_name: str | None,
     expected_prefix: str,
 ) -> None:
@@ -41,7 +41,7 @@ def test_generate_secure_filename(
 
 @pytest.mark.asyncio
 async def test_write_content_saves_file_and_returns_url(
-    debug_file_writer: DebugFileWriter,
+    debug_file_writer: FileWriter,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -62,7 +62,7 @@ async def test_write_content_saves_file_and_returns_url(
 
 @pytest.mark.asyncio
 async def test_write_content_returns_missing_url_error_when_env_not_set(
-    debug_file_writer: DebugFileWriter,
+    debug_file_writer: FileWriter,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -84,7 +84,7 @@ async def test_write_content_returns_missing_url_error_when_env_not_set(
 
 @pytest.mark.asyncio
 async def test_write_content_returns_none_path_when_content_is_empty(
-    debug_file_writer: DebugFileWriter,
+    debug_file_writer: FileWriter,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
