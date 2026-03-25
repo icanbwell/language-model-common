@@ -176,7 +176,7 @@ class LangGraphToOpenAIConverter:
             else:
                 error_message = ExceptionLogger.get_user_friendly_message(
                     e,
-                    enable_debug_logging=False,
+                    enable_debug_logging=chat_request_wrapper.enable_debug_logging,
                     generic_message=self.environment_variables.generic_error_message,
                 )
 
