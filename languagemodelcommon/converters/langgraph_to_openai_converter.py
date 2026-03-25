@@ -16,16 +16,17 @@ from typing import (
 )
 
 import botocore
-from botocore.exceptions import TokenRetrievalError
+from botocore.exceptions import (
+    ConnectTimeoutError,
+    ReadTimeoutError,
+    TokenRetrievalError,
+)
 from fastapi import HTTPException
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
 
 from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
-from langchain_community.adapters.openai import (
-    convert_message_to_dict,
-)
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -65,6 +66,22 @@ logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class LangGraphToOpenAIConverter:
+    @staticmethod
+    def _is_timeout_exception(exception: Exception) -> bool:
+        if isinstance(exception, (TimeoutError, ReadTimeoutError, ConnectTimeoutError)):
+            return True
+        cause = exception.__cause__
+        if isinstance(cause, (TimeoutError, ReadTimeoutError, ConnectTimeoutError)):
+            return True
+        class_name = exception.__class__.__name__
+        cause_class_name = cause.__class__.__name__ if cause is not None else ""
+        return (
+            class_name in {"ReadTimeoutError", "ConnectTimeoutError"}
+            or cause_class_name in {"ReadTimeoutError", "ConnectTimeoutError"}
+            or "Timeout" in class_name
+            or "Timeout" in cause_class_name
+        )
+
     def __init__(
         self,
         *,
@@ -540,23 +557,31 @@ class LangGraphToOpenAIConverter:
             ):
                 yield event
         except ToolException as e:
-            messages_dict: List[dict[str, Any]] = [
-                convert_message_to_dict(m) for m in messages
-            ]
             logger.exception(
-                "ToolException occurred: %s. Messages: %s",
+                "ToolException occurred while streaming graph. request_id=%s message_count=%d error=%s",
+                request_information.request_id,
+                len(messages),
                 e,
-                messages_dict,
             )
             raise BaileyException(
                 f"Tool Error streaming graph with messages: {e}"
             ) from e
         except Exception as e:
-            messages_dict = [convert_message_to_dict(m) for m in messages]
+            if self._is_timeout_exception(e):
+                logger.warning(
+                    "Timeout while streaming graph. request_id=%s message_count=%d error=%s",
+                    request_information.request_id,
+                    len(messages),
+                    e,
+                )
+                raise BaileyException(
+                    "Upstream model timed out while streaming. Please try again."
+                ) from e
             logger.exception(
-                "Exception occurred while streaming graph with messages: %s. Messages: %s",
+                "Exception occurred while streaming graph. request_id=%s message_count=%d error=%s",
+                request_information.request_id,
+                len(messages),
                 e,
-                messages_dict,
             )
             raise BaileyException(f"Error streaming graph with messages: {e}") from e
 
