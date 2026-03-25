@@ -144,9 +144,9 @@ class LangGraphStreamingManager:
         """Route a single LangGraph event to the appropriate handler and yield SSE chunks."""
         try:
             event_type: str = event["event"]
-            logger.debug(
-                f"handle_langchain_event: Received event type: {event_type}: {event}"
-            )
+            # logger.debug(
+            #     f"handle_langchain_event: Received event type: {event_type}: {event}"
+            # )
             # Events defined here:
             # https://reference.langchain.com/python/langchain_core/language_models/#langchain_core.language_models.BaseChatModel.astream_events
             # https://reference.langchain.com/python/langchain-core/runnables/base/Runnable/astream_events
@@ -516,14 +516,6 @@ class LangGraphStreamingManager:
             )
             if debug_message:
                 yield debug_message
-
-        # return the message to the LLM
-        yield chat_request_wrapper.create_sse_message(
-            request_id=request_information.request_id,
-            content=tool_message_content,
-            usage_metadata=None,
-            source="on_tool_end",
-        )
 
     # noinspection PyMethodMayBeStatic
     async def _handle_on_chat_model_start(
