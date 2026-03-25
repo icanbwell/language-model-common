@@ -458,12 +458,9 @@ class LangGraphStreamingManager:
                         f"Returning artifact: {artifact if artifact else tool_message_content}"
                     )
 
-                tool_message_content_length: int = len(tool_message_content)
-                token_count: int = self.token_reducer.count_tokens(tool_message_content)
-                file_url: Optional[str] = None
-                if self.environment_variables.write_tool_output_to_file and (
-                    tool_message_content_length
-                    > self.environment_variables.maximum_inline_tool_output_size
+                if (
+                    chat_request_wrapper.enable_debug_logging
+                    or self.environment_variables.write_tool_output_to_file
                 ):
                     # Save to file and provide link
                     write_result: (
@@ -474,44 +471,29 @@ class LangGraphStreamingManager:
                         file_name=tool_name2,
                     )
                     if write_result is not None and write_result.file_path:
-                        tool_message_content = (
-                            ""  # clear the content since we're using a file
+                        # send a follow-up message with the file URL
+                        content_text: str = f"\n\n[Click to download {tool_message.name} Output]({write_result.file_url})\n\n"
+                        yield chat_request_wrapper.create_sse_message(
+                            request_id=request_information.request_id,
+                            content=content_text,
+                            usage_metadata=None,
+                            source="on_tool_end",
                         )
-                        if structured_data_without_result:
-                            tool_message_content += (
-                                "\n--- Structured Content (w/o result) ---\n"
-                            )
-                            tool_message_content += json.dumps(
-                                structured_data_without_result, indent=2
-                            )
-                            tool_message_content += "\n--- End Structured Content ---\n"
-                        file_url = write_result.file_url
-                        if file_url is not None:
-                            tool_message_content += f"\n(URL: {file_url})"
-                        elif write_result.url_error_message:
-                            tool_message_content += (
-                                f"\n{write_result.url_error_message}"
-                            )
 
-                tool_progress_message: str = (
-                    f"\n> {artifact}" + f" [tokens: {token_count}]"
-                )
-                debug_message = chat_request_wrapper.create_debug_sse_message(
-                    request_id=request_information.request_id,
-                    content=tool_progress_message,
-                    usage_metadata=None,
-                    source="on_tool_end",
-                )
-                if file_url:
-                    # send a follow-up message with the file URL
-                    content_text: str = f"\n\n[Click to download {tool_message.name} Output]({file_url})\n\n"
-                    yield chat_request_wrapper.create_sse_message(
+                if structured_data_without_result:
+                    structured_content_text: str = (
+                        "\n--- Structured Content (w/o result) ---\n"
+                    )
+                    structured_content_text += json.dumps(
+                        structured_data_without_result, indent=2
+                    )
+                    structured_content_text += "\n--- End Structured Content ---\n"
+                    debug_message = chat_request_wrapper.create_debug_sse_message(
                         request_id=request_information.request_id,
-                        content=content_text,
+                        content=structured_content_text,
                         usage_metadata=None,
                         source="on_tool_end",
                     )
-                else:
                     if debug_message:
                         yield debug_message
         else:
