@@ -1,9 +1,9 @@
 import os
-from typing import cast, Literal
+from typing import cast, Literal, Any
 
 import boto3
 from boto3 import Session
-from botocore.config import Config, _RetryDict
+from botocore.config import Config
 
 from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 from types_boto3_s3.client import S3Client
@@ -34,7 +34,7 @@ class AwsClientFactory:
     # noinspection PyMethodMayBeStatic
     def create_bedrock_client(self) -> BedrockRuntimeClient:
         """Create and return a Bedrock client"""
-        retries: _RetryDict = {
+        retries: dict[str, Any] = {
             "max_attempts": int(os.getenv("AWS_BEDROCK_MAX_RETRIES", "1")),
             "mode": cast(
                 Literal["legacy", "standard", "adaptive"],
@@ -51,7 +51,7 @@ class AwsClientFactory:
                 name="AWS_BEDROCK_READ_TIMEOUT_SECONDS",
                 default=180.0,
             ),
-            retries=retries,
+            retries=retries,  # type: ignore[arg-type]
             tcp_keepalive=True,
         )
         aws_credentials_profile = os.environ.get("AWS_CREDENTIALS_PROFILE")
