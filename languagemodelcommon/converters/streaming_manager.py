@@ -601,8 +601,7 @@ class LangGraphStreamingManager:
             request_id=str(request_information.request_id),
         )
         # append all the messages into content_text
-        content_text = "\n````\n"
-        content_text += "> Finished new chat_model with messages:\n"
+        content_text = ""
         for message_number, input_message in enumerate(input_messages):
             content_text += (
                 f"--- Message {message_number + 1} by {input_message.type} ---\n"
@@ -611,14 +610,21 @@ class LangGraphStreamingManager:
         if streamed_output:
             content_text += "--- Streamed assistant output ---\n"
             content_text += f"{streamed_output}\n"
-        content_text += "````\n"
 
-        yield chat_request_wrapper.create_debug_sse_message(
-            request_id=request_information.request_id,
+        file_write_result: (
+            DebugFileWriteResult | None
+        ) = await self.debug_file_writer.write_to_file_async(
+            file_name="messages",
             content=content_text,
-            usage_metadata=None,
-            source="on_chat_model_end",
+            user_id=request_information.user_id,
         )
+        if file_write_result and file_write_result.file_url:
+            yield chat_request_wrapper.create_debug_sse_message(
+                request_id=request_information.request_id,
+                content=f"[Click to download full messages log]({file_write_result.file_url})\n",
+                usage_metadata=None,
+                source="on_chat_model_end",
+            )
 
     @staticmethod
     def _format_text_resource_contents(text: str) -> str:
