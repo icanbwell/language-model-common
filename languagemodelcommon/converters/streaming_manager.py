@@ -446,10 +446,15 @@ class LangGraphStreamingManager:
                         f"Returning artifact: {artifact if artifact else tool_message_content}"
                     )
                 # Save to file and provide link
+                message_content = str(artifact) if artifact else tool_message_content
+                self._append_streamed_text_fragment(
+                    request_id=str(request_information.request_id),
+                    content_text=message_content,
+                )
                 write_result: (
                     DebugFileWriteResult | None
                 ) = await self.debug_file_writer.write_to_file_async(
-                    content=str(artifact) if artifact else tool_message_content,
+                    content=message_content,
                     user_id=user_id,
                     file_name=tool_name2,
                 )
