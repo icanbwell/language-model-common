@@ -442,10 +442,7 @@ class LangGraphStreamingManager:
                 artifact,
             )
 
-            if (
-                chat_request_wrapper.enable_debug_logging
-                or self.environment_variables.write_tool_output_to_file
-            ):
+            if chat_request_wrapper.enable_debug_logging or artifact is not None:
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
                     logger.debug(
                         f"Returning artifact: {artifact if artifact else tool_message_content}"
@@ -476,37 +473,40 @@ class LangGraphStreamingManager:
                         source="on_tool_end",
                     )
 
-            # now if debugging is turned on then log the structured content
-            structured_data: dict[str, Any] | None = (
-                artifact if isinstance(artifact, dict) else None
-            )
-            structured_data_without_result: dict[str, Any] | None = (
-                copy.deepcopy(structured_data) if structured_data is not None else None
-            )
-            if structured_data_without_result:
-                structured_data_without_result.pop("result", None)
-                structured_content = structured_data_without_result.get(
-                    "structured_content"
+            if chat_request_wrapper.enable_debug_logging:
+                # now if debugging is turned on then log the structured content
+                structured_data: dict[str, Any] | None = (
+                    artifact if isinstance(artifact, dict) else None
                 )
-                # Only pop from structured_content if it is a dict
-                if isinstance(structured_content, dict):
-                    structured_content.pop("result", None)
+                structured_data_without_result: dict[str, Any] | None = (
+                    copy.deepcopy(structured_data)
+                    if structured_data is not None
+                    else None
+                )
+                if structured_data_without_result:
+                    structured_data_without_result.pop("result", None)
+                    structured_content = structured_data_without_result.get(
+                        "structured_content"
+                    )
+                    # Only pop from structured_content if it is a dict
+                    if isinstance(structured_content, dict):
+                        structured_content.pop("result", None)
 
-                structured_content_text: str = (
-                    "\n--- Structured Content (w/o result) ---\n"
-                )
-                structured_content_text += json.dumps(
-                    structured_data_without_result, indent=2
-                )
-                structured_content_text += "\n--- End Structured Content ---\n"
-                debug_message = chat_request_wrapper.create_debug_sse_message(
-                    request_id=request_information.request_id,
-                    content=structured_content_text,
-                    usage_metadata=None,
-                    source="on_tool_end",
-                )
-                if debug_message:
-                    yield debug_message
+                    structured_content_text: str = (
+                        "\n--- Structured Content (w/o result) ---\n"
+                    )
+                    structured_content_text += json.dumps(
+                        structured_data_without_result, indent=2
+                    )
+                    structured_content_text += "\n--- End Structured Content ---\n"
+                    debug_message = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_information.request_id,
+                        content=structured_content_text,
+                        usage_metadata=None,
+                        source="on_tool_end",
+                    )
+                    if debug_message:
+                        yield debug_message
         else:
             logger.debug("on_tool_end: no tool message output")
             content_text = f"\n\n> Tool completed with no output.{runtime_str}\n"
@@ -823,13 +823,14 @@ class LangGraphStreamingManager:
     def _clear_request_streamed_text(self, *, request_id: str) -> None:
         self._streamed_text_fragments.pop(request_id, None)
 
+    # noinspection PyMethodMayBeStatic
     async def _handle_non_text_content_debug(
         self,
         *,
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
         non_text_blocks: list[dict[str, Any]],
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[str | None, None]:
         if not non_text_blocks:
             return
         summaries: list[str] = []
@@ -843,18 +844,20 @@ class LangGraphStreamingManager:
                 ]
             )
             summaries.append(f"type={block_type}, keys={keys}")
-        content_text = (
-            "\n> Non-text content blocks received: " + ", ".join(summaries) + "\n"
-        )
-        if content_text:
-            message = chat_request_wrapper.create_debug_sse_message(
-                request_id=request_information.request_id,
-                content=content_text,
-                usage_metadata=None,
-                source="on_chat_model_stream",
-            )
-            if message:
-                yield message
+
+        yield None
+        # content_text = (
+        #     "\n> Non-text content blocks received: " + ", ".join(summaries) + "\n"
+        # )
+        # if content_text:
+        #     message = chat_request_wrapper.create_debug_sse_message(
+        #         request_id=request_information.request_id,
+        #         content=content_text,
+        #         usage_metadata=None,
+        #         source="on_chat_model_stream",
+        #     )
+        #     if message:
+        #         yield message
 
 
 @dataclass
