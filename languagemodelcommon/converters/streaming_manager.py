@@ -253,11 +253,10 @@ class LangGraphStreamingManager:
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_text:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
-                    if chat_request_wrapper.enable_debug_logging:
-                        self._append_streamed_text_fragment(
-                            request_id=str(request_information.request_id),
-                            content_text=content_text,
-                        )
+                    self._append_streamed_text_fragment(
+                        request_id=str(request_information.request_id),
+                        content_text=content_text,
+                    )
                     buffered_chunk = await self._buffer_stream_content(
                         request_id=str(request_information.request_id),
                         content_text=content_text,
@@ -631,6 +630,13 @@ class LangGraphStreamingManager:
             yield chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
                 content=message_content_text,
+                usage_metadata=None,
+                source="on_chat_model_end",
+            )
+        elif content_text:
+            yield chat_request_wrapper.create_debug_sse_message(
+                request_id=request_information.request_id,
+                content=content_text,
                 usage_metadata=None,
                 source="on_chat_model_end",
             )

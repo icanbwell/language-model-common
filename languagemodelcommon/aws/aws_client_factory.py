@@ -34,11 +34,15 @@ class AwsClientFactory:
     # noinspection PyMethodMayBeStatic
     def create_bedrock_client(self) -> BedrockRuntimeClient:
         """Create and return a Bedrock client"""
+        max_attempts = self._get_int_env(
+            name="AWS_BEDROCK_MAX_ATTEMPTS",
+            default=self._get_int_env(name="AWS_BEDROCK_MAX_RETRIES", default=1),
+        )
         retries: dict[str, Any] = {
-            "max_attempts": int(os.getenv("AWS_BEDROCK_MAX_RETRIES", "1")),
+            "max_attempts": max_attempts,
             "mode": cast(
                 Literal["legacy", "standard", "adaptive"],
-                os.getenv("AWS_BEDROCK_RETRY_MODE", "standard"),
+                os.getenv("AWS_BEDROCK_RETRY_MODE", "adaptive"),
             ),
         }
         # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/config.html
@@ -56,10 +60,7 @@ class AwsClientFactory:
         )
         aws_credentials_profile = os.environ.get("AWS_CREDENTIALS_PROFILE")
         aws_region_name = os.environ.get("AWS_REGION", "us-east-1")
-        session: Session = boto3.Session(
-            profile_name=aws_credentials_profile,
-            region_name=aws_region_name,
-        )
+        session: Session = boto3.Session(profile_name=aws_credentials_profile)
         bedrock_client: BedrockRuntimeClient = session.client(
             service_name="bedrock-runtime",
             config=bedrock_config,
