@@ -434,6 +434,36 @@ class LangGraphStreamingManager:
                 artifact,
             )
 
+            if (
+                chat_request_wrapper.enable_debug_logging
+                or self.environment_variables.write_tool_output_to_file
+            ):
+                tool_message_content: str = self.convert_message_content_into_string(
+                    tool_message=tool_message
+                )
+                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+                    logger.debug(
+                        f"Returning artifact: {artifact if artifact else tool_message_content}"
+                    )
+                # Save to file and provide link
+                write_result: (
+                    DebugFileWriteResult | None
+                ) = await self.debug_file_writer.write_to_file_async(
+                    content=str(artifact) if artifact else tool_message_content,
+                    user_id=user_id,
+                    file_name=tool_name2,
+                )
+                if write_result is not None and write_result.file_path:
+                    # send a follow-up message with the file URL
+                    content_text: str = f"\n\n[Click to download {tool_message.name} Output]({write_result.file_url})\n\n"
+                    yield chat_request_wrapper.create_sse_message(
+                        request_id=request_information.request_id,
+                        content=content_text,
+                        usage_metadata=None,
+                        source="on_tool_end",
+                    )
+
+            # now if debugging is turned on then log the structured content
             structured_data: dict[str, Any] | None = (
                 artifact if isinstance(artifact, dict) else None
             )
@@ -449,53 +479,21 @@ class LangGraphStreamingManager:
                 if isinstance(structured_content, dict):
                     structured_content.pop("result", None)
 
-            if chat_request_wrapper.enable_debug_logging:
-                tool_message_content: str = self.convert_message_content_into_string(
-                    tool_message=tool_message
+                structured_content_text: str = (
+                    "\n--- Structured Content (w/o result) ---\n"
                 )
-                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
-                    logger.debug(
-                        f"Returning artifact: {artifact if artifact else tool_message_content}"
-                    )
-
-                if (
-                    chat_request_wrapper.enable_debug_logging
-                    or self.environment_variables.write_tool_output_to_file
-                ):
-                    # Save to file and provide link
-                    write_result: (
-                        DebugFileWriteResult | None
-                    ) = await self.debug_file_writer.write_to_file_async(
-                        content=str(artifact),
-                        user_id=user_id,
-                        file_name=tool_name2,
-                    )
-                    if write_result is not None and write_result.file_path:
-                        # send a follow-up message with the file URL
-                        content_text: str = f"\n\n[Click to download {tool_message.name} Output]({write_result.file_url})\n\n"
-                        yield chat_request_wrapper.create_sse_message(
-                            request_id=request_information.request_id,
-                            content=content_text,
-                            usage_metadata=None,
-                            source="on_tool_end",
-                        )
-
-                if structured_data_without_result:
-                    structured_content_text: str = (
-                        "\n--- Structured Content (w/o result) ---\n"
-                    )
-                    structured_content_text += json.dumps(
-                        structured_data_without_result, indent=2
-                    )
-                    structured_content_text += "\n--- End Structured Content ---\n"
-                    debug_message = chat_request_wrapper.create_debug_sse_message(
-                        request_id=request_information.request_id,
-                        content=structured_content_text,
-                        usage_metadata=None,
-                        source="on_tool_end",
-                    )
-                    if debug_message:
-                        yield debug_message
+                structured_content_text += json.dumps(
+                    structured_data_without_result, indent=2
+                )
+                structured_content_text += "\n--- End Structured Content ---\n"
+                debug_message = chat_request_wrapper.create_debug_sse_message(
+                    request_id=request_information.request_id,
+                    content=structured_content_text,
+                    usage_metadata=None,
+                    source="on_tool_end",
+                )
+                if debug_message:
+                    yield debug_message
         else:
             logger.debug("on_tool_end: no tool message output")
             content_text = f"\n\n> Tool completed with no output.{runtime_str}\n"
