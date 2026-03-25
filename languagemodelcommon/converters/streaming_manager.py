@@ -469,7 +469,7 @@ class LangGraphStreamingManager:
                     write_result: (
                         DebugFileWriteResult | None
                     ) = await self.debug_file_writer.write_to_file_async(
-                        content=tool_message_content,
+                        content=str(artifact),
                         user_id=user_id,
                         file_name=tool_name2,
                     )
@@ -492,23 +492,9 @@ class LangGraphStreamingManager:
                             tool_message_content += (
                                 f"\n{write_result.url_error_message}"
                             )
-                    else:
-                        tool_message_content = (
-                            "Tool output too large to display inline, "
-                            "and failed to save to file."
-                        )
 
                 tool_progress_message: str = (
-                    (
-                        f"""```
-==== Raw responses from Agent {tool_message.name} [tokens: {token_count}] [runtime: {runtime_str}] =====
-{tool_message_content}
-==== End Raw responses from Agent {tool_message.name} [tokens: {token_count}] [runtime: {runtime_str}] =====
-```
-"""
-                    )
-                    if chat_request_wrapper.enable_debug_logging
-                    else f"\n> {artifact}" + f" [tokens: {token_count}]"
+                    f"\n> {artifact}" + f" [tokens: {token_count}]"
                 )
                 debug_message = chat_request_wrapper.create_debug_sse_message(
                     request_id=request_information.request_id,
