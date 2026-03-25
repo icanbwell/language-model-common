@@ -424,6 +424,13 @@ class LangGraphStreamingManager:
                 "Tool %s end event received without matching start event.",
                 tool_name2,
             )
+
+        tool_message_content: str = (
+            self.convert_message_content_into_string(tool_message=tool_message)
+            if tool_message
+            else ""
+        )
+
         if tool_message:
             artifact: Optional[Any] = tool_message.artifact
 
@@ -438,23 +445,22 @@ class LangGraphStreamingManager:
                 chat_request_wrapper.enable_debug_logging
                 or self.environment_variables.write_tool_output_to_file
             ):
-                tool_message_content: str = self.convert_message_content_into_string(
-                    tool_message=tool_message
-                )
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
                     logger.debug(
                         f"Returning artifact: {artifact if artifact else tool_message_content}"
                     )
+                tool_message_or_artifact_content = (
+                    str(artifact) if artifact else tool_message_content
+                )
                 # Save to file and provide link
-                message_content = str(artifact) if artifact else tool_message_content
                 self._append_streamed_text_fragment(
                     request_id=str(request_information.request_id),
-                    content_text=message_content,
+                    content_text=tool_message_or_artifact_content,
                 )
                 write_result: (
                     DebugFileWriteResult | None
                 ) = await self.debug_file_writer.write_to_file_async(
-                    content=message_content,
+                    content=tool_message_or_artifact_content,
                     user_id=user_id,
                     file_name=tool_name2,
                 )
@@ -510,6 +516,14 @@ class LangGraphStreamingManager:
             )
             if debug_message:
                 yield debug_message
+
+        # return the message to the LLM
+        yield chat_request_wrapper.create_sse_message(
+            request_id=request_information.request_id,
+            content=tool_message_content,
+            usage_metadata=None,
+            source="on_tool_end",
+        )
 
     # noinspection PyMethodMayBeStatic
     async def _handle_on_chat_model_start(
@@ -611,17 +625,18 @@ class LangGraphStreamingManager:
             content_text += "--- Streamed assistant output ---\n"
             content_text += f"{streamed_output}\n"
 
-        file_write_result: (
+        write_result: (
             DebugFileWriteResult | None
         ) = await self.debug_file_writer.write_to_file_async(
             file_name="messages",
             content=content_text,
             user_id=request_information.user_id,
         )
-        if file_write_result and file_write_result.file_url:
+        if write_result and write_result.file_url:
+            message_content_text: str = f"\n\n[Click to download full messages log]({write_result.file_url})\n\n"
             yield chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
-                content=f"[Click to download full messages log]({file_write_result.file_url})\n",
+                content=message_content_text,
                 usage_metadata=None,
                 source="on_chat_model_end",
             )
