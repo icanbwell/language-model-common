@@ -831,21 +831,22 @@ class LangGraphStreamingManager:
         request_information: RequestInformation,
         non_text_blocks: list[dict[str, Any]],
     ) -> AsyncGenerator[str | None, None]:
-        if not non_text_blocks:
-            return
-        summaries: list[str] = []
-        for block in non_text_blocks:
-            block_type = block.get("type", "unknown")
-            keys = sorted(
-                [
-                    key
-                    for key in block.keys()
-                    if key not in {"text", "token", "auth_token", "access_token"}
-                ]
-            )
-            summaries.append(f"type={block_type}, keys={keys}")
-
-        yield None
+        yield None  # we only turn on the below when we're doing deep debugging
+        # if not non_text_blocks:
+        #     return
+        # summaries: list[str] = []
+        # for block in non_text_blocks:
+        #     block_type = block.get("type", "unknown")
+        #     keys = sorted(
+        #         [
+        #             key
+        #             for key in block.keys()
+        #             # if key not in {"text", "token", "auth_token", "access_token"}
+        #         ]
+        #     )
+        #     summaries.append(f"type={block_type}, keys={keys}")
+        #
+        # yield None
         # content_text = (
         #     "\n> Non-text content blocks received: " + ", ".join(summaries) + "\n"
         # )
