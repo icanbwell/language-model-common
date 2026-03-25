@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, cast
 
 from botocore.config import Config
+import pytest
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 
@@ -15,7 +16,7 @@ class _FakeSession:
 
 
 def test_create_bedrock_client_uses_default_timeout_and_retry_values(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_session = _FakeSession()
     captured_profile_name: dict[str, str | None] = {"value": None}
@@ -41,12 +42,13 @@ def test_create_bedrock_client_uses_default_timeout_and_retry_values(
     assert client_call["service_name"] == "bedrock-runtime"
     assert client_call["region_name"] == "us-east-1"
     assert isinstance(client_call["config"], Config)
-    assert client_call["config"].connect_timeout == 10.0
-    assert client_call["config"].read_timeout == 180.0
+    config = cast(Any, client_call["config"])
+    assert config.connect_timeout == 10.0
+    assert config.read_timeout == 180.0
 
 
 def test_create_bedrock_client_honors_environment_timeout_and_retry_overrides(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_session = _FakeSession()
 
@@ -68,9 +70,10 @@ def test_create_bedrock_client_honors_environment_timeout_and_retry_overrides(
     client_call = fake_session.client_calls[0]
     config = client_call["config"]
     assert isinstance(config, Config)
-    assert config.connect_timeout == 7.0
-    assert config.read_timeout == 222.0
-    retries = config.retries
+    config_any = cast(Any, config)
+    assert config_any.connect_timeout == 7.0
+    assert config_any.read_timeout == 222.0
+    retries: dict[str, Any] = config_any.retries
     max_attempts = retries.get("max_attempts") or retries.get("total_max_attempts")
     if (
         isinstance(max_attempts, int)
