@@ -171,6 +171,28 @@ async def test_buffer_flushes_after_interval(
 
 
 @pytest.mark.asyncio
+async def test_buffer_is_disabled_when_buffering_env_flag_is_false(
+    monkeypatch: pytest.MonkeyPatch,
+    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
+) -> None:
+    monkeypatch.setenv("ENABLE_STREAMING_BUFFERING", "false")
+    manager = streaming_manager_factory(10.0)
+
+    first_chunk = await manager._buffer_stream_content(
+        request_id="req",
+        content_text="Hello",
+    )
+    second_chunk = await manager._buffer_stream_content(
+        request_id="req",
+        content_text=" world",
+    )
+
+    assert first_chunk == "Hello"
+    assert second_chunk == " world"
+    assert "req" not in manager._stream_buffers
+
+
+@pytest.mark.asyncio
 async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
     streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
 ) -> None:

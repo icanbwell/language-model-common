@@ -128,6 +128,9 @@ class LangGraphStreamingManager:
             if configured_interval > 0
             else DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS
         )
+        self.enable_streaming_buffering: bool = (
+            self.environment_variables.enable_streaming_buffering
+        )
 
         self._stream_buffers: dict[str, _StreamBuffer] = {}
         self._streamed_text_fragments: dict[str, list[str]] = {}
@@ -782,6 +785,16 @@ class LangGraphStreamingManager:
         content_text: str,
         force_flush: bool = False,
     ) -> str | None:
+        if not self.enable_streaming_buffering:
+            existing_buffer = self._stream_buffers.pop(request_id, None)
+            existing_text = (
+                "".join(existing_buffer.chunks)
+                if existing_buffer is not None and existing_buffer.chunks
+                else ""
+            )
+            immediate_text = f"{existing_text}{content_text}"
+            return immediate_text or None
+
         buffer = self._stream_buffers.setdefault(
             request_id,
             _StreamBuffer(chunks=[], last_flush_ts=time.monotonic()),
