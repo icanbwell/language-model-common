@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS = 0.05
 DEFAULT_LANGGRAPH_MAX_CONCURRENCY = 4
+DEFAULT_LANGGRAPH_RECURSION_LIMIT = 100
 
 # Default generic error message when not exposing technical details
 DEFAULT_GENERIC_ERROR_MESSAGE = (
@@ -112,3 +113,19 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
+
+    @property
+    def langgraph_recursion_limit(self) -> int:
+        value = os.environ.get("LANGGRAPH_RECURSION_LIMIT")
+        if value is None:
+            return DEFAULT_LANGGRAPH_RECURSION_LIMIT
+        try:
+            parsed = int(value)
+            return max(1, parsed)
+        except ValueError:
+            logger.warning(
+                "Invalid LANGGRAPH_RECURSION_LIMIT value '%s'; using default=%s",
+                value,
+                DEFAULT_LANGGRAPH_RECURSION_LIMIT,
+            )
+            return DEFAULT_LANGGRAPH_RECURSION_LIMIT

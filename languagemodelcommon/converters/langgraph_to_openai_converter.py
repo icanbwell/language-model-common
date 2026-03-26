@@ -13,6 +13,7 @@ from typing import (
     Iterable,
     Tuple,
     Literal,
+    cast,
 )
 
 import botocore
@@ -485,12 +486,10 @@ class LangGraphToOpenAIConverter:
             messages=messages,
             request_information=request_information,
         )
-        config = config or {
-            "configurable": {
-                "thread_id": request_information.conversation_thread_id,
-                "user_id": request_information.user_id,
-            }
-        }
+        config = self._build_runnable_config(
+            request_information=request_information,
+            config=config,
+        )
         try:
             output: Dict[str, Any] = await compiled_state_graph.ainvoke(
                 input=input_, config=config
@@ -538,12 +537,10 @@ class LangGraphToOpenAIConverter:
             The standard or custom stream event.
         """
 
-        config = config or {
-            "configurable": {
-                "thread_id": request_information.conversation_thread_id,
-                "user_id": request_information.user_id,
-            }
-        }
+        config = self._build_runnable_config(
+            request_information=request_information,
+            config=config,
+        )
         try:
             event: StandardStreamEvent | CustomStreamEvent
             async for event in compiled_state_graph.astream_events(
@@ -567,6 +564,18 @@ class LangGraphToOpenAIConverter:
                 f"Tool Error streaming graph with messages: {e}"
             ) from e
         except Exception as e:
+            if e.__class__.__name__ == "GraphRecursionError":
+                logger.warning(
+                    "Graph recursion limit reached while streaming. request_id=%s message_count=%d recursion_limit=%s error=%s",
+                    request_information.request_id,
+                    len(messages),
+                    config.get("recursion_limit"),
+                    e,
+                )
+                raise BaileyException(
+                    "The graph reached its recursion limit before completing. "
+                    "Please try again with a more focused request."
+                ) from e
             if self._is_timeout_exception(e):
                 logger.warning(
                     "Timeout while streaming graph. request_id=%s message_count=%d error=%s",
@@ -584,6 +593,42 @@ class LangGraphToOpenAIConverter:
                 e,
             )
             raise BaileyException(f"Error streaming graph with messages: {e}") from e
+
+    def _build_runnable_config(
+        self,
+        *,
+        request_information: RequestInformation,
+        config: RunnableConfig | None,
+    ) -> RunnableConfig:
+        """Build a runnable config with stable defaults and caller overrides."""
+        default_recursion_limit = self.environment_variables.langgraph_recursion_limit
+        base_configurable: Dict[str, Any] = {
+            "thread_id": request_information.conversation_thread_id,
+            "user_id": request_information.user_id,
+        }
+        if config is None:
+            return {
+                "configurable": base_configurable,
+                "recursion_limit": default_recursion_limit,
+            }
+
+        merged_config: Dict[str, Any] = dict(config)
+        configurable = merged_config.get("configurable")
+        merged_configurable: Dict[str, Any] = (
+            dict(configurable) if isinstance(configurable, dict) else {}
+        )
+        if "thread_id" not in merged_configurable:
+            merged_configurable["thread_id"] = (
+                request_information.conversation_thread_id
+            )
+        if "user_id" not in merged_configurable:
+            merged_configurable["user_id"] = request_information.user_id
+        merged_config["configurable"] = merged_configurable
+
+        if "recursion_limit" not in merged_config:
+            merged_config["recursion_limit"] = default_recursion_limit
+
+        return cast(RunnableConfig, merged_config)
 
     # noinspection SpellCheckingInspection
     async def ainvoke(
