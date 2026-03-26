@@ -84,7 +84,14 @@ class ToolFriendlyNameMapper:
         )
         if tool_name == "load_skill":
             return f"\n🧠 Using skill: {name_for_tool}.\n"
-        return f"\n{name_for_tool}.\n"
+        elif tool_name == "run_skill_script":
+            return f"\n⚡ Running script from skill: {name_for_tool}.\n"
+        elif tool_name == "read_skill_resource":
+            return f"\n📖 Reading resource from skill: {name_for_tool}.\n"
+        elif tool_name == "run_python_script":
+            return f"\n🐍 Running Python script: {name_for_tool}.\n"
+        else:
+            return f"\n{name_for_tool}.\n"
 
     def get_name_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
