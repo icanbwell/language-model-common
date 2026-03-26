@@ -462,7 +462,11 @@ class LangGraphStreamingManager:
                     user_id=user_id,
                     file_name=tool_name2,
                 )
-                if write_result is not None and write_result.file_path:
+                if (
+                    write_result is not None
+                    and write_result.file_path
+                    and write_result.file_url
+                ):
                     # send a follow-up message with the file URL
                     content_text: str = f"\n\n[Click to download {tool_message.name} Output]({write_result.file_url})\n\n"
                     yield chat_request_wrapper.create_sse_message(
