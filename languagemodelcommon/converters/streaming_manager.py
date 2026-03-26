@@ -444,9 +444,8 @@ class LangGraphStreamingManager:
                 artifact,
             )
 
-            if (
-                    self.environment_variables.write_tool_output_to_file
-                    and (chat_request_wrapper.enable_debug_logging or artifact is not None)
+            if self.environment_variables.write_tool_output_to_file and (
+                chat_request_wrapper.enable_debug_logging or artifact is not None
             ):
                 if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
                     logger.debug(

@@ -98,17 +98,22 @@ class ToolFriendlyNameMapper:
     ) -> str:
         if not tool_name:
             return ""
+
         # TODO: Come up with a better way so we don't have to hardcode these
         if tool_name == "load_skill":
-            display_name = LoadSkillTool.get_friendly_name(tool_input=tool_input)
+            display_name = LoadSkillTool.get_friendly_name(tool_input=tool_input or {})
         elif tool_name == "run_skill_script":
-            display_name = RunSkillScriptTool.get_friendly_name(tool_input=tool_input)
+            display_name = RunSkillScriptTool.get_friendly_name(
+                tool_input=tool_input or {}
+            )
         elif tool_name == "read_skill_resource":
             display_name = ReadSkillResourceTool.get_friendly_name(
-                tool_input=tool_input
+                tool_input=tool_input or {}
             )
         elif tool_name == "run_python_script":
-            display_name = RunPythonScriptTool.get_friendly_name(tool_input=tool_input)
+            display_name = RunPythonScriptTool.get_friendly_name(
+                tool_input=tool_input or {}
+            )
         else:
             display_name = self.get_display_name(tool_name=tool_name)
         return f"{display_name}"
