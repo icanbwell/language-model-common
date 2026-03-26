@@ -36,6 +36,9 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
+from languagemodelcommon.utilities.tool_friendly_name_mapper import (
+    ToolFriendlyNameMapper,
+)
 
 
 class LanguageModelCommonContainerFactory:
@@ -102,6 +105,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 debug_file_writer=c.resolve(FileWriter),
                 token_reducer=c.resolve(TokenReducer),
+                tool_friendly_name_mapper=c.resolve(ToolFriendlyNameMapper),
             ),
         )
         container.singleton(

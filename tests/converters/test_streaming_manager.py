@@ -24,6 +24,9 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 )
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.mocks.mock_aws_client_factory import MockAwsClientFactory
+from languagemodelcommon.utilities.tool_friendly_name_mapper import (
+    ToolFriendlyNameMapper,
+)
 
 
 class _FakeChatRequestWrapper:
@@ -112,6 +115,7 @@ def streaming_manager_factory(
             debug_file_writer=FileWriter(
                 file_manager_factory=file_manager_factory,
             ),
+            tool_friendly_name_mapper=ToolFriendlyNameMapper(),
         )
 
     return _factory

@@ -94,6 +94,7 @@ class LangGraphStreamingManager:
         token_reducer: TokenReducer,
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
+        tool_friendly_name_mapper: ToolFriendlyNameMapper,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
         if self.token_reducer is None:
@@ -134,6 +135,15 @@ class LangGraphStreamingManager:
 
         self._stream_buffers: dict[str, _StreamBuffer] = {}
         self._streamed_text_fragments: dict[str, list[str]] = {}
+
+        self.tool_friendly_name_mapper = tool_friendly_name_mapper
+        if tool_friendly_name_mapper is None:
+            raise ValueError("tool_friendly_name_mapper must not be None")
+        if not isinstance(tool_friendly_name_mapper, ToolFriendlyNameMapper):
+            raise TypeError(
+                f"tool_friendly_name_mapper must be an instance of "
+                f"ToolFriendlyNameMapper: {type(tool_friendly_name_mapper)}"
+            )
 
     async def handle_langchain_event(
         self,
@@ -343,13 +353,8 @@ class LangGraphStreamingManager:
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
-            mapper: ToolFriendlyNameMapper | None = (
-                request_information.tool_friendly_name_mapper
-            )
-            content_text: str = (
-                mapper.get_message_for_tool(tool_name=tool_name, tool_input=tool_input)
-                if mapper
-                else f"\n🛠️ Running tool: {Humanizer.humanize_tool_name(tool_name)}\n"
+            content_text: str = self.tool_friendly_name_mapper.get_message_for_tool(
+                tool_name=tool_name, tool_input=tool_input
             )
             buffered_chunk = await self._buffer_stream_content(
                 request_id=str(request_information.request_id),
@@ -397,50 +402,44 @@ class LangGraphStreamingManager:
         user_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Emit debug SSE when MCP tool completes, including runtime and optional raw output."""
-        tool_name: Optional[str] = event["name"] if "name" in event else None
+        event_name: Optional[str] = event["name"] if "name" in event else None
         data = event["data"] if "data" in event else {}
         logger.debug(
             "on_tool_end: name=%s request_id=%s data=%s",
-            tool_name,
+            event_name,
             request_information.request_id,
             data,
         )
 
-        tool_message: Optional[ToolMessage] = data.get("output")
-        tool_name2: Optional[str] = None
-        tool_input2: Optional[Dict[str, Any]] = None
-        if tool_message:
-            tool_name2 = getattr(tool_message, "name", None)
-            tool_input2 = getattr(tool_message, "input", None)
-        if not tool_name2:
-            tool_name2 = event["name"] if "name" in event else None
-        if not tool_input2:
-            tool_input2 = data.get("input")
-        tool_key: str = self.make_tool_key(tool_name2, tool_input2)
-        start_time: Optional[float] = tool_start_times.pop(tool_key, None)
         runtime_str: str = ""
-        if start_time is not None:
-            elapsed: float = time.time() - start_time
-            runtime_str = f"{elapsed:.2f}s"
-            logger.debug("Tool %s completed in %.2f seconds.", tool_name2, elapsed)
-        else:
-            logger.warning(
-                "Tool %s end event received without matching start event.",
-                tool_name2,
+        tool_message: Optional[ToolMessage] = data.get("output")
+        if tool_message:
+            tool_name: str = tool_message.name or event_name or "unknown"
+            tool_input: Optional[Dict[str, Any]] = data.get("input")
+
+            tool_key: str = self.make_tool_key(tool_name, tool_input)
+            start_time: Optional[float] = tool_start_times.pop(tool_key, None)
+            if start_time is not None:
+                elapsed: float = time.time() - start_time
+                runtime_str = f"{elapsed:.2f}s"
+                logger.debug("Tool %s completed in %.2f seconds.", tool_name, elapsed)
+            else:
+                logger.warning(
+                    "Tool %s end event received without matching start event.",
+                    tool_name,
+                )
+
+            tool_message_content: str = (
+                self.convert_message_content_into_string(tool_message=tool_message)
+                if tool_message
+                else ""
             )
 
-        tool_message_content: str = (
-            self.convert_message_content_into_string(tool_message=tool_message)
-            if tool_message
-            else ""
-        )
-
-        if tool_message:
             artifact: Optional[Any] = tool_message.artifact
 
             logger.debug(
                 "Tool %s has artifact of type %s: %s",
-                tool_name2,
+                tool_name,
                 type(artifact),
                 artifact,
             )
@@ -459,12 +458,19 @@ class LangGraphStreamingManager:
                         request_id=str(request_information.request_id),
                         content_text=tool_message_or_artifact_content,
                     )
+
+                tool_friendly_name: str = (
+                    self.tool_friendly_name_mapper.get_name_for_tool(
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                    )
+                )
                 write_result: (
                     DebugFileWriteResult | None
                 ) = await self.debug_file_writer.write_to_file_async(
                     content=tool_message_or_artifact_content,
                     user_id=user_id,
-                    file_name=tool_name2,
+                    file_name=tool_name,
                 )
                 if (
                     write_result is not None
@@ -472,7 +478,7 @@ class LangGraphStreamingManager:
                     and write_result.file_url
                 ):
                     # send a follow-up message with the file URL
-                    content_text: str = f"\n\n[Click to download {tool_message.name} Output]({write_result.file_url})\n\n"
+                    content_text: str = f"\n\n[Click to download {tool_friendly_name} Output]({write_result.file_url})\n\n"
                     yield chat_request_wrapper.create_sse_message(
                         request_id=request_information.request_id,
                         content=content_text,

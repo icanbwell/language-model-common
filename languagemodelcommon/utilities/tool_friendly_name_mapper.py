@@ -70,9 +70,22 @@ class ToolFriendlyNameMapper:
     ) -> str:
         if not tool_name:
             return ""
+
+        name_for_tool: str = self.get_name_for_tool(
+            tool_name=tool_name, tool_input=tool_input
+        )
+        if tool_name == "load_skill":
+            return f"\n🧠 Using skill: {name_for_tool}.\n"
+        return f"\n{name_for_tool}.\n"
+
+    def get_name_for_tool(
+        self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
+    ) -> str:
+        if not tool_name:
+            return ""
         if tool_name == "load_skill":
             skill_name_value = tool_input.get("skill_name") if tool_input else None
             skill_name = Humanizer.humanize_tool_name(skill_name_value or "unknown")
-            return f"\n🧠 Using skill: {skill_name}.\n"
+            return f"{skill_name}"
         display_name = self.get_display_name(tool_name=tool_name)
-        return f"\n{display_name}.\n"
+        return f"{display_name}"
