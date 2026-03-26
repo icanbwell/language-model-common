@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "ba061e900beaaefcc3463124d516d6fb3f501c9483dba94a5b626e7ea652b749"
+            "sha256": "a6fabb4c623d5390de00f3ec047ebf9d9d2072f242a5e9e8e41f4c568fca1e57"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -1239,12 +1239,12 @@
         },
         "langchain-ai-skills-framework": {
             "hashes": [
-                "sha256:5729c134e0ef16442f97f49145e9f2e0a2bb32a200207008d1e9751c375ec3f9",
-                "sha256:ffdccee5d0bef2c752858385bdb0f354e3e84f678ea8cc3f23604e46364f0e75"
+                "sha256:86a71eed48df0eff9bf00993d2f9137ac16dc325a229e5915bbc99327d7ecd2f",
+                "sha256:e6059c761d7a5ffab4002ef5dd11d345a34f0211a80cac6d102e1c08fb858f77"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.10'",
-            "version": "==1.0.15"
+            "version": "==1.0.17"
         },
         "langchain-anthropic": {
             "hashes": [
@@ -2012,11 +2012,11 @@
         },
         "pydantic-ai-slim": {
             "hashes": [
-                "sha256:02f21e39ca5d809a0a58ad064b4513af6ac8e4d143096ea207281d96e16f2633",
-                "sha256:b2d097d4c9f56c820cd2cefbba923dd7d2eb6307eb966cfe1810fb9ba970a43a"
+                "sha256:ccb84a890347571e6e3927ff49363aa98a3a5bbfdc42de2c8d3be9f673bbccc6",
+                "sha256:feb409a37a868eae300adc6110ed455b74f45e80c37094dd6926b36585c761e1"
             ],
             "markers": "python_version >= '3.10'",
-            "version": "==1.71.0"
+            "version": "==1.72.0"
         },
         "pydantic-core": {
             "hashes": [
@@ -2147,11 +2147,11 @@
         },
         "pydantic-graph": {
             "hashes": [
-                "sha256:493672a71706d2ffa091a8c2ee3361ce575e93eb5f03b0b56bfc4f23fb5715f7",
-                "sha256:97991c7433f1791062330691adffc0e47f65a4b54bfc124914110bff6ce66d62"
+                "sha256:8970cc4cd4ba396976d4b4aa0ba5dcc9a0efeeac01a1a9253c7a8d90a4590046",
+                "sha256:d1c953d7395ff53b74c3e3b8b4cfac8d8ba06d32fc656ebae9363b2ade8598b0"
             ],
             "markers": "python_version >= '3.10'",
-            "version": "==1.71.0"
+            "version": "==1.72.0"
         },
         "pydantic-settings": {
             "hashes": [
