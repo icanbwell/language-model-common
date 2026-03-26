@@ -398,13 +398,14 @@ class LangGraphStreamingManager:
     ) -> AsyncGenerator[str, None]:
         """Emit debug SSE when MCP tool completes, including runtime and optional raw output."""
         tool_name: Optional[str] = event["name"] if "name" in event else None
+        data = event["data"] if "data" in event else {}
         logger.debug(
-            "on_tool_end: name=%s request_id=%s has_data=%s",
+            "on_tool_end: name=%s request_id=%s data=%s",
             tool_name,
             request_information.request_id,
-            "data" in event,
+            data,
         )
-        data = event["data"] if "data" in event else {}
+
         tool_message: Optional[ToolMessage] = data.get("output")
         tool_name2: Optional[str] = None
         tool_input2: Optional[Dict[str, Any]] = None
