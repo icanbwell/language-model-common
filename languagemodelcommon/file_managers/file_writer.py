@@ -105,7 +105,7 @@ class FileWriter:
             )
 
     async def write_to_file_async(
-        self, *, file_name: str, user_id: str | None, content: str
+        self, *, file_name: str | None, user_id: str | None, content: str
     ) -> DebugFileWriteResult | None:
         output_folder = os.environ.get("IMAGE_GENERATION_PATH")
         if output_folder:
