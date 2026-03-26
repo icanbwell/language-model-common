@@ -3,6 +3,14 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
+from langchain_ai_skills_framework.tools.load_skill_tool import LoadSkillTool
+from langchain_ai_skills_framework.tools.read_skill_resource_tool import (
+    ReadSkillResourceTool,
+)
+from langchain_ai_skills_framework.tools.run_python_script_tool import (
+    RunPythonScriptTool,
+)
+from langchain_ai_skills_framework.tools.run_skill_script_tool import RunSkillScriptTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.text_humanizer import Humanizer
 
@@ -83,9 +91,17 @@ class ToolFriendlyNameMapper:
     ) -> str:
         if not tool_name:
             return ""
+        # TODO: Come up with a better way so we don't have to hardcode these
         if tool_name == "load_skill":
-            skill_name_value = tool_input.get("skill_name") if tool_input else None
-            skill_name = Humanizer.humanize_tool_name(skill_name_value or "unknown")
-            return f"{skill_name}"
-        display_name = self.get_display_name(tool_name=tool_name)
+            display_name = LoadSkillTool.get_friendly_name(tool_input=tool_input)
+        elif tool_name == "run_skill_script":
+            display_name = RunSkillScriptTool.get_friendly_name(tool_input=tool_input)
+        elif tool_name == "read_skill_resource":
+            display_name = ReadSkillResourceTool.get_friendly_name(
+                tool_input=tool_input
+            )
+        elif tool_name == "run_python_script":
+            display_name = RunPythonScriptTool.get_friendly_name(tool_input=tool_input)
+        else:
+            display_name = self.get_display_name(tool_name=tool_name)
         return f"{display_name}"
