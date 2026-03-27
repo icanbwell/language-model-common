@@ -17,6 +17,7 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
+from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 from languagemodelcommon.image_generation.image_generator_factory import (
@@ -35,6 +36,9 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
+from languagemodelcommon.utilities.tool_friendly_name_mapper import (
+    ToolFriendlyNameMapper,
+)
 
 
 class LanguageModelCommonContainerFactory:
@@ -99,8 +103,15 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
-                file_manager_factory=c.resolve(FileManagerFactory),
+                debug_file_writer=c.resolve(FileWriter),
                 token_reducer=c.resolve(TokenReducer),
+                tool_friendly_name_mapper=c.resolve(ToolFriendlyNameMapper),
+            ),
+        )
+        container.singleton(
+            FileWriter,
+            lambda c: FileWriter(
+                file_manager_factory=c.resolve(FileManagerFactory),
             ),
         )
         container.singleton(

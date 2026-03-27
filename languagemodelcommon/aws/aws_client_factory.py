@@ -1,7 +1,9 @@
 import os
+from typing import cast, Literal, Any
 
 import boto3
 from boto3 import Session
+from botocore.config import Config
 
 from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 from types_boto3_s3.client import S3Client
@@ -9,15 +11,60 @@ from types_boto3_textract.client import TextractClient
 
 
 class AwsClientFactory:
+    @staticmethod
+    def _get_float_env(*, name: str, default: float) -> float:
+        value = os.environ.get(name)
+        if value is None or value.strip() == "":
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _get_int_env(*, name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None or value.strip() == "":
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
     # noinspection PyMethodMayBeStatic
     def create_bedrock_client(self) -> BedrockRuntimeClient:
         """Create and return a Bedrock client"""
-        session: Session = boto3.Session(
-            profile_name=os.environ.get("AWS_CREDENTIALS_PROFILE")
+        max_attempts = self._get_int_env(
+            name="AWS_BEDROCK_MAX_ATTEMPTS",
+            default=self._get_int_env(name="AWS_BEDROCK_MAX_RETRIES", default=1),
         )
+        retries: dict[str, Any] = {
+            "max_attempts": max_attempts,
+            "mode": cast(
+                Literal["legacy", "standard", "adaptive"],
+                os.getenv("AWS_BEDROCK_RETRY_MODE", "adaptive"),
+            ),
+        }
+        # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/config.html
+        bedrock_config = Config(
+            connect_timeout=self._get_float_env(
+                name="AWS_BEDROCK_CONNECT_TIMEOUT_SECONDS",
+                default=10.0,
+            ),
+            read_timeout=self._get_float_env(
+                name="AWS_BEDROCK_READ_TIMEOUT_SECONDS",
+                default=180.0,
+            ),
+            retries=retries,  # type: ignore[arg-type]
+            tcp_keepalive=True,
+        )
+        aws_credentials_profile = os.environ.get("AWS_CREDENTIALS_PROFILE")
+        aws_region_name = os.environ.get("AWS_REGION", "us-east-1")
+        session: Session = boto3.Session(profile_name=aws_credentials_profile)
         bedrock_client: BedrockRuntimeClient = session.client(
             service_name="bedrock-runtime",
-            region_name="us-east-1",
+            config=bedrock_config,
+            region_name=aws_region_name,
         )
         return bedrock_client
 
