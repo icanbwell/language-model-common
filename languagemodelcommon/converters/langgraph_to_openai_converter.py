@@ -86,6 +86,18 @@ class LangGraphToOpenAIConverter:
             or "Timeout" in cause_class_name
         )
 
+    @staticmethod
+    def _find_cause(
+        exception: BaseException, target_type: type[BaseException]
+    ) -> BaseException | None:
+        """Walk the ``__cause__`` chain looking for *target_type*."""
+        current: BaseException | None = exception
+        while current is not None:
+            if isinstance(current, target_type):
+                return current
+            current = current.__cause__
+        return None
+
     def __init__(
         self,
         *,
@@ -205,6 +217,26 @@ class LangGraphToOpenAIConverter:
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
+
+            # Check if a TokenRetrievalError is wrapped inside another exception
+            token_retrieval_error = self._find_cause(e, TokenRetrievalError)
+            if token_retrieval_error is not None:
+                message = (
+                    f"Token retrieval error: {token_retrieval_error}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
+                )
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_id,
+                    usage_metadata=None,
+                    content=message,
+                    source="error",
+                )
+                yield chat_request_wrapper.create_final_sse_message(
+                    request_id=request_id, usage_metadata=None, source="final"
+                )
+                return
+
             # if the request is not enabled for debug logging, return a generic error message instead of the actual error
             error_message: str
             if request_information.enable_debug_logging:
@@ -582,6 +614,8 @@ class LangGraphToOpenAIConverter:
                 f"Tool Error streaming graph with messages: {e}"
             ) from e
         except AuthorizationNeededException:
+            raise
+        except TokenRetrievalError:
             raise
         except Exception as e:
             if e.__class__.__name__ == "GraphRecursionError":
