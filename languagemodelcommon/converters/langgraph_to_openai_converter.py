@@ -188,11 +188,19 @@ class LangGraphToOpenAIConverter:
                 source="error",
             )
         except AuthorizationNeededException as e:
-            # The login prompt was already sent to the user via the on_tool_error
-            # handler, so we just log and suppress to avoid a duplicate error message.
+            # Show the login prompt to the user and stop processing.  The
+            # on_tool_error handler may have already streamed this, but it is
+            # not guaranteed (the event can be lost when the exception
+            # terminates the async generator), so we yield it here as well.
             logger.info(
-                "AuthorizationNeededException handled — login prompt already sent: %s",
+                "AuthorizationNeededException caught in stream — sending login prompt: %s",
                 e.message,
+            )
+            yield chat_request_wrapper.create_sse_message(
+                request_id=request_id,
+                content=str(e.message),
+                usage_metadata=None,
+                source="on_tool_error",
             )
         except Exception as e:
             tb = traceback.format_exc()
@@ -573,6 +581,8 @@ class LangGraphToOpenAIConverter:
             raise BaileyException(
                 f"Tool Error streaming graph with messages: {e}"
             ) from e
+        except AuthorizationNeededException:
+            raise
         except Exception as e:
             if e.__class__.__name__ == "GraphRecursionError":
                 logger.warning(
