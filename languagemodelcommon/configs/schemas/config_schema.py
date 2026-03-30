@@ -92,6 +92,16 @@ class AuthenticationConfig(BaseModel):
     """
 
 
+class ToolDefinitionConfig(BaseModel):
+    """Static tool definition for lazy-loaded MCP tools"""
+
+    name: str
+    """The name of the tool"""
+
+    description: str
+    """A description of what the tool does"""
+
+
 class AgentConfig(AuthenticationConfig):
     """Tool configuration"""
 
@@ -100,6 +110,12 @@ class AgentConfig(AuthenticationConfig):
 
     tools: str | None = None
     """The names of the tool to use in the MCP call.  If none is provided then all tools at the URL will be used. Separate multiple tool names with commas."""
+
+    lazy_load: bool | None = None
+    """If true, skip tool discovery from the MCP server and use tool_definitions instead."""
+
+    tool_definitions: List[ToolDefinitionConfig] | None = None
+    """Static tool definitions to use when lazy_load is enabled. Each entry provides a tool name and description."""
 
 
 class ModelConfig(BaseModel):
