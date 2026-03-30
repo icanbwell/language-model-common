@@ -22,6 +22,9 @@ from botocore.exceptions import (
     ReadTimeoutError,
     TokenRetrievalError,
 )
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 from fastapi import HTTPException
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
@@ -183,6 +186,13 @@ class LangGraphToOpenAIConverter:
                 usage_metadata=None,
                 content=message,
                 source="error",
+            )
+        except AuthorizationNeededException as e:
+            # The login prompt was already sent to the user via the on_tool_error
+            # handler, so we just log and suppress to avoid a duplicate error message.
+            logger.info(
+                "AuthorizationNeededException handled — login prompt already sent: %s",
+                e.message,
             )
         except Exception as e:
             tb = traceback.format_exc()

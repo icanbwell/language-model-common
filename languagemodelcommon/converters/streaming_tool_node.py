@@ -14,6 +14,9 @@ from langchain_core.runnables.utils import (
     Output,
 )
 from langgraph.prebuilt import ToolNode
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 
 
 class StreamingToolNode(ToolNode):
@@ -38,6 +41,8 @@ class StreamingToolNode(ToolNode):
         """
         try:
             yield await self.ainvoke(input, config, **kwargs)
+        except AuthorizationNeededException:
+            raise
         except Exception as e:
             tool_call: dict[str, Any] = (
                 cast(dict[str, Any], input.get("tool_call"))
