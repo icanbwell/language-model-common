@@ -20,8 +20,8 @@ jobs:
 
     steps:
       # Checks-out your repository
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -53,7 +53,7 @@ jobs:
           docker compose run --rm -v ${{ github.workspace }}/reports:/reports dev pytest . --tb=auto --junitxml=/reports/test-results.xml
 
       - name: Upload pytest test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-results
           path: ${{ github.workspace }}/reports/**/*.xml
