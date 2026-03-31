@@ -22,6 +22,9 @@ from botocore.exceptions import (
     ReadTimeoutError,
     TokenRetrievalError,
 )
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 from fastapi import HTTPException
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
@@ -82,6 +85,18 @@ class LangGraphToOpenAIConverter:
             or "Timeout" in class_name
             or "Timeout" in cause_class_name
         )
+
+    @staticmethod
+    def _find_cause(
+        exception: BaseException, target_type: type[BaseException]
+    ) -> BaseException | None:
+        """Walk the ``__cause__`` chain looking for *target_type*."""
+        current: BaseException | None = exception
+        while current is not None:
+            if isinstance(current, target_type):
+                return current
+            current = current.__cause__
+        return None
 
     def __init__(
         self,
@@ -184,9 +199,44 @@ class LangGraphToOpenAIConverter:
                 content=message,
                 source="error",
             )
+        except AuthorizationNeededException as e:
+            # Show the login prompt to the user and stop processing.  The
+            # on_tool_error handler may have already streamed this, but it is
+            # not guaranteed (the event can be lost when the exception
+            # terminates the async generator), so we yield it here as well.
+            logger.info(
+                "AuthorizationNeededException caught in stream — sending login prompt: %s",
+                e.message,
+            )
+            yield chat_request_wrapper.create_sse_message(
+                request_id=request_id,
+                content=str(e.message),
+                usage_metadata=None,
+                source="on_tool_error",
+            )
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
+
+            # Check if a TokenRetrievalError is wrapped inside another exception
+            token_retrieval_error = self._find_cause(e, TokenRetrievalError)
+            if token_retrieval_error is not None:
+                message = (
+                    f"Token retrieval error: {token_retrieval_error}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
+                )
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_id,
+                    usage_metadata=None,
+                    content=message,
+                    source="error",
+                )
+                yield chat_request_wrapper.create_final_sse_message(
+                    request_id=request_id, usage_metadata=None, source="final"
+                )
+                return
+
             # if the request is not enabled for debug logging, return a generic error message instead of the actual error
             error_message: str
             if request_information.enable_debug_logging:
@@ -563,6 +613,10 @@ class LangGraphToOpenAIConverter:
             raise BaileyException(
                 f"Tool Error streaming graph with messages: {e}"
             ) from e
+        except AuthorizationNeededException:
+            raise
+        except TokenRetrievalError:
+            raise
         except Exception as e:
             if e.__class__.__name__ == "GraphRecursionError":
                 logger.warning(
@@ -828,7 +882,7 @@ class LangGraphToOpenAIConverter:
 
         compiled_state_graph = workflow.compile()
 
-        return compiled_state_graph  # type: ignore[return-value]
+        return compiled_state_graph
 
     @staticmethod
     def create_state(

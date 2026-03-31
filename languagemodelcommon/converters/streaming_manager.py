@@ -25,6 +25,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 from typing import (
     Any,
     cast,
@@ -705,12 +708,20 @@ class LangGraphStreamingManager:
             elapsed: float = time.time() - start_time
             runtime_str = f"{elapsed:.2f}s"
         logger.error(
-            "Tool error in %s: %s [runtime: %s]",
+            "Tool error in %s: (%s) %s [runtime: %s]",
             tool_name,
+            type(error_message),
             error_message,
             runtime_str,
         )
+        if isinstance(error_message, AuthorizationNeededException):
+            # Auth errors are handled in _stream_resp_async_generator where
+            # the exception is caught and the login prompt is yielded once.
+            # Yielding here as well would duplicate the message.
+            return
+
         content_text: str = f"\n\n> Tool {tool_name} encountered an error: {error_message} [runtime: {runtime_str}]\n"
+
         yield chat_request_wrapper.create_sse_message(
             request_id=request_information.request_id,
             content=content_text,
