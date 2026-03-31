@@ -27,7 +27,7 @@ RUN pip config list
 
 # Conditionally run pipenv lock to update the Pipfile.lock based on the argument provided
 # If RUN_PIPENV_LOCK is true, it regenerates the Pipfile.lock file with the latest versions of dependencies
-RUN if [ "$RUN_PIPENV_LOCK" = "true" ]; then echo "Locking Pipfile" && rm -f Pipfile.lock && pipenv lock --dev --clear --verbose --extra-pip-args="--prefer-binary"; fi
+RUN if [ "$RUN_PIPENV_LOCK" = "true" ]; then echo "Locking Pipfile" && rm -f Pipfile.lock && pipenv lock --categories="packages dev-packages" --clear --verbose --extra-pip-args="--prefer-binary"; fi
 
 # Install all dependencies using the locked versions in Pipfile.lock
 # --dev installs development dependencies, --system installs them globally in the container's Python environment

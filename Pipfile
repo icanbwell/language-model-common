@@ -105,6 +105,8 @@ plette = "<1.0.0" # https://github.com/Madoshakalaka/pipenv-setup/issues/138
 setuptools=">=60.9.3, <=80.9.0"
 # pipenv-setup is needed for updating setup.py with the dependencies for anyone installing this package
 pipenv-setup = ">=3.2.0"
+# packaging
+packaging = "~=20.0"
 
 [requires]
 python_version = "3.12"

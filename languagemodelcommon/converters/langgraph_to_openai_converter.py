@@ -882,7 +882,7 @@ class LangGraphToOpenAIConverter:
 
         compiled_state_graph = workflow.compile()
 
-        return compiled_state_graph  # type: ignore[return-value]
+        return compiled_state_graph
 
     @staticmethod
     def create_state(
