@@ -378,55 +378,39 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         async def response_stream() -> AsyncIterable[str]:
             sequence = 0
 
-            created_event: ResponseCreatedEvent = ResponseCreatedEvent(
-                response=Response(
-                    id=request_id,
-                    model=model,
-                    status="in_progress",
-                    created_at=time.time(),
-                    object="response",
-                    output=[],
-                    parallel_tool_calls=(
-                        parallel_tool_calls
-                        if parallel_tool_calls is not None
-                        else False
-                    ),
-                    tools=[],
-                    tool_choice="auto",
-                ),
-                type="response.created",
+            # Use shared helper to create the initial SSE message for the response.
+            first_message: str = self.create_first_sse_message(
+                request_id=request_id,
+                model=model,
+                parallel_tool_calls=parallel_tool_calls,
+                messages=messages,
                 sequence_number=sequence,
             )
-            yield f"data: {created_event.model_dump_json()}\n\n"
+            yield first_message
             sequence += 1
 
+            # Stream delta messages using the shared SSE construction helper.
             for response_message in response_messages1:
                 message_content: str = convert_message_content_to_string(
                     response_message.content
                 )
                 if message_content:
-                    delta_event: ResponseTextDeltaEvent = ResponseTextDeltaEvent(
-                        item_id=request_id,
-                        content_index=0,
-                        output_index=len(messages),
-                        delta=message_content + "\n",
-                        type="response.output_text.delta",
+                    delta_message: str = self.create_sse_message(
+                        request_id=request_id,
+                        messages=messages,
                         sequence_number=sequence,
-                        logprobs=[],
+                        delta=message_content + "\n",
                     )
-                    yield f"data: {delta_event.model_dump_json()}\n\n"
+                    yield delta_message
                     sequence += 1
 
-            done_event: ResponseTextDoneEvent = ResponseTextDoneEvent(
-                item_id=request_id,
-                content_index=0,
-                output_index=len(messages),
-                type="response.output_text.done",
+            # Emit the final SSE message using the shared helper.
+            final_message: str = self.create_final_sse_message(
+                request_id=request_id,
+                messages=messages,
                 sequence_number=sequence,
-                logprobs=[],
-                text="",
             )
-            yield f"data: {done_event.model_dump_json()}\n\n"
+            yield final_message
 
         return response_stream()
 
