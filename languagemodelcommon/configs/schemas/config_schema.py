@@ -111,6 +111,9 @@ class AgentConfig(AuthenticationConfig):
     tools: str | None = None
     """The names of the tool to use in the MCP call.  If none is provided then all tools at the URL will be used. Separate multiple tool names with commas."""
 
+    public_url: str | None = None
+    """An unauthenticated URL for MCP tool discovery (tools/list). When specified, this URL is used for listing available tools without authentication, while the main url is used for authenticated tool invocation. This is needed because the MCP spec does not allow unauthenticated access to tools/list when tool invocation requires auth."""
+
     lazy_load: bool | None = None
     """If true, skip tool discovery from the MCP server and use tool_definitions instead."""
 
