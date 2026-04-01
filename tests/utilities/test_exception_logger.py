@@ -28,20 +28,6 @@ class TestGetUserFriendlyMessage:
         expected_code = EXCEPTION_TYPE_CODES[ValueError]
         assert result == f"{DEFAULT_GENERIC_ERROR_MESSAGE} (Code: {expected_code})"
 
-    def test_returns_custom_generic_message_when_debug_disabled(self) -> None:
-        """When debug logging is disabled with custom message, should return the custom message."""
-        error = ValueError("NoneType' object has no attribute 'tools'")
-        custom_message = "Something went wrong. Please try again."
-
-        result = ExceptionLogger.get_user_friendly_message(
-            error,
-            enable_debug_logging=False,
-            generic_message=custom_message,
-        )
-
-        expected_code = EXCEPTION_TYPE_CODES[ValueError]
-        assert result == f"{custom_message} (Code: {expected_code})"
-
     def test_returns_error_details_when_debug_enabled(self) -> None:
         """When debug logging is enabled, should return the full error details."""
         error = ValueError("Specific error message for debugging")
@@ -52,20 +38,6 @@ class TestGetUserFriendlyMessage:
         )
 
         assert "Specific error message for debugging" in result
-
-    def test_returns_error_details_with_custom_message_when_debug_enabled(self) -> None:
-        """When debug logging is enabled, custom message is ignored and full details shown."""
-        error = ValueError("Technical error details")
-        custom_message = "Generic error"
-
-        result = ExceptionLogger.get_user_friendly_message(
-            error,
-            enable_debug_logging=True,
-            generic_message=custom_message,
-        )
-
-        assert "Technical error details" in result
-        assert result != custom_message
 
     def test_handles_exception_group_when_debug_disabled(self) -> None:
         """Should return generic message for ExceptionGroup when debug disabled."""

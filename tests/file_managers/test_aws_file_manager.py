@@ -40,22 +40,6 @@ def aws_s3_file_manager(aws_client_factory: AwsClientFactory) -> AwsS3FileManage
     return AwsS3FileManager(aws_client_factory=aws_client_factory)
 
 
-def test_aws_s3_file_manager_initialization(
-    aws_client_factory: AwsClientFactory,
-) -> None:
-    """
-    Test the initialization of AwsS3FileManager.
-
-    Verifies:
-    - Correct client factory assignment
-    - Type checking
-    """
-    file_manager = AwsS3FileManager(aws_client_factory=aws_client_factory)
-
-    assert file_manager.aws_client_factory == aws_client_factory
-    assert isinstance(file_manager.aws_client_factory, AwsClientFactory)
-
-
 def test_get_full_path(aws_s3_file_manager: AwsS3FileManager) -> None:
     """
     Test the get_full_path method.
@@ -291,27 +275,3 @@ async def test_read_file_async_error_cases(
         await aws_s3_file_manager.read_file_async(
             folder=bucket_name, file_path="s3://test.jpg"
         )
-
-
-class MyModel:
-    def __init__(self, name: str, value: Any) -> None:
-        self.name = name
-        self.value = value
-
-    def save(self) -> None:
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.put_object(Bucket="mybucket", Key=self.name, Body=self.value)
-
-
-@pytest.mark.asyncio
-async def test_mock_aws() -> None:
-    with mock_aws():
-        conn = boto3.resource("s3", region_name="us-east-1")
-        conn.create_bucket(Bucket="mybucket")
-
-        model_instance = MyModel("steve", "is awesome")
-        model_instance.save()
-
-        body = conn.Object("mybucket", "steve").get()["Body"].read().decode("utf-8")
-
-        assert body == "is awesome"

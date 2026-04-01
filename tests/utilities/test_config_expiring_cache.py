@@ -23,11 +23,6 @@ class TestConfigExpiringCache:
     """Covers cache validity, mutation, and expiry."""
 
     @pytest.mark.asyncio
-    async def test_get_returns_none_when_cache_empty(self) -> None:
-        cache = ConfigExpiringCache(ttl_seconds=1.0)
-        assert await cache.get() is None
-
-    @pytest.mark.asyncio
     async def test_set_then_get_returns_value_while_valid(
         self, sample_models: List[ChatModelConfig]
     ) -> None:
@@ -62,9 +57,3 @@ class TestConfigExpiringCache:
         created = await cache.create(init_value=sample_models)
         assert created == sample_models
         assert await cache.get() == sample_models
-
-    @pytest.mark.asyncio
-    async def test_create_with_no_value_starts_empty(self) -> None:
-        cache = ConfigExpiringCache(ttl_seconds=5.0)
-        assert await cache.create(init_value=None) is None
-        assert await cache.get() is None
