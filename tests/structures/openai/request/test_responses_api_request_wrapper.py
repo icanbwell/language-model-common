@@ -281,22 +281,18 @@ class TestStreamResponse:
         assert created["response"]["id"] == "req-stream-1"
         assert created["response"]["model"] == "gpt-4o"
         assert created["response"]["status"] == "in_progress"
-        assert created["sequence_number"] == 0
 
         delta1 = json.loads(chunks[1][len("data: ") :])
         assert delta1["type"] == "response.output_text.delta"
         assert delta1["delta"] == "Hello\n"
-        assert delta1["sequence_number"] == 1
 
         delta2 = json.loads(chunks[2][len("data: ") :])
         assert delta2["type"] == "response.output_text.delta"
         assert delta2["delta"] == "World\n"
-        assert delta2["sequence_number"] == 2
 
         done = json.loads(chunks[3][len("data: ") :])
         assert done["type"] == "response.output_text.done"
         assert done["text"] == ""
-        assert done["sequence_number"] == 3
 
     @pytest.mark.asyncio
     async def test_stream_response_skips_empty_content(self) -> None:

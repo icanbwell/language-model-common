@@ -371,25 +371,12 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             convert_message_content_to_string,
         )
 
-        model = self.model
-        parallel_tool_calls = self.effective_parallel_tool_calls()
-        messages = self._messages
-
         async def response_stream() -> AsyncIterable[str]:
-            sequence = 0
-
-            # Use shared helper to create the initial SSE message for the response.
-            first_message: str = self.create_first_sse_message(
+            yield self.create_first_sse_message(
                 request_id=request_id,
-                model=model,
-                parallel_tool_calls=parallel_tool_calls,
-                messages=messages,
-                sequence_number=sequence,
+                source="stream_response",
             )
-            yield first_message
-            sequence += 1
 
-            # Stream delta messages using the shared SSE construction helper.
             for response_message in response_messages1:
                 message_content: str = convert_message_content_to_string(
                     response_message.content
@@ -397,20 +384,18 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 if message_content:
                     delta_message: str = self.create_sse_message(
                         request_id=request_id,
-                        messages=messages,
-                        sequence_number=sequence,
-                        delta=message_content + "\n",
+                        content=message_content + "\n",
+                        usage_metadata=None,
+                        source="stream_response",
                     )
-                    yield delta_message
-                    sequence += 1
+                    if delta_message:
+                        yield delta_message
 
-            # Emit the final SSE message using the shared helper.
-            final_message: str = self.create_final_sse_message(
+            yield self.create_final_sse_message(
                 request_id=request_id,
-                messages=messages,
-                sequence_number=sequence,
+                usage_metadata=None,
+                source="stream_response",
             )
-            yield final_message
 
         return response_stream()
 
