@@ -365,10 +365,70 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         *,
         response_messages1: List[AnyMessage],
     ) -> AsyncIterable[str]:
-        """Streaming responses are not yet supported for the Responses API wrapper."""
-        raise NotImplementedError(
-            "Streaming responses is not implemented for ResponsesApiRequestWrapper"
+        """Streams the response messages as Server-Sent Events (SSE) in the Responses API format."""
+        from languagemodelcommon.utilities.chat_message_helpers import (
+            convert_message_content_to_string,
         )
+
+        request_id = "resp_stream"
+        model = self.model
+        parallel_tool_calls = self.effective_parallel_tool_calls()
+        messages = self._messages
+
+        async def response_stream() -> AsyncIterable[str]:
+            sequence = 0
+
+            created_event: ResponseCreatedEvent = ResponseCreatedEvent(
+                response=Response(
+                    id=request_id,
+                    model=model,
+                    status="in_progress",
+                    created_at=time.time(),
+                    object="response",
+                    output=[],
+                    parallel_tool_calls=(
+                        parallel_tool_calls
+                        if parallel_tool_calls is not None
+                        else False
+                    ),
+                    tools=[],
+                    tool_choice="auto",
+                ),
+                type="response.created",
+                sequence_number=sequence,
+            )
+            yield f"data: {created_event.model_dump_json()}\n\n"
+            sequence += 1
+
+            for response_message in response_messages1:
+                message_content: str = convert_message_content_to_string(
+                    response_message.content
+                )
+                if message_content:
+                    delta_event: ResponseTextDeltaEvent = ResponseTextDeltaEvent(
+                        item_id=request_id,
+                        content_index=0,
+                        output_index=len(messages),
+                        delta=message_content + "\n",
+                        type="response.output_text.delta",
+                        sequence_number=sequence,
+                        logprobs=[],
+                    )
+                    yield f"data: {delta_event.model_dump_json()}\n\n"
+                    sequence += 1
+
+            done_event: ResponseTextDoneEvent = ResponseTextDoneEvent(
+                item_id=request_id,
+                content_index=0,
+                output_index=len(messages),
+                type="response.output_text.done",
+                sequence_number=sequence,
+                logprobs=[],
+                text="",
+            )
+            yield f"data: {done_event.model_dump_json()}\n\n"
+
+        return response_stream()
 
     @override
     @property
