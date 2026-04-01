@@ -268,7 +268,9 @@ class TestStreamResponse:
             AIMessage(content="Hello"),
             AIMessage(content="World"),
         ]
-        stream = wrapper.stream_response(response_messages1=messages)
+        stream = wrapper.stream_response(
+            request_id="req-stream-1", response_messages1=messages
+        )
         chunks = [chunk async for chunk in stream]
 
         # created + 2 deltas + done = 4
@@ -276,6 +278,7 @@ class TestStreamResponse:
 
         created = json.loads(chunks[0][len("data: ") :])
         assert created["type"] == "response.created"
+        assert created["response"]["id"] == "req-stream-1"
         assert created["response"]["model"] == "gpt-4o"
         assert created["response"]["status"] == "in_progress"
         assert created["sequence_number"] == 0
@@ -302,7 +305,9 @@ class TestStreamResponse:
             AIMessage(content=""),
             AIMessage(content="Real content"),
         ]
-        stream = wrapper.stream_response(response_messages1=messages)
+        stream = wrapper.stream_response(
+            request_id="req-stream-2", response_messages1=messages
+        )
         chunks = [chunk async for chunk in stream]
 
         # created + 1 delta (empty skipped) + done = 3

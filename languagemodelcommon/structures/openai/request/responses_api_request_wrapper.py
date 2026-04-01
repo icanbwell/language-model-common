@@ -363,6 +363,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def stream_response(
         self,
         *,
+        request_id: str,
         response_messages1: List[AnyMessage],
     ) -> AsyncIterable[str]:
         """Streams the response messages as Server-Sent Events (SSE) in the Responses API format."""
@@ -370,7 +371,6 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             convert_message_content_to_string,
         )
 
-        request_id = "resp_stream"
         model = self.model
         parallel_tool_calls = self.effective_parallel_tool_calls()
         messages = self._messages

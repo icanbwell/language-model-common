@@ -122,6 +122,7 @@ class ChatRequestWrapper(abc.ABC):
     def stream_response(
         self,
         *,
+        request_id: str,
         response_messages1: List[AnyMessage],
     ) -> AsyncIterable[str]: ...
 
@@ -136,7 +137,8 @@ class ChatRequestWrapper(abc.ABC):
 
         if should_stream_response:
             stream_content: AsyncIterable[str] = self.stream_response(
-                response_messages1=response_messages
+                request_id=request_id,
+                response_messages1=response_messages,
             )
             return StreamingResponse(
                 content=stream_content,

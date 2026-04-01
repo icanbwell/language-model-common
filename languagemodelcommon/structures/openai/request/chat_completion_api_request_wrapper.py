@@ -306,6 +306,7 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
     def stream_response(
         self,
         *,
+        request_id: str,
         response_messages1: List[AnyMessage],
     ) -> AsyncIterator[str]:
         """Streams the response messages as Server-Sent Events (SSE) in the OpenAI format."""
@@ -317,7 +318,7 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
                 )
                 if message_content:
                     chat_stream_response: ChatCompletionChunk = ChatCompletionChunk(
-                        id="1",
+                        id=request_id,
                         created=int(time.time()),
                         model=self.model,
                         choices=[
