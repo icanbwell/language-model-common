@@ -7,10 +7,6 @@ from pathlib import Path
 from typing import Any, List, Optional, cast
 from uuid import UUID, uuid4
 
-from langchain_ai_skills_framework.loaders.github_directory_downloader import (  # type: ignore[import-not-found]
-    GithubDirectoryDownloader,
-)
-
 from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
 )
@@ -214,6 +210,10 @@ class ConfigReader:
     @staticmethod
     def _download_github_directory(github_uri: str) -> Path:
         """Download a github:// URI to a local cache directory using fsspec."""
+        from langchain_ai_skills_framework.loaders.github_directory_downloader import (  # type: ignore[import-not-found]
+            GithubDirectoryDownloader,
+        )
+
         github_token = os.environ.get("GITHUB_TOKEN")
         cache_path = Path(tempfile.gettempdir()) / "github_config_cache"
         downloader = GithubDirectoryDownloader()

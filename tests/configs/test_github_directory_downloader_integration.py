@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -46,9 +46,6 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
         {"id": "m1", "name": "Model One"},
     )
 
-    mock_downloader = MagicMock()
-    mock_downloader.download.return_value = local_dir
-
     monkeypatch.setenv("MODELS_OFFICIAL_PATH", "github://org/repo/configs?ref=main")
     monkeypatch.delenv("MODELS_ZIP_PATH", raising=False)
 
@@ -56,19 +53,18 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.GithubDirectoryDownloader",
-        return_value=mock_downloader,
-    ):
+    with patch.object(
+        ConfigReader,
+        "_download_github_directory",
+        return_value=local_dir,
+    ) as mock_download:
         models = await reader.read_models_from_path_async(
             "github://org/repo/configs?ref=main"
         )
 
     assert len(models) == 1
     assert models[0].name == "Model One"
-    mock_downloader.download.assert_called_once()
-    call_kwargs = mock_downloader.download.call_args.kwargs
-    assert call_kwargs["source_uri"] == "github://org/repo/configs?ref=main"
+    mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
 
 
 @pytest.mark.asyncio
@@ -89,16 +85,14 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
         {"mcpServers": {"google-drive": {"url": "https://mcp.example.com/drive/"}}},
     )
 
-    mock_downloader = MagicMock()
-    mock_downloader.download.return_value = local_dir
-
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.GithubDirectoryDownloader",
-        return_value=mock_downloader,
+    with patch.object(
+        ConfigReader,
+        "_download_github_directory",
+        return_value=local_dir,
     ):
         models = await reader.read_models_from_path_async(
             "github://org/repo/configs?ref=main"
@@ -121,9 +115,6 @@ async def test_read_model_configs_async_with_github_uri(
         {"id": "m1", "name": "Model One"},
     )
 
-    mock_downloader = MagicMock()
-    mock_downloader.download.return_value = local_dir
-
     monkeypatch.setenv("MODELS_OFFICIAL_PATH", "github://org/repo/configs?ref=main")
     monkeypatch.delenv("MODELS_ZIP_PATH", raising=False)
 
@@ -131,9 +122,10 @@ async def test_read_model_configs_async_with_github_uri(
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.GithubDirectoryDownloader",
-        return_value=mock_downloader,
+    with patch.object(
+        ConfigReader,
+        "_download_github_directory",
+        return_value=local_dir,
     ):
         models = await reader.read_model_configs_async()
 
