@@ -105,6 +105,12 @@ class ToolDefinitionConfig(BaseModel):
 class AgentConfig(AuthenticationConfig):
     """Tool configuration"""
 
+    friendly_name: str | None = None
+    """An optional human-readable display name for the tool in the UI"""
+
+    emoji: str | None = None
+    """An optional emoji to display alongside the tool in the UI"""
+
     mcp_server: str | None = None
     """Key into the .mcp.json mcpServers registry.  When set, the url field
     is resolved automatically from the matching server entry at config-load
