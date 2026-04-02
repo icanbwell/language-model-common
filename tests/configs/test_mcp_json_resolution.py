@@ -107,6 +107,14 @@ class TestReadMcpJson:
 
         result = read_mcp_json(config_dir=str(tmp_path))
         assert result is not None
+        # Ensure extra fields (like "oauth") are preserved on the server entry.
+        server = result.mcpServers["server"]
+        extras = getattr(server, "model_extra", None)
+        if extras is None:
+            extras = getattr(server, "__pydantic_extra__", None)
+        assert extras is not None
+        assert "oauth" in extras
+        assert extras["oauth"] == {"clientId": "abc123"}
 
 
 class TestResolveMcpServers:
