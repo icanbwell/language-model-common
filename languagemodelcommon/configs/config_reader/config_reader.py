@@ -1,19 +1,21 @@
 import asyncio
 import logging
 import os
+import tempfile
 
 from pathlib import Path
 from typing import Any, List, Optional, cast
 from uuid import UUID, uuid4
+
+from langchain_ai_skills_framework.loaders.github_directory_downloader import (  # type: ignore[import-not-found]
+    GithubDirectoryDownloader,
+)
 
 from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
 )
 from languagemodelcommon.configs.config_reader.github_config_reader import (
     GitHubConfigReader,
-)
-from languagemodelcommon.configs.config_reader.github_config_zip_reader import (
-    GitHubConfigZipDownloader,
 )
 from languagemodelcommon.configs.config_reader.s3_config_reader import S3ConfigReader
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -62,18 +64,15 @@ class ConfigReader:
         config_path: str = os.environ.get("MODELS_OFFICIAL_PATH", "")
         if config_path is None or config_path == "":
             raise ValueError("MODELS_OFFICIAL_PATH environment variable is not set")
-        models_zip_path: Optional[str] = os.environ.get("MODELS_ZIP_PATH", "")
 
         base_models = await self._read_base_models_async(
             config_path=config_path,
-            models_zip_path=models_zip_path,
             models_testing_path=os.environ.get("MODELS_TESTING_PATH"),
         )
 
         if client_id:
             override_models = await self._read_override_models_async(
                 config_path=config_path,
-                models_zip_path=models_zip_path,
                 client_id=client_id,
             )
             if override_models:
@@ -89,7 +88,6 @@ class ConfigReader:
         self,
         *,
         config_path: str,
-        models_zip_path: Optional[str],
         models_testing_path: Optional[str],
     ) -> List[ChatModelConfig]:
         cached_configs: List[ChatModelConfig] | None = await self._cache.get()
@@ -118,45 +116,27 @@ class ConfigReader:
             )
 
             try:
-                if models_zip_path:
-                    models = await GitHubConfigZipDownloader().read_model_configs(
-                        github_url=models_zip_path,
-                        models_official_path=default_config_path,
-                        models_testing_path=models_testing_path,
-                    )
-                    logger.info(
-                        "ConfigReader with id: %s loaded %s model configurations from GitHub Zip",
-                        self._identifier,
-                        len(models),
-                    )
-                    if not models and default_config_path != config_path:
-                        models = await GitHubConfigZipDownloader().read_model_configs(
-                            github_url=models_zip_path,
-                            models_official_path=config_path,
-                            models_testing_path=models_testing_path,
-                        )
-                else:
-                    base_exclude_dirs = {"clients", "env"}
+                base_exclude_dirs = {"clients", "env"}
+                models = await self.read_models_from_path_async(
+                    default_config_path, exclude_dirs=base_exclude_dirs
+                )
+                if not models and default_config_path != config_path:
                     models = await self.read_models_from_path_async(
-                        default_config_path, exclude_dirs=base_exclude_dirs
+                        config_path, exclude_dirs=base_exclude_dirs
                     )
-                    if not models and default_config_path != config_path:
-                        models = await self.read_models_from_path_async(
-                            config_path, exclude_dirs=base_exclude_dirs
-                        )
-                    if models_testing_path:
-                        models_testing = await self.read_models_from_path_async(
-                            models_testing_path, exclude_dirs=base_exclude_dirs
-                        )
-                        if models_testing and len(models_testing) > 0:
-                            models.append(
-                                ChatModelConfig(
-                                    id="testing",
-                                    name="----- Models in Testing -----",
-                                    description="",
-                                )
+                if models_testing_path:
+                    models_testing = await self.read_models_from_path_async(
+                        models_testing_path, exclude_dirs=base_exclude_dirs
+                    )
+                    if models_testing and len(models_testing) > 0:
+                        models.append(
+                            ChatModelConfig(
+                                id="testing",
+                                name="----- Models in Testing -----",
+                                description="",
                             )
-                            models.extend(models_testing)
+                        )
+                        models.extend(models_testing)
             except Exception as e:
                 logger.exception(
                     "Using config backup since got error reading model configurations: %s",
@@ -171,7 +151,6 @@ class ConfigReader:
         self,
         *,
         config_path: str,
-        models_zip_path: Optional[str],
         client_id: str,
     ) -> List[ChatModelConfig]:
         override_path = self._resolve_override_config_path(
@@ -180,12 +159,6 @@ class ConfigReader:
         if override_path is None:
             return []
         try:
-            if models_zip_path:
-                return await GitHubConfigZipDownloader().read_model_configs(
-                    github_url=models_zip_path,
-                    models_official_path=override_path,
-                    models_testing_path=None,
-                )
             return await self.read_models_from_path_async(override_path)
         except Exception as e:
             logger.warning(
@@ -201,6 +174,16 @@ class ConfigReader:
             models = await S3ConfigReader().read_model_configs(s3_url=config_path)
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from S3",
+                self._identifier,
+                len(models),
+            )
+        elif config_path.startswith("github://"):
+            local_path = self._download_github_directory(config_path)
+            models = FileConfigReader().read_model_configs(
+                config_path=str(local_path), exclude_dirs=exclude_dirs
+            )
+            logger.info(
+                "ConfigReader with id: %s loaded %s model configurations from GitHub (fsspec)",
                 self._identifier,
                 len(models),
             )
@@ -229,6 +212,19 @@ class ConfigReader:
         return config_path
 
     @staticmethod
+    def _download_github_directory(github_uri: str) -> Path:
+        """Download a github:// URI to a local cache directory using fsspec."""
+        github_token = os.environ.get("GITHUB_TOKEN")
+        cache_path = Path(tempfile.gettempdir()) / "github_config_cache"
+        downloader = GithubDirectoryDownloader()
+        result: Path = downloader.download(
+            source_uri=github_uri,
+            github_token=github_token,
+            cache_path=cache_path,
+        )
+        return result
+
+    @staticmethod
     def _resolve_override_config_path(
         *, config_path: str, client_id: str
     ) -> str | None:
@@ -238,6 +234,10 @@ class ConfigReader:
         if not ConfigReader._is_valid_client_id(client_id):
             logger.warning("Invalid client_id format: %s", client_id)
             return None
+        if config_path.startswith("github://"):
+            return ConfigReader._join_github_uri_path(
+                config_path, f"clients/{client_id}"
+            )
         if config_path.startswith("s3") or UrlParser.is_github_url(config_path):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
         config_folder = Path(config_path)
@@ -267,6 +267,15 @@ class ConfigReader:
         if base.endswith("/"):
             return f"{base}{suffix}"
         return f"{base}/{suffix}"
+
+    @staticmethod
+    def _join_github_uri_path(base_uri: str, suffix: str) -> str:
+        """Join a path suffix onto a github:// URI, preserving query params."""
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(base_uri)
+        new_path = parts.path.rstrip("/") + "/" + suffix.strip("/")
+        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, ""))
 
     @staticmethod
     def _merge_model_configs(
