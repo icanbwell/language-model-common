@@ -105,6 +105,12 @@ class ToolDefinitionConfig(BaseModel):
 class AgentConfig(AuthenticationConfig):
     """Tool configuration"""
 
+    mcp_server: str | None = None
+    """Key into the .mcp.json mcpServers registry.  When set, the url field
+    is resolved automatically from the matching server entry at config-load
+    time.  This decouples the tool name from the server name and centralises
+    MCP server definitions in a single .mcp.json file."""
+
     parameters: List[AgentParameterConfig] | None = None
     """The parameters for the tool"""
 
