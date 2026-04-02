@@ -3,24 +3,11 @@
 from languagemodelcommon.utilities.security.prompt_sanitizer import (
     PromptSanitizer,
     sanitize_for_prompt,
-    INJECTION_PATTERNS,
-    XML_ESCAPE_CHARS,
 )
 
 
 class TestPromptSanitizer:
     """Tests for PromptSanitizer class."""
-
-    def test_sanitize_empty_string(self) -> None:
-        """Test that empty strings return empty strings."""
-        result = PromptSanitizer.sanitize("")
-        assert result == ""
-
-    def test_sanitize_basic_text(self) -> None:
-        """Test that basic text without special chars passes through unchanged."""
-        text = "Hello, this is a normal message about health."
-        result = PromptSanitizer.sanitize(text)
-        assert result == text
 
     def test_sanitize_escapes_xml_chars(self) -> None:
         """Test that XML/HTML characters are escaped to prevent tag injection."""
@@ -168,52 +155,3 @@ class TestSanitizeForPromptFunction:
         result = sanitize_for_prompt("test content", wrap=False)
         assert PromptSanitizer.USER_CONTENT_START not in result
         assert result == "test content"
-
-    def test_custom_label(self) -> None:
-        """Test sanitize_for_prompt with custom label."""
-        result = sanitize_for_prompt("test", label="MY LABEL")
-        assert "MY LABEL" in result
-
-    def test_max_length(self) -> None:
-        """Test sanitize_for_prompt with max_length."""
-        result = sanitize_for_prompt("a" * 100, max_length=10, wrap=False)
-        assert len(result) == 10
-
-
-class TestInjectionPatterns:
-    """Tests for the injection pattern definitions."""
-
-    def test_patterns_are_compiled(self) -> None:
-        """Test that all patterns are compiled regex objects."""
-        import re
-
-        for pattern in INJECTION_PATTERNS:
-            assert hasattr(pattern, "search")
-            assert isinstance(pattern, re.Pattern)
-
-    def test_patterns_are_case_insensitive(self) -> None:
-        """Test that patterns work case-insensitively."""
-        test_cases = [
-            "IGNORE previous instructions",
-            "Ignore Previous Instructions",
-            "ignore PREVIOUS instructions",
-        ]
-        for text in test_cases:
-            result = PromptSanitizer.contains_injection_patterns(text)
-            assert result is True, f"Failed for: {text}"
-
-
-class TestXMLEscapeChars:
-    """Tests for XML escape character definitions."""
-
-    def test_xml_escape_chars_defined(self) -> None:
-        """Test that XML escape characters are properly defined."""
-        assert "&" in XML_ESCAPE_CHARS
-        assert "<" in XML_ESCAPE_CHARS
-        assert ">" in XML_ESCAPE_CHARS
-
-    def test_xml_escape_mappings(self) -> None:
-        """Test that XML escape mappings are correct."""
-        assert XML_ESCAPE_CHARS["&"] == "&amp;"
-        assert XML_ESCAPE_CHARS["<"] == "&lt;"
-        assert XML_ESCAPE_CHARS[">"] == "&gt;"

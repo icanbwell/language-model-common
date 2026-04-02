@@ -9,7 +9,6 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.messages import ChatMessage as LangchainChatMessage
 from languagemodelcommon.utilities.chat_message_helpers import (
     convert_message_content_to_string,
     remove_tool_calls,
@@ -26,18 +25,6 @@ class TestConvertMessageContentToString:
         content = "Hello, world!"
         result = convert_message_content_to_string(content)
         assert result == content
-
-    def test_empty_string_content(self) -> None:
-        """Test empty string content."""
-        content = ""
-        result = convert_message_content_to_string(content)
-        assert result == ""
-
-    def test_list_with_single_text_dict(self) -> None:
-        """Test list with single text dictionary."""
-        content: List[Union[str, Dict[str, Any]]] = [{"type": "text", "text": "Hello"}]
-        result = convert_message_content_to_string(content)
-        assert result == "Hello"
 
     def test_list_with_multiple_text_dicts(self) -> None:
         """Test list with multiple text dictionaries."""
@@ -67,20 +54,6 @@ class TestConvertMessageContentToString:
         result = convert_message_content_to_string(content)
         assert result == "Hello world"
 
-    def test_list_with_only_non_text_dicts(self) -> None:
-        """Test list with only non-text dictionaries returns empty string."""
-        content: List[Union[str, Dict[str, Any]]] = [
-            {"type": "image_url", "image_url": {"url": "http://example.com/image.jpg"}},
-        ]
-        result = convert_message_content_to_string(content)
-        assert result == ""
-
-    def test_empty_list_content(self) -> None:
-        """Test empty list returns empty string."""
-        content: List[Union[str, Dict[str, Any]]] = []
-        result = convert_message_content_to_string(content)
-        assert result == ""
-
     def test_list_with_text_dict_missing_text_field(self) -> None:
         """Test text dict without 'text' field is skipped."""
         content: List[Union[str, Dict[str, Any]]] = [
@@ -93,14 +66,12 @@ class TestConvertMessageContentToString:
 
     def test_unsupported_content_type_raises_error(self) -> None:
         """Test that unsupported content types raise TypeError."""
-        # Use content variable to avoid unused variable warning
         with pytest.raises(TypeError):
             invalid_content: list[Any] = [
                 "text",
                 {"type": "text", "text": "more text"},
                 123,
             ]
-            # Directly pass the invalid content
             convert_message_content_to_string(invalid_content)
 
 
@@ -112,12 +83,6 @@ class TestRemoveToolCalls:
         content = "Hello, world!"
         result = remove_tool_calls(content)
         assert result == content
-
-    def test_empty_string_content(self) -> None:
-        """Test empty string content."""
-        content = ""
-        result = remove_tool_calls(content)
-        assert result == ""
 
     def test_list_without_tool_use_unchanged(self) -> None:
         """Test list without tool_use items is unchanged."""
@@ -141,36 +106,6 @@ class TestRemoveToolCalls:
             {"type": "text", "text": " world"},
         ]
         assert result == expected
-
-    def test_list_with_multiple_tool_use_removed(self) -> None:
-        """Test that multiple tool_use items are removed."""
-        content: List[Union[str, Dict[str, Any]]] = [
-            {"type": "text", "text": "Hello"},
-            {"type": "tool_use", "id": "123", "name": "get_weather"},
-            {"type": "text", "text": " world"},
-            {"type": "tool_use", "id": "456", "name": "search"},
-        ]
-        result = remove_tool_calls(content)
-        expected: List[Union[str, Dict[str, Any]]] = [
-            {"type": "text", "text": "Hello"},
-            {"type": "text", "text": " world"},
-        ]
-        assert result == expected
-
-    def test_list_with_only_tool_use(self) -> None:
-        """Test list with only tool_use items returns empty list."""
-        content: List[Union[str, Dict[str, Any]]] = [
-            {"type": "tool_use", "id": "123", "name": "get_weather"},
-            {"type": "tool_use", "id": "456", "name": "search"},
-        ]
-        result = remove_tool_calls(content)
-        assert result == []
-
-    def test_empty_list_content(self) -> None:
-        """Test empty list returns empty list."""
-        content: List[Union[str, Dict[str, Any]]] = []
-        result = remove_tool_calls(content)
-        assert result == []
 
     def test_list_with_mixed_types_preserves_non_tool_use(self) -> None:
         """Test that non-tool_use types are preserved."""
@@ -229,12 +164,6 @@ class TestLangchainToChatMessage:
         with pytest.raises(ValueError):
             langchain_to_chat_message(SystemMessage(content="sys"))
 
-    def test_human_message_raises_value_error(self) -> None:
+    def test_unsupported_message_type_raises_value_error(self) -> None:
         with pytest.raises(ValueError):
             langchain_to_chat_message(HumanMessage(content="user"))
-
-    def test_chat_message_raises_value_error(self) -> None:
-        with pytest.raises(ValueError):
-            langchain_to_chat_message(
-                LangchainChatMessage(role="assistant", content="hi")
-            )

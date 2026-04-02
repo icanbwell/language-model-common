@@ -363,12 +363,41 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def stream_response(
         self,
         *,
+        request_id: str,
         response_messages1: List[AnyMessage],
     ) -> AsyncIterable[str]:
-        """Streaming responses are not yet supported for the Responses API wrapper."""
-        raise NotImplementedError(
-            "Streaming responses is not implemented for ResponsesApiRequestWrapper"
+        """Streams the response messages as Server-Sent Events (SSE) in the Responses API format."""
+        from languagemodelcommon.utilities.chat_message_helpers import (
+            convert_message_content_to_string,
         )
+
+        async def response_stream() -> AsyncIterable[str]:
+            yield self.create_first_sse_message(
+                request_id=request_id,
+                source="stream_response",
+            )
+
+            for response_message in response_messages1:
+                message_content: str = convert_message_content_to_string(
+                    response_message.content
+                )
+                if message_content:
+                    delta_message: str = self.create_sse_message(
+                        request_id=request_id,
+                        content=message_content + "\n",
+                        usage_metadata=None,
+                        source="stream_response",
+                    )
+                    if delta_message:
+                        yield delta_message
+
+            yield self.create_final_sse_message(
+                request_id=request_id,
+                usage_metadata=None,
+                source="stream_response",
+            )
+
+        return response_stream()
 
     @override
     @property
