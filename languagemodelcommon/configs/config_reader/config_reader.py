@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import tempfile
 
 from pathlib import Path
 from typing import Any, List, Optional, cast
@@ -9,6 +8,10 @@ from uuid import UUID, uuid4
 
 from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
+)
+from languagemodelcommon.configs.config_reader.github_directory_helper import (
+    download_github_directory,
+    join_github_uri_path,
 )
 from languagemodelcommon.configs.config_reader.github_config_reader import (
     GitHubConfigReader,
@@ -174,7 +177,7 @@ class ConfigReader:
                 len(models),
             )
         elif config_path.startswith("github://"):
-            local_path = self._download_github_directory(config_path)
+            local_path = download_github_directory(config_path)
             models = FileConfigReader().read_model_configs(
                 config_path=str(local_path), exclude_dirs=exclude_dirs
             )
@@ -208,23 +211,6 @@ class ConfigReader:
         return config_path
 
     @staticmethod
-    def _download_github_directory(github_uri: str) -> Path:
-        """Download a github:// URI to a local cache directory using fsspec."""
-        from langchain_ai_skills_framework.loaders.github_directory_downloader import (  # type: ignore[import-not-found]
-            GithubDirectoryDownloader,
-        )
-
-        github_token = os.environ.get("GITHUB_TOKEN")
-        cache_path = Path(tempfile.gettempdir()) / "github_config_cache"
-        downloader = GithubDirectoryDownloader()
-        result: Path = downloader.download(
-            source_uri=github_uri,
-            github_token=github_token,
-            cache_path=cache_path,
-        )
-        return result
-
-    @staticmethod
     def _resolve_override_config_path(
         *, config_path: str, client_id: str
     ) -> str | None:
@@ -235,9 +221,7 @@ class ConfigReader:
             logger.warning("Invalid client_id format: %s", client_id)
             return None
         if config_path.startswith("github://"):
-            return ConfigReader._join_github_uri_path(
-                config_path, f"clients/{client_id}"
-            )
+            return join_github_uri_path(config_path, f"clients/{client_id}")
         if config_path.startswith("s3") or UrlParser.is_github_url(config_path):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
         config_folder = Path(config_path)
@@ -267,15 +251,6 @@ class ConfigReader:
         if base.endswith("/"):
             return f"{base}{suffix}"
         return f"{base}/{suffix}"
-
-    @staticmethod
-    def _join_github_uri_path(base_uri: str, suffix: str) -> str:
-        """Join a path suffix onto a github:// URI, preserving query params."""
-        from urllib.parse import urlsplit, urlunsplit
-
-        parts = urlsplit(base_uri)
-        new_path = parts.path.rstrip("/") + "/" + suffix.strip("/")
-        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, ""))
 
     @staticmethod
     def _merge_model_configs(
@@ -396,9 +371,9 @@ class ConfigReader:
                 PROMPTS_FOLDER_NAME,
             )
 
-            prompts_uri = self._join_github_uri_path(config_path, PROMPTS_FOLDER_NAME)
+            prompts_uri = join_github_uri_path(config_path, PROMPTS_FOLDER_NAME)
             try:
-                local_path = self._download_github_directory(prompts_uri)
+                local_path = download_github_directory(prompts_uri)
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
                 return str(local_path)
             except Exception as e:

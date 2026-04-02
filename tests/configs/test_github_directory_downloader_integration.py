@@ -6,6 +6,9 @@ from unittest.mock import patch
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.configs.config_reader.github_directory_helper import (
+    join_github_uri_path,
+)
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
@@ -53,9 +56,8 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch.object(
-        ConfigReader,
-        "_download_github_directory",
+    with patch(
+        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
         return_value=local_dir,
     ) as mock_download:
         models = await reader.read_models_from_path_async(
@@ -89,9 +91,8 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch.object(
-        ConfigReader,
-        "_download_github_directory",
+    with patch(
+        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
         return_value=local_dir,
     ):
         models = await reader.read_models_from_path_async(
@@ -122,9 +123,8 @@ async def test_read_model_configs_async_with_github_uri(
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
-    with patch.object(
-        ConfigReader,
-        "_download_github_directory",
+    with patch(
+        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
         return_value=local_dir,
     ):
         models = await reader.read_model_configs_async()
@@ -142,14 +142,12 @@ def test_override_config_path_with_github_uri() -> None:
 
 
 def test_join_path_preserves_github_query_params() -> None:
-    result = ConfigReader._join_github_uri_path(
+    result = join_github_uri_path(
         "github://org/repo/configs?ref=main", "clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123?ref=main"
 
 
 def test_join_path_works_without_query_params() -> None:
-    result = ConfigReader._join_github_uri_path(
-        "github://org/repo/configs", "clients/client-123"
-    )
+    result = join_github_uri_path("github://org/repo/configs", "clients/client-123")
     assert result == "github://org/repo/configs/clients/client-123"
