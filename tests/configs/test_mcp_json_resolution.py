@@ -170,6 +170,65 @@ class TestResolveMcpServers:
         assert config.tools is not None
         assert config.tools[0].url == "https://original.example.com/"
 
+    def test_resolves_auth_fields_from_mcp_json(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="jwt_token",
+                    headers={"X-Client-Id": "test"},
+                    auth_providers=["google"],
+                    issuers=["https://accounts.google.com"],
+                    auth_optional=True,
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.url == "https://mcp.example.com/drive/"
+        assert tool.auth == "jwt_token"
+        assert tool.headers == {"X-Client-Id": "test"}
+        assert tool.auth_providers == ["google"]
+        assert tool.issuers == ["https://accounts.google.com"]
+        assert tool.auth_optional is True
+
+    def test_agent_auth_takes_precedence_over_mcp_json(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            tools=[
+                AgentConfig(
+                    name="drive",
+                    mcp_server="google-drive",
+                    auth="oauth",
+                    headers={"X-Custom": "mine"},
+                )
+            ],
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="jwt_token",
+                    headers={"X-Client-Id": "test"},
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.url == "https://mcp.example.com/drive/"
+        assert tool.auth == "oauth"
+        assert tool.headers == {"X-Custom": "mine"}
+
     def test_resolves_agents_field(self) -> None:
         config = ChatModelConfig(
             id="model-1",

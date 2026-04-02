@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -31,6 +31,12 @@ class McpServerEntry(BaseModel):
     command: str | None = None
     args: list[str] | None = None
     env: Dict[str, str] | None = None
+
+    headers: Dict[str, str] | None = None
+    auth: Literal["None", "jwt_token", "oauth", "headers"] | None = None
+    auth_optional: bool | None = None
+    auth_providers: List[str] | None = None
+    issuers: List[str] | None = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -104,10 +110,20 @@ def resolve_mcp_servers(
                 continue
             if entry.url:
                 agent.url = entry.url
-                logger.info(
-                    "Resolved mcp_server '%s' -> url '%s' for tool '%s' in model '%s'",
-                    agent.mcp_server,
-                    entry.url,
-                    agent.name,
-                    model.name,
-                )
+            if entry.headers and not agent.headers:
+                agent.headers = entry.headers
+            if entry.auth and not agent.auth:
+                agent.auth = entry.auth
+            if entry.auth_optional is not None and agent.auth_optional is None:
+                agent.auth_optional = entry.auth_optional
+            if entry.auth_providers and not agent.auth_providers:
+                agent.auth_providers = entry.auth_providers
+            if entry.issuers and not agent.issuers:
+                agent.issuers = entry.issuers
+            logger.info(
+                "Resolved mcp_server '%s' -> url '%s' for tool '%s' in model '%s'",
+                agent.mcp_server,
+                agent.url,
+                agent.name,
+                model.name,
+            )
