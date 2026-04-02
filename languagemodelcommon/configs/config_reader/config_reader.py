@@ -77,7 +77,7 @@ class ConfigReader:
                 )
 
         base_models = [model for model in base_models if not model.disabled]
-        self._resolve_prompt_library(base_models)
+        self._resolve_prompt_library(base_models, config_path=config_path)
         return base_models
 
     async def _read_base_models_async(
@@ -376,10 +376,35 @@ class ConfigReader:
 
         return merged_list
 
-    def _resolve_prompt_library(self, models: List[ChatModelConfig]) -> None:
+    def _resolve_prompt_library(
+        self, models: List[ChatModelConfig], *, config_path: str | None = None
+    ) -> None:
+        # Auto-discover prompts/ folder if no explicit path is configured
+        if not self._prompt_library_manager.resolved_path and config_path:
+            discovered = self._discover_prompts_path(config_path)
+            if discovered:
+                self._prompt_library_manager.resolved_path = discovered
+
         for model in models:
             self._resolve_prompt_list(model.system_prompts)
             self._resolve_prompt_list(model.example_prompts)
+
+    def _discover_prompts_path(self, config_path: str) -> str | None:
+        """Discover the prompts folder from config_path, supporting github:// URIs."""
+        if config_path.startswith("github://"):
+            from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
+                PROMPTS_FOLDER_NAME,
+            )
+
+            prompts_uri = self._join_github_uri_path(config_path, PROMPTS_FOLDER_NAME)
+            try:
+                local_path = self._download_github_directory(prompts_uri)
+                logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
+                return str(local_path)
+            except Exception as e:
+                logger.debug("No prompts folder found at %s: %s", prompts_uri, e)
+                return None
+        return FileConfigReader.discover_prompts_path(config_path)
 
     def _resolve_prompt_list(self, prompts: List[PromptConfig] | None) -> None:
         if not prompts:
