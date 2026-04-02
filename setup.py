@@ -81,6 +81,7 @@ setup(
         "markdownify>=0.14.1",
         "beautifulsoup4>=4.12.3",
         "oidcauthlib>=3.0.1",
+        "fsspec>=2026.2.0",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
