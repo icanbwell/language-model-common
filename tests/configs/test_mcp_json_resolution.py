@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
@@ -133,16 +132,20 @@ class TestResolveMcpServers:
         assert config.tools is not None
         assert config.tools[0].url == "https://new.example.com/drive/"
 
-    def test_missing_mcp_server_key_raises(self) -> None:
+    def test_missing_mcp_server_key_falls_back(self) -> None:
         config = ChatModelConfig(
-            **_make_model_config("drive", mcp_server="nonexistent")
+            **_make_model_config(
+                "drive", mcp_server="nonexistent", url="https://fallback.example.com/"
+            )
         )
         mcp = McpJsonConfig(
             mcpServers={"google-drive": McpServerEntry(url="https://example.com/")}
         )
 
-        with pytest.raises(ValueError, match="nonexistent"):
-            resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        assert config.tools[0].url == "https://fallback.example.com/"
 
     def test_no_mcp_server_field_unchanged(self) -> None:
         config = ChatModelConfig(

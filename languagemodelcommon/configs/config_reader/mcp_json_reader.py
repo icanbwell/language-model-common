@@ -78,8 +78,8 @@ def resolve_mcp_servers(
     *mcp_config* and populate ``url`` from the server entry.  The
     ``mcp_server`` value is left intact for traceability.
 
-    Raises ``ValueError`` if a referenced server key is not found in
-    ``.mcp.json``.
+    If a referenced server key is not found, a warning is logged and the
+    agent's existing ``url`` (if any) is left unchanged as a fallback.
     """
     servers = mcp_config.mcpServers
 
@@ -90,11 +90,17 @@ def resolve_mcp_servers(
                 continue
             entry = servers.get(agent.mcp_server)
             if entry is None:
-                raise ValueError(
-                    f"MCP server '{agent.mcp_server}' referenced by tool "
-                    f"'{agent.name}' in model '{model.name}' not found in "
-                    f".mcp.json. Available servers: {list(servers.keys())}"
+                logger.warning(
+                    "MCP server '%s' referenced by tool '%s' in model '%s' "
+                    "not found in .mcp.json (available: %s). "
+                    "Falling back to inline url '%s'.",
+                    agent.mcp_server,
+                    agent.name,
+                    model.name,
+                    list(servers.keys()),
+                    agent.url,
                 )
+                continue
             if entry.url:
                 agent.url = entry.url
                 logger.info(
