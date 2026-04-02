@@ -236,6 +236,7 @@ class LangGraphStreamingManager:
                         chat_request_wrapper=chat_request_wrapper,
                         request_information=request_information,
                         tool_start_times=tool_start_times,
+                        user_id=user_id,
                     ):
                         if chunk:
                             yield chunk
@@ -695,14 +696,16 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
         tool_start_times: dict[str, float],
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Emit SSE when an MCP tool raises an error, including runtime if available."""
         # Extract error details
         tool_name: Optional[str] = event["name"] if "name" in event else None
         data = event["data"] if "data" in event else {}
         error_message: BaseException | Any | str = data.get("error") or str(event)
+        tool_input: Optional[Dict[str, Any]] = data.get("input")
         runtime_str: str = ""
-        tool_key: str = self.make_tool_key(tool_name, data.get("input"))
+        tool_key: str = self.make_tool_key(tool_name, tool_input)
         start_time: Optional[float] = tool_start_times.pop(tool_key, None)
         if start_time is not None:
             elapsed: float = time.time() - start_time
@@ -728,6 +731,35 @@ class LangGraphStreamingManager:
             usage_metadata=None,
             source="on_tool_error",
         )
+
+        # Write error output to file and provide download link (same as _handle_on_tool_end)
+        if self.environment_variables.write_tool_output_to_file:
+            error_content: str = (
+                f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
+            )
+            tool_friendly_name: str = self.tool_friendly_name_mapper.get_name_for_tool(
+                tool_name=tool_name or "unknown",
+                tool_input=tool_input,
+            )
+            write_result: (
+                DebugFileWriteResult | None
+            ) = await self.debug_file_writer.write_to_file_async(
+                content=error_content,
+                user_id=user_id,
+                file_name=tool_name or "unknown",
+            )
+            if (
+                write_result is not None
+                and write_result.file_path
+                and write_result.file_url
+            ):
+                download_text: str = f"\n\n[Click to download {tool_friendly_name} Error Output]({write_result.file_url})\n\n"
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_information.request_id,
+                    content=download_text,
+                    usage_metadata=None,
+                    source="on_tool_error",
+                )
 
     @staticmethod
     def make_tool_key(
