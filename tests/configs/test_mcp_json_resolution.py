@@ -83,6 +83,16 @@ class TestReadMcpJson:
         result = read_mcp_json(config_dir=None)
         assert result is None
 
+    def test_env_var_substitution(self, tmp_path: Path, monkeypatch: Any) -> None:
+        monkeypatch.setenv("MCP_SERVER_URL", "https://resolved.example.com/")
+        mcp_data = _make_mcp_json({"my-server": {"url": "${MCP_SERVER_URL}"}})
+        _write_json(tmp_path / ".mcp.json", mcp_data)
+
+        result = read_mcp_json(config_dir=str(tmp_path))
+
+        assert result is not None
+        assert result.mcpServers["my-server"].url == "https://resolved.example.com/"
+
     def test_extra_fields_preserved(self, tmp_path: Path) -> None:
         mcp_data = _make_mcp_json(
             {

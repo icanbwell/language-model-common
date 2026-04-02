@@ -6,6 +6,7 @@ from typing import Dict, List
 
 from pydantic import BaseModel, ConfigDict
 
+from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
     ChatModelConfig,
@@ -64,7 +65,7 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
 
     logger.info("Loading MCP server registry from %s", mcp_json_path)
     with open(mcp_json_path, "r") as f:
-        data = json.load(f)
+        data = substitute_env_vars(json.load(f))
     return McpJsonConfig(**data)
 
 
