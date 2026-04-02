@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -44,7 +44,7 @@ class McpServerEntry(BaseModel):
 class McpJsonConfig(BaseModel):
     """Root model for the ``.mcp.json`` file."""
 
-    mcpServers: Dict[str, McpServerEntry] = {}
+    mcpServers: Dict[str, McpServerEntry] = Field(default_factory=dict)
 
 
 def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
@@ -59,9 +59,16 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
     env_path = os.environ.get(MCP_JSON_PATH_ENV)
 
     if env_path:
-        mcp_json_path = Path(env_path)
+        mcp_json_path = Path(env_path).resolve()
     elif config_dir:
-        mcp_json_path = Path(config_dir) / MCP_JSON_FILENAME
+        resolved_dir = Path(config_dir).resolve()
+        mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
+        if not mcp_json_path.parent == resolved_dir:
+            logger.warning(
+                ".mcp.json path resolved outside config directory: %s",
+                mcp_json_path,
+            )
+            return None
     else:
         return None
 
@@ -70,7 +77,7 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
         return None
 
     logger.info("Loading MCP server registry from %s", mcp_json_path)
-    with open(mcp_json_path, "r") as f:
+    with open(mcp_json_path, "r", encoding="utf-8") as f:
         data = substitute_env_vars(json.load(f))
     return McpJsonConfig(**data)
 
