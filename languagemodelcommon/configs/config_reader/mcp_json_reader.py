@@ -2,15 +2,16 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Literal
-
-from pydantic import BaseModel, ConfigDict, Field
+from typing import List
 
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
     ChatModelConfig,
     McpOAuthConfig,
+)
+from languagemodelcommon.configs.schemas.mcp_json_schema import (
+    McpJsonConfig,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -22,33 +23,6 @@ MCP_JSON_PATH_ENV = (
 )
 
 MCP_JSON_FILENAME = ".mcp.json"
-
-
-class McpServerEntry(BaseModel):
-    """A single server entry inside .mcp.json ``mcpServers``."""
-
-    type: str | None = None
-    url: str | None = None
-    command: str | None = None
-    args: list[str] | None = None
-    env: Dict[str, str] | None = None
-
-    headers: Dict[str, str] | None = None
-    auth: Literal["None", "jwt_token", "oauth", "headers"] | None = None
-    auth_optional: bool | None = None
-    auth_providers: List[str] | None = None
-    issuers: List[str] | None = None
-
-    oauth: McpOAuthConfig | None = None
-    """OAuth configuration for this MCP server (clientId, authServerMetadataUrl)."""
-
-    model_config = ConfigDict(extra="allow")
-
-
-class McpJsonConfig(BaseModel):
-    """Root model for the ``.mcp.json`` file."""
-
-    mcpServers: Dict[str, McpServerEntry] = Field(default_factory=dict)
 
 
 def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:

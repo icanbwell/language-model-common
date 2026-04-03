@@ -8,10 +8,12 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
 )
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
     MCP_JSON_PATH_ENV,
-    McpJsonConfig,
-    McpServerEntry,
     read_mcp_json,
     resolve_mcp_servers,
+)
+from languagemodelcommon.configs.schemas.mcp_json_schema import (
+    McpJsonConfig,
+    McpServerEntry,
 )
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,

@@ -4,9 +4,11 @@ from languagemodelcommon.configs.schemas.config_schema import (
     McpOAuthConfig,
 )
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
+    resolve_mcp_servers,
+)
+from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
     McpServerEntry,
-    resolve_mcp_servers,
 )
 
 
