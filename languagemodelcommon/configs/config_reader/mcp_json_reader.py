@@ -122,7 +122,7 @@ def build_auth_configs_from_mcp_json(
             friendly_name=entry.display_name or provider_name,
             audience=entry.audience,
             issuer=entry.issuer,
-            client_id=entry.client_id,  # type: ignore[arg-type]  # Optional in oidcauthlib>=3.1
+            client_id=entry.client_id,
             client_secret=entry.client_secret,
             well_known_uri=entry.well_known_uri,
             scope=entry.scope or "openid profile email",

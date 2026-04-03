@@ -80,7 +80,7 @@ setup(
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
         "beautifulsoup4>=4.12.3",
-        "oidcauthlib>=3.0.2",
+        "oidcauthlib>=3.0.3",
         "fsspec>=2026.2.0",
     ],
     classifiers=[

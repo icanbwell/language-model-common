@@ -59,7 +59,7 @@ markdownify = ">=0.14.1"
 # beautifulsoup4 is a Python library for parsing HTML and XML
 beautifulsoup4 = ">=4.12.3"
 # oidcauthlib is a Python library for OpenID Connect authentication
-oidcauthlib = ">=3.0.2"
+oidcauthlib = ">=3.0.3"
 # fsspec is a Python library for working with filesystems
 fsspec = ">=2026.2.0"
 
