@@ -67,9 +67,9 @@ class McpOAuthClientMetadata(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    client_name: str | None = Field(None, alias="client_name")
-    client_uri: str | None = Field(None, alias="client_uri")
-    logo_uri: str | None = Field(None, alias="logo_uri")
+    client_name: str | None = Field(None, alias="clientName")
+    client_uri: str | None = Field(None, alias="clientUri")
+    logo_uri: str | None = Field(None, alias="logoUri")
     contacts: list[str] | None = None
 
 

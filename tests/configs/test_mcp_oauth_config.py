@@ -57,7 +57,7 @@ class TestMcpOAuthConfigNewFields:
         config = McpOAuthConfig.model_validate(
             {
                 "clientMetadata": {
-                    "client_name": "My Client",
+                    "clientName": "My Client",
                     "contacts": ["a@b.com"],
                 }
             }
@@ -75,8 +75,8 @@ class TestMcpOAuthConfigNewFields:
                 "usePKCE": True,
                 "pkceMethod": "S256",
                 "clientMetadata": {
-                    "client_name": "My MCP Client",
-                    "client_uri": "https://myapp.com",
+                    "clientName": "My MCP Client",
+                    "clientUri": "https://myapp.com",
                 },
             }
         )
