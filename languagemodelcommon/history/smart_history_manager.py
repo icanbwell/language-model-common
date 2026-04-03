@@ -88,15 +88,17 @@ class SmartHistoryManager:
 
         # Decision logic: server-first, client-fallback
         if server_checkpoint:
-            state = await self._use_server_history(
+            selected_state = await self._use_server_history(
                 state, client_messages, server_checkpoint
             )
         else:
-            state = self._use_client_history(state, client_messages)
+            selected_state = self._use_client_history(state, client_messages)
 
         # Manage/trim the selected history
-        total_before = len(state.get("messages", []))
-        managed_state = await self.history_manager.manage_history(state, self.llm)
+        total_before = len(selected_state.get("messages", []))
+        managed_state = await self.history_manager.manage_history(
+            selected_state, self.llm
+        )
         total_after = len(managed_state.get("messages", []))
 
         logger.info(
