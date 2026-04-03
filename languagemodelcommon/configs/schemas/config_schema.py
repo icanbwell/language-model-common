@@ -76,30 +76,28 @@ class McpOAuthConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    client_id: str = Field(validation_alias="clientId")
+    client_id: str = Field(alias="clientId")
     """The OIDC / OAuth2 client ID."""
 
-    auth_server_metadata_url: str | None = Field(
-        None, validation_alias="authServerMetadataUrl"
-    )
+    auth_server_metadata_url: str | None = Field(None, alias="authServerMetadataUrl")
     """The OIDC well-known / server metadata URL (discovery-based flow)."""
 
-    authorization_url: str | None = Field(None, validation_alias="authorizationUrl")
+    authorization_url: str | None = Field(None, alias="authorizationUrl")
     """The authorization endpoint URL (explicit-endpoints flow)."""
 
-    token_url: str | None = Field(None, validation_alias="tokenUrl")
+    token_url: str | None = Field(None, alias="tokenUrl")
     """The token endpoint URL (explicit-endpoints flow)."""
 
-    client_secret: str | None = Field(None, validation_alias="clientSecret")
+    client_secret: str | None = Field(None, alias="clientSecret")
     """Optional client secret for confidential clients."""
 
     scopes: List[str] | None = None
     """OAuth scopes to request. Defaults to ``["openid", "profile", "email"]``."""
 
-    redirect_uri: str | None = Field(None, validation_alias="redirectUri")
+    redirect_uri: str | None = Field(None, alias="redirectUri")
     """Optional redirect URI override for the OAuth callback."""
 
-    callback_port: int | None = Field(None, validation_alias="callbackPort")
+    callback_port: int | None = Field(None, alias="callbackPort")
     """Optional local callback port for PKCE flows (client-side only)."""
 
     @property

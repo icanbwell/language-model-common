@@ -403,7 +403,7 @@ class TestResolveMcpServers:
             tool.oauth.authorization_url == "https://vendor.example.com/oauth/authorize"
         )
         assert tool.oauth.token_url == "https://vendor.example.com/oauth/token"
-        assert tool.oauth.client_secret == "secret123"
+        assert tool.oauth.client_secret == "secret123"  # pragma: allowlist secret
         assert tool.oauth.scopes == ["read", "write"]
         assert tool.oauth.scope_string == "read write"
         assert tool.oauth.redirect_uri == "http://localhost:9090/callback"
@@ -438,7 +438,7 @@ class TestResolveMcpServers:
         server = result.mcpServers["vendor"]
         assert server.oauth is not None
         assert server.oauth.client_id == "vid"
-        assert server.oauth.client_secret == "secret"
+        assert server.oauth.client_secret == "secret"  # pragma: allowlist secret
         assert (
             server.oauth.authorization_url
             == "https://vendor.example.com/oauth/authorize"
