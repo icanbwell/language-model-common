@@ -2,9 +2,11 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Literal
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from oidcauthlib.auth.config.auth_config import AuthConfig
 
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -45,10 +47,29 @@ class McpServerEntry(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class AuthProviderEntry(BaseModel):
+    """A single auth provider entry inside .mcp.json ``authProviders``."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    issuer: str | None = None
+    audience: str
+    client_id: str | None = Field(None, alias="clientId")
+    client_secret: str | None = Field(None, alias="clientSecret")
+    well_known_uri: str | None = Field(None, alias="wellKnownUri")
+    friendly_name: str | None = Field(None, alias="friendlyName")
+    scope: str | None = None
+    extra_info: Dict[str, Any] | None = Field(None, alias="extraInfo")
+    authorization_endpoint: str | None = Field(None, alias="authorizationEndpoint")
+    token_endpoint: str | None = Field(None, alias="tokenEndpoint")
+    registration_url: str | None = Field(None, alias="registrationUrl")
+
+
 class McpJsonConfig(BaseModel):
     """Root model for the ``.mcp.json`` file."""
 
     mcpServers: Dict[str, McpServerEntry] = Field(default_factory=dict)
+    authProviders: Dict[str, AuthProviderEntry] = Field(default_factory=dict)
 
 
 def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
@@ -84,6 +105,35 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
     with open(mcp_json_path, "r", encoding="utf-8") as f:
         data = substitute_env_vars(json.load(f))
     return McpJsonConfig(**data)
+
+
+def build_auth_configs_from_mcp_json(
+    mcp_config: McpJsonConfig,
+) -> list[AuthConfig]:
+    """Build ``AuthConfig`` objects from the ``authProviders`` section of .mcp.json.
+
+    Each key in ``authProviders`` becomes the ``auth_provider`` name.
+    Returns an empty list if no ``authProviders`` section is present.
+    """
+    configs: list[AuthConfig] = []
+    for provider_name, entry in mcp_config.authProviders.items():
+        config = AuthConfig(
+            auth_provider=provider_name,
+            friendly_name=entry.friendly_name or provider_name,
+            audience=entry.audience,
+            issuer=entry.issuer,
+            client_id=entry.client_id,  # type: ignore[arg-type]  # Optional in oidcauthlib>=3.1
+            client_secret=entry.client_secret,
+            well_known_uri=entry.well_known_uri,
+            scope=entry.scope or "openid profile email",
+            extra_info=entry.extra_info,
+            authorization_endpoint=entry.authorization_endpoint,
+            token_endpoint=entry.token_endpoint,
+            registration_url=entry.registration_url,
+        )
+        configs.append(config)
+        logger.info("Parsed auth provider '%s' from .mcp.json", provider_name)
+    return configs
 
 
 def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
