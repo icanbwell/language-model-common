@@ -10,6 +10,7 @@ from languagemodelcommon.utilities.config_substitution import substitute_env_var
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
     ChatModelConfig,
+    McpOAuthConfig,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -37,6 +38,9 @@ class McpServerEntry(BaseModel):
     auth_optional: bool | None = None
     auth_providers: List[str] | None = None
     issuers: List[str] | None = None
+
+    oauth: McpOAuthConfig | None = None
+    """OAuth configuration for this MCP server (clientId, authServerMetadataUrl)."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -127,6 +131,20 @@ def resolve_mcp_servers(
                 agent.auth_providers = entry.auth_providers
             if entry.issuers and not agent.issuers:
                 agent.issuers = entry.issuers
+            if entry.oauth and not agent.oauth:
+                agent.oauth = entry.oauth
+                # Auto-configure auth fields from oauth when not explicitly set
+                if not agent.auth:
+                    agent.auth = "jwt_token"
+                if not agent.auth_providers:
+                    agent.auth_providers = [agent.mcp_server]
+            # Auto-set auth to "headers" when headers contain Authorization
+            if (
+                not agent.auth
+                and agent.headers
+                and any(k.lower() == "authorization" for k in agent.headers)
+            ):
+                agent.auth = "headers"
             logger.info(
                 "Resolved mcp_server '%s' -> url '%s' for tool '%s' in model '%s'",
                 agent.mcp_server,

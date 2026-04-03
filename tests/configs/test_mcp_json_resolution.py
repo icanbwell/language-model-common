@@ -16,6 +16,7 @@ from languagemodelcommon.configs.config_reader.mcp_json_reader import (
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
     ChatModelConfig,
+    McpOAuthConfig,
 )
 
 
@@ -99,7 +100,11 @@ class TestReadMcpJson:
                 "server": {
                     "type": "http",
                     "url": "https://example.com/",
-                    "oauth": {"clientId": "abc123"},
+                    "oauth": {
+                        "clientId": "abc123",
+                        "authServerMetadataUrl": "https://idp.example.com/.well-known/openid-configuration",
+                    },
+                    "customField": "custom_value",
                 }
             }
         )
@@ -107,14 +112,17 @@ class TestReadMcpJson:
 
         result = read_mcp_json(config_dir=str(tmp_path))
         assert result is not None
-        # Ensure extra fields (like "oauth") are preserved on the server entry.
         server = result.mcpServers["server"]
+        # oauth is now a first-class field
+        assert server.oauth is not None
+        assert server.oauth.client_id == "abc123"
+        # extra fields beyond the known ones are still preserved
         extras = getattr(server, "model_extra", None)
         if extras is None:
             extras = getattr(server, "__pydantic_extra__", None)
         assert extras is not None
-        assert "oauth" in extras
-        assert extras["oauth"] == {"clientId": "abc123"}
+        assert "customField" in extras
+        assert extras["customField"] == "custom_value"
 
 
 class TestResolveMcpServers:
@@ -253,6 +261,223 @@ class TestResolveMcpServers:
 
         assert config.agents is not None
         assert config.agents[0].url == "https://mcp.example.com/drive/"
+
+    def test_resolves_oauth_from_mcp_json(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    oauth=McpOAuthConfig(
+                        client_id="abc123",
+                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.url == "https://mcp.example.com/drive/"
+        assert tool.oauth is not None
+        assert tool.oauth.client_id == "abc123"
+        assert (
+            tool.oauth.auth_server_metadata_url
+            == "https://idp.example.com/.well-known/openid-configuration"
+        )
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["google-drive"]
+
+    def test_oauth_auto_sets_auth_and_auth_providers(self) -> None:
+        config = ChatModelConfig(**_make_model_config("drive", mcp_server="my-server"))
+        mcp = McpJsonConfig(
+            mcpServers={
+                "my-server": McpServerEntry(
+                    url="https://mcp.example.com/",
+                    oauth=McpOAuthConfig(
+                        client_id="cid",
+                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        tool = config.tools[0]  # type: ignore[index]
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["my-server"]
+
+    def test_explicit_auth_not_overridden_by_oauth(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            tools=[
+                AgentConfig(
+                    name="drive",
+                    mcp_server="google-drive",
+                    auth="oauth",
+                    auth_providers=["custom-provider"],
+                )
+            ],
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    oauth=McpOAuthConfig(
+                        client_id="abc123",
+                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        tool = config.tools[0]  # type: ignore[index]
+        assert tool.oauth is not None
+        assert tool.auth == "oauth"
+        assert tool.auth_providers == ["custom-provider"]
+
+    def test_oauth_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
+        _write_json(
+            tmp_path / ".mcp.json",
+            _make_mcp_json(
+                {
+                    "google-drive": {
+                        "type": "http",
+                        "url": "https://mcp.example.com/drive/",
+                        "oauth": {
+                            "clientId": "abc123",
+                            "authServerMetadataUrl": "https://idp.example.com/.well-known/openid-configuration",
+                            "callbackPort": 8086,
+                        },
+                    }
+                }
+            ),
+        )
+
+        result = read_mcp_json(config_dir=str(tmp_path))
+
+        assert result is not None
+        server = result.mcpServers["google-drive"]
+        assert server.oauth is not None
+        assert server.oauth.client_id == "abc123"
+        assert (
+            server.oauth.auth_server_metadata_url
+            == "https://idp.example.com/.well-known/openid-configuration"
+        )
+        assert server.oauth.callback_port == 8086
+
+    def test_oauth_with_explicit_endpoints(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("vendor", mcp_server="vendor-api")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "vendor-api": McpServerEntry(
+                    url="https://vendor.example.com/mcp",
+                    oauth=McpOAuthConfig(
+                        client_id="vid",
+                        authorization_url="https://vendor.example.com/oauth/authorize",
+                        token_url="https://vendor.example.com/oauth/token",
+                        client_secret="secret123",  # pragma: allowlist secret
+                        scopes=["read", "write"],
+                        redirect_uri="http://localhost:9090/callback",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        tool = config.tools[0]  # type: ignore[index]
+        assert tool.oauth is not None
+        assert tool.oauth.client_id == "vid"
+        assert (
+            tool.oauth.authorization_url == "https://vendor.example.com/oauth/authorize"
+        )
+        assert tool.oauth.token_url == "https://vendor.example.com/oauth/token"
+        assert tool.oauth.client_secret == "secret123"
+        assert tool.oauth.scopes == ["read", "write"]
+        assert tool.oauth.scope_string == "read write"
+        assert tool.oauth.redirect_uri == "http://localhost:9090/callback"
+        assert tool.oauth.auth_server_metadata_url is None
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["vendor-api"]
+
+    def test_oauth_explicit_endpoints_from_json(self, tmp_path: Path) -> None:
+        _write_json(
+            tmp_path / ".mcp.json",
+            _make_mcp_json(
+                {
+                    "vendor": {
+                        "type": "http",
+                        "url": "https://vendor.example.com/mcp",
+                        "oauth": {
+                            "authorizationUrl": "https://vendor.example.com/oauth/authorize",
+                            "tokenUrl": "https://vendor.example.com/oauth/token",
+                            "clientId": "vid",
+                            "clientSecret": "secret",  # pragma: allowlist secret
+                            "scopes": ["scope1", "scope2"],
+                            "redirectUri": "http://localhost:8080/callback",
+                        },
+                    }
+                }
+            ),
+        )
+
+        result = read_mcp_json(config_dir=str(tmp_path))
+
+        assert result is not None
+        server = result.mcpServers["vendor"]
+        assert server.oauth is not None
+        assert server.oauth.client_id == "vid"
+        assert server.oauth.client_secret == "secret"
+        assert (
+            server.oauth.authorization_url
+            == "https://vendor.example.com/oauth/authorize"
+        )
+        assert server.oauth.token_url == "https://vendor.example.com/oauth/token"
+        assert server.oauth.scopes == ["scope1", "scope2"]
+        assert server.oauth.redirect_uri == "http://localhost:8080/callback"
+        assert server.oauth.auth_server_metadata_url is None
+
+    def test_resolves_headers_auth_from_mcp_json(self) -> None:
+        """Groundcover-style config: headers with Authorization, no oauth."""
+        config = ChatModelConfig(
+            **_make_model_config("groundcover", mcp_server="groundcover")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "groundcover": McpServerEntry(
+                    url="https://mcp.groundcover.com/api/mcp",
+                    headers={
+                        "Authorization": "Bearer fake-api-key",
+                        "X-Backend-Id": "groundcover",
+                        "X-Tenant-UUID": "6310efb6-d0c9-4751-8cec-70bc0f0a599f",
+                    },
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.url == "https://mcp.groundcover.com/api/mcp"
+        assert tool.headers == {
+            "Authorization": "Bearer fake-api-key",
+            "X-Backend-Id": "groundcover",
+            "X-Tenant-UUID": "6310efb6-d0c9-4751-8cec-70bc0f0a599f",
+        }
+        assert tool.auth == "headers"
+        assert tool.oauth is None
 
 
 class TestFileConfigReaderMcpJsonIntegration:

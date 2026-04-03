@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PromptConfig(BaseModel):
@@ -62,6 +62,54 @@ class AgentParameterConfig(BaseModel):
     """The value of the parameter"""
 
 
+class McpOAuthConfig(BaseModel):
+    """OAuth configuration from .mcp.json server entries.
+
+    Supports two styles:
+    1. **Discovery-based** – provide ``authServerMetadataUrl`` (OIDC well-known)
+       and endpoints are discovered automatically.
+    2. **Explicit endpoints** – provide ``authorizationUrl`` and ``tokenUrl``
+       directly (no discovery needed).
+
+    ``clientId`` is always required.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    client_id: str = Field(validation_alias="clientId")
+    """The OIDC / OAuth2 client ID."""
+
+    auth_server_metadata_url: str | None = Field(
+        None, validation_alias="authServerMetadataUrl"
+    )
+    """The OIDC well-known / server metadata URL (discovery-based flow)."""
+
+    authorization_url: str | None = Field(None, validation_alias="authorizationUrl")
+    """The authorization endpoint URL (explicit-endpoints flow)."""
+
+    token_url: str | None = Field(None, validation_alias="tokenUrl")
+    """The token endpoint URL (explicit-endpoints flow)."""
+
+    client_secret: str | None = Field(None, validation_alias="clientSecret")
+    """Optional client secret for confidential clients."""
+
+    scopes: List[str] | None = None
+    """OAuth scopes to request. Defaults to ``["openid", "profile", "email"]``."""
+
+    redirect_uri: str | None = Field(None, validation_alias="redirectUri")
+    """Optional redirect URI override for the OAuth callback."""
+
+    callback_port: int | None = Field(None, validation_alias="callbackPort")
+    """Optional local callback port for PKCE flows (client-side only)."""
+
+    @property
+    def scope_string(self) -> str:
+        """Return scopes as a space-separated string suitable for OAuth requests."""
+        if self.scopes:
+            return " ".join(self.scopes)
+        return "openid profile email"
+
+
 class AuthenticationConfig(BaseModel):
     """Authentication configuration"""
 
@@ -90,6 +138,10 @@ class AuthenticationConfig(BaseModel):
     If auth is needed, we will use the first issuer.
     If none is provided then we use the default issuer from the OIDC provider.
     """
+
+    oauth: McpOAuthConfig | None = None
+    """OAuth configuration resolved from .mcp.json.  When present, provides the
+    OIDC client_id and well-known URL for this tool's MCP server."""
 
 
 class ToolDefinitionConfig(BaseModel):
