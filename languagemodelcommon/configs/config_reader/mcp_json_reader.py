@@ -86,6 +86,17 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
     return McpJsonConfig(**data)
 
 
+def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
+    """Compute normalized auth_provider key for token scoping.
+
+    Tokens are scoped per authorization-server + client_id pair.
+    When client_id is None (DCR), fall back to the server key.
+    """
+    if not oauth.client_id:
+        return server_key
+    return f"mcp_oauth_{oauth.client_id}"
+
+
 def resolve_mcp_servers(
     configs: List[ChatModelConfig],
     mcp_config: McpJsonConfig,
@@ -133,11 +144,14 @@ def resolve_mcp_servers(
                 agent.issuers = entry.issuers
             if entry.oauth and not agent.oauth:
                 agent.oauth = entry.oauth
-                # Auto-configure auth fields from oauth when not explicitly set
+                # Compute normalized auth_provider key for token scoping
+                provider_key = _compute_oauth_provider_key(
+                    agent.mcp_server, entry.oauth
+                )
                 if not agent.auth:
                     agent.auth = "jwt_token"
                 if not agent.auth_providers:
-                    agent.auth_providers = [agent.mcp_server]
+                    agent.auth_providers = [provider_key]
             # Auto-set auth to "headers" when headers contain Authorization
             if (
                 not agent.auth
@@ -152,3 +166,24 @@ def resolve_mcp_servers(
                 agent.name,
                 model.name,
             )
+
+    # Second pass: union scopes for agents sharing the same OAuth provider key
+    oauth_groups: dict[str, list[AgentConfig]] = {}
+    for model in configs:
+        for agent in model.get_agents():
+            if agent.oauth and agent.auth_providers:
+                key = agent.auth_providers[0]
+                oauth_groups.setdefault(key, []).append(agent)
+
+    for key, grouped_agents in oauth_groups.items():
+        if len(grouped_agents) <= 1:
+            continue
+        all_scopes: set[str] = set()
+        for a in grouped_agents:
+            if a.oauth and a.oauth.scopes:
+                all_scopes.update(a.oauth.scopes)
+        if all_scopes:
+            scope_list = sorted(all_scopes)
+            for a in grouped_agents:
+                if a.oauth:
+                    a.oauth.scopes = scope_list

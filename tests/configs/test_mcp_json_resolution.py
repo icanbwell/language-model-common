@@ -290,7 +290,7 @@ class TestResolveMcpServers:
             == "https://idp.example.com/.well-known/openid-configuration"
         )
         assert tool.auth == "jwt_token"
-        assert tool.auth_providers == ["google-drive"]
+        assert tool.auth_providers == ["mcp_oauth_abc123"]
 
     def test_oauth_auto_sets_auth_and_auth_providers(self) -> None:
         config = ChatModelConfig(**_make_model_config("drive", mcp_server="my-server"))
@@ -310,7 +310,7 @@ class TestResolveMcpServers:
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.auth == "jwt_token"
-        assert tool.auth_providers == ["my-server"]
+        assert tool.auth_providers == ["mcp_oauth_cid"]
 
     def test_explicit_auth_not_overridden_by_oauth(self) -> None:
         config = ChatModelConfig(
@@ -409,7 +409,7 @@ class TestResolveMcpServers:
         assert tool.oauth.redirect_uri == "http://localhost:9090/callback"
         assert tool.oauth.auth_server_metadata_url is None
         assert tool.auth == "jwt_token"
-        assert tool.auth_providers == ["vendor-api"]
+        assert tool.auth_providers == ["mcp_oauth_vid"]
 
     def test_oauth_explicit_endpoints_from_json(self, tmp_path: Path) -> None:
         _write_json(
