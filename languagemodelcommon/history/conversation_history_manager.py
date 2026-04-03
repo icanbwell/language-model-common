@@ -55,7 +55,7 @@ class ConversationHistoryManager:
         try:
             self.encoding = tiktoken.encoding_for_model(model)
         except KeyError:
-            logger.warning(f"Model {model} not found, using cl100k_base encoding")
+            logger.warning("Model %s not found, using cl100k_base encoding", model)
             self.encoding = tiktoken.get_encoding("cl100k_base")
 
     def count_tokens(self, messages: Sequence[BaseMessage]) -> int:
@@ -95,14 +95,16 @@ class ConversationHistoryManager:
             token_count = self.count_tokens(messages)
             if token_count <= self.max_tokens:
                 logger.debug(
-                    f"History within limits: {len(messages)} messages, "
-                    f"{token_count} tokens"
+                    "History within limits: %s messages, %s tokens",
+                    len(messages),
+                    token_count,
                 )
                 return state
 
         logger.info(
-            f"Managing history: {len(messages)} messages, "
-            f"{self.count_tokens(messages)} tokens"
+            "Managing history: %s messages, %s tokens",
+            len(messages),
+            self.count_tokens(messages),
         )
 
         # Separate system messages from conversation
@@ -128,8 +130,9 @@ class ConversationHistoryManager:
             result_messages = self._trim_by_tokens(result_messages)
 
         logger.info(
-            f"History managed: {len(result_messages)} messages, "
-            f"{self.count_tokens(result_messages)} tokens"
+            "History managed: %s messages, %s tokens",
+            len(result_messages),
+            self.count_tokens(result_messages),
         )
 
         state["messages"] = result_messages  # type: ignore[typeddict-item]
@@ -180,11 +183,12 @@ Provide a brief summary (2-3 paragraphs max):"""
             summary_text = str(summary_response.content)
 
             logger.info(
-                f"Summarized {len(old_messages)} messages into summary "
-                f"({len(self.encoding.encode(summary_text))} tokens)"
+                "Summarized %s messages into summary (%s tokens)",
+                len(old_messages),
+                len(self.encoding.encode(summary_text)),
             )
         except Exception as e:
-            logger.error(f"Failed to summarize conversation: {e}")
+            logger.error("Failed to summarize conversation: %s", e)
             # Fallback: just keep recent messages
             return list(messages[-self.keep_recent :])
 
@@ -223,10 +227,11 @@ Provide a brief summary (2-3 paragraphs max):"""
                 current_tokens += msg_tokens
             else:
                 logger.debug(
-                    f"Skipping message ({msg_tokens} tokens) - would exceed limit"
+                    "Skipping message (%s tokens) - would exceed limit",
+                    msg_tokens,
                 )
                 break
 
-        logger.info(f"Trimmed to {len(result)} messages, {current_tokens} tokens")
+        logger.info("Trimmed to %s messages, %s tokens", len(result), current_tokens)
 
         return result

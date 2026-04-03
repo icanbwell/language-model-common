@@ -3,7 +3,6 @@ LangGraph graph builder with smart history management.
 """
 
 import logging
-import uuid
 from typing import Any, List, Sequence
 
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
@@ -152,7 +151,6 @@ class GraphBuilder:
         if not system_prompts:
             return None
 
-        # Strip and filter empty prompts
         cleaned_prompts = [p.strip() for p in system_prompts if p and p.strip()]
 
         if not cleaned_prompts:
@@ -160,8 +158,7 @@ class GraphBuilder:
 
         system_prompt = "\n\n".join(cleaned_prompts)
         logger.debug(
-            "[GRAPH] %s Using system prompt from config (%s chars)",
-            uuid.uuid4(),
+            "Using system prompt from config (%s chars)",
             len(system_prompt),
         )
 
@@ -189,13 +186,15 @@ class GraphBuilder:
             max_tokens: Max token threshold
         """
         logger.debug(
-            "Creating LLM graph with configuration:\n"
-            f"  - Tools: {len(tools) if tools else 0}\n"
-            f"  - Store: {'provided' if store else 'none'}\n"
-            f"  - Checkpointer: {'provided' if checkpointer else 'none'}\n"
-            f"  - System prompt: {'provided' if system_prompt else 'none'}\n"
-            f"  - Max messages: {max_messages}\n"
-            f"  - Max tokens: {max_tokens}"
+            "Creating LLM graph with configuration: "
+            "tools=%s, store=%s, checkpointer=%s, system_prompt=%s, "
+            "max_messages=%s, max_tokens=%s",
+            len(tools) if tools else 0,
+            "provided" if store else "none",
+            "provided" if checkpointer else "none",
+            "provided" if system_prompt else "none",
+            max_messages,
+            max_tokens,
         )
 
     def _build_workflow(
@@ -232,33 +231,3 @@ class GraphBuilder:
         logger.debug("Workflow graph constructed")
 
         return workflow
-
-
-# For backward compatibility with your existing code
-async def create_graph_for_llm_async(
-    *,
-    llm: BaseChatModel,
-    tools: Sequence[BaseTool],
-    store: BaseStore | None,
-    checkpointer: BaseCheckpointSaver[str] | None,
-    system_prompts: List[str] | None = None,
-    skill_loader: SkillLoaderProtocol,
-    max_messages: int = 20,
-    max_tokens: int = 4000,
-) -> CompiledStateGraph[MyMessagesState]:
-    """
-    Standalone function for creating graph (backward compatibility).
-
-    See GraphBuilder.create_graph_for_llm_async for full documentation.
-    """
-    builder = GraphBuilder(skill_loader=skill_loader)
-    return await builder.create_graph_for_llm_async(
-        llm=llm,
-        tools=tools,
-        store=store,
-        checkpointer=checkpointer,
-        system_prompts=system_prompts,
-        skill_loader=skill_loader,
-        max_messages=max_messages,
-        max_tokens=max_tokens,
-    )

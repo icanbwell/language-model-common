@@ -78,8 +78,9 @@ class SmartHistoryManager:
         thread_id = config.get("configurable", {}).get("thread_id")
 
         logger.info(
-            f"[HISTORY_SELECT] Client sent {len(client_messages)} messages, "
-            f"thread_id={thread_id}"
+            "[HISTORY_SELECT] Client sent %s messages, thread_id=%s",
+            len(client_messages),
+            thread_id,
         )
 
         # Attempt to load server checkpoint
@@ -99,7 +100,9 @@ class SmartHistoryManager:
         total_after = len(managed_state.get("messages", []))
 
         logger.info(
-            f"[HISTORY_SELECT] History trimmed: {total_before} → {total_after} messages"
+            "[HISTORY_SELECT] History trimmed: %s -> %s messages",
+            total_before,
+            total_after,
         )
 
         return managed_state
@@ -126,17 +129,19 @@ class SmartHistoryManager:
             if checkpoint:
                 checkpoint_id = getattr(checkpoint, "id", None)
                 logger.info(
-                    f"[HISTORY_SELECT] ✓ Found server checkpoint: {checkpoint_id}"
+                    "[HISTORY_SELECT] Found server checkpoint: %s",
+                    checkpoint_id,
                 )
                 return checkpoint
             else:
                 logger.info(
-                    f"[HISTORY_SELECT] ✗ No checkpoint found for thread {thread_id}"
+                    "[HISTORY_SELECT] No checkpoint found for thread %s",
+                    thread_id,
                 )
                 return None
         except Exception as e:
             logger.warning(
-                f"[HISTORY_SELECT] Failed to load checkpoint: {e}", exc_info=True
+                "[HISTORY_SELECT] Failed to load checkpoint: %s", e, exc_info=True
             )
             return None
 
@@ -165,7 +170,8 @@ class SmartHistoryManager:
 
         server_messages = server_checkpoint.channel_values["messages"]
         logger.info(
-            f"[HISTORY_SELECT] ✓ Using SERVER history ({len(server_messages)} messages)"
+            "[HISTORY_SELECT] Using server history (%s messages)",
+            len(server_messages),
         )
 
         # Extract new message from client (assume last message is new)
@@ -178,7 +184,8 @@ class SmartHistoryManager:
                 state["messages"] = server_messages
             else:
                 logger.info(
-                    f"[HISTORY_SELECT] Appending new {new_message.__class__.__name__}"
+                    "[HISTORY_SELECT] Appending new %s",
+                    new_message.__class__.__name__,
                 )
                 state["messages"] = server_messages + [new_message]
         else:
@@ -204,8 +211,8 @@ class SmartHistoryManager:
             Updated state with client history
         """
         logger.info(
-            f"[HISTORY_SELECT] ✗ No server checkpoint, "
-            f"using CLIENT history ({len(client_messages)} messages)"
+            "[HISTORY_SELECT] No server checkpoint, using client history (%s messages)",
+            len(client_messages),
         )
         state["messages"] = list(client_messages)  # type: ignore[arg-type]
         return state
