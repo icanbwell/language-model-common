@@ -292,26 +292,6 @@ class TestResolveMcpServers:
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_abc123"]
 
-    def test_oauth_auto_sets_auth_and_auth_providers(self) -> None:
-        config = ChatModelConfig(**_make_model_config("drive", mcp_server="my-server"))
-        mcp = McpJsonConfig(
-            mcpServers={
-                "my-server": McpServerEntry(
-                    url="https://mcp.example.com/",
-                    oauth=McpOAuthConfig(
-                        client_id="cid",
-                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
-                    ),
-                )
-            }
-        )
-
-        resolve_mcp_servers([config], mcp)
-
-        tool = config.tools[0]  # type: ignore[index]
-        assert tool.auth == "jwt_token"
-        assert tool.auth_providers == ["mcp_oauth_cid"]
-
     def test_explicit_auth_not_overridden_by_oauth(self) -> None:
         config = ChatModelConfig(
             id="model-1",

@@ -30,18 +30,13 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 from typing import (
     Any,
-    cast,
-    Optional,
-)
-from typing import (
-    Dict,
     AsyncGenerator,
+    Dict,
+    Optional,
+    cast,
 )
 
-from langchain_core.messages import AIMessageChunk, BaseMessage
-from langchain_core.messages import (
-    ToolMessage,
-)
+from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.runnables.schema import (
     CustomStreamEvent,
     StandardStreamEvent,

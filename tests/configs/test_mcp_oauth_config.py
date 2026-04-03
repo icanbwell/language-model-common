@@ -8,16 +8,40 @@ class TestMcpOAuthClientMetadata:
     def test_create_with_all_fields(self) -> None:
         metadata = McpOAuthClientMetadata(
             client_name="My MCP Client",
+            redirect_uris=["http://localhost:8080/callback"],
+            grant_types=["authorization_code"],
+            response_types=["code"],
+            token_endpoint_auth_method="none",
             client_uri="https://myapp.com",
             logo_uri="https://myapp.com/logo.png",
             contacts=["admin@myapp.com"],
         )
         assert metadata.client_name == "My MCP Client"
+        assert metadata.redirect_uris == ["http://localhost:8080/callback"]
+        assert metadata.grant_types == ["authorization_code"]
+        assert metadata.response_types == ["code"]
+        assert metadata.token_endpoint_auth_method == "none"
         assert metadata.client_uri == "https://myapp.com"
 
     def test_create_empty(self) -> None:
         metadata = McpOAuthClientMetadata()
         assert metadata.client_name is None
+        assert metadata.redirect_uris is None
+        assert metadata.grant_types is None
+
+    def test_from_camel_case_json(self) -> None:
+        metadata = McpOAuthClientMetadata.model_validate(
+            {
+                "clientName": "Test",
+                "redirectUris": ["http://localhost/cb"],
+                "grantTypes": ["authorization_code"],
+                "responseTypes": ["code"],
+                "tokenEndpointAuthMethod": "none",
+            }
+        )
+        assert metadata.client_name == "Test"
+        assert metadata.redirect_uris == ["http://localhost/cb"]
+        assert metadata.token_endpoint_auth_method == "none"
 
 
 class TestMcpOAuthConfigNewFields:
@@ -65,6 +89,25 @@ class TestMcpOAuthConfigNewFields:
         assert config.client_metadata is not None
         assert config.client_metadata.client_name == "My Client"
 
+    def test_is_dcr_true_when_no_client_id_with_registration_url(self) -> None:
+        config = McpOAuthConfig(
+            registration_url="https://auth.example.com/register",
+            authorization_url="https://auth.example.com/authorize",
+            token_url="https://auth.example.com/token",
+        )
+        assert config.is_dcr is True
+
+    def test_is_dcr_false_when_client_id_present(self) -> None:
+        config = McpOAuthConfig(client_id="my-client")
+        assert config.is_dcr is False
+
+    def test_is_dcr_false_when_no_registration_url(self) -> None:
+        config = McpOAuthConfig(
+            authorization_url="https://auth.example.com/authorize",
+            token_url="https://auth.example.com/token",
+        )
+        assert config.is_dcr is False
+
     def test_full_oauth21_config(self) -> None:
         config = McpOAuthConfig.model_validate(
             {
@@ -77,10 +120,20 @@ class TestMcpOAuthConfigNewFields:
                 "clientMetadata": {
                     "clientName": "My MCP Client",
                     "clientUri": "https://myapp.com",
+                    "redirectUris": ["http://localhost:8080/callback"],
+                    "grantTypes": ["authorization_code"],
+                    "responseTypes": ["code"],
+                    "tokenEndpointAuthMethod": "none",
                 },
             }
         )
         assert config.client_id is None
+        assert config.is_dcr is True
         assert config.scope_string == "mcp:read mcp:write"
         assert config.client_metadata is not None
         assert config.client_metadata.client_name == "My MCP Client"
+        assert config.client_metadata.redirect_uris == [
+            "http://localhost:8080/callback"
+        ]
+        assert config.client_metadata.grant_types == ["authorization_code"]
+        assert config.client_metadata.token_endpoint_auth_method == "none"

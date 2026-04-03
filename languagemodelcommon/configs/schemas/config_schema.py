@@ -63,11 +63,21 @@ class AgentParameterConfig(BaseModel):
 
 
 class McpOAuthClientMetadata(BaseModel):
-    """Client metadata for OAuth 2.1 Dynamic Client Registration (RFC 7591)."""
+    """Client metadata for OAuth 2.1 Dynamic Client Registration (RFC 7591).
+
+    These fields are sent in the registration request body when dynamically
+    registering with an authorization server.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     client_name: str | None = Field(None, alias="clientName")
+    redirect_uris: list[str] | None = Field(None, alias="redirectUris")
+    grant_types: list[str] | None = Field(None, alias="grantTypes")
+    response_types: list[str] | None = Field(None, alias="responseTypes")
+    token_endpoint_auth_method: str | None = Field(
+        None, alias="tokenEndpointAuthMethod"
+    )
     client_uri: str | None = Field(None, alias="clientUri")
     logo_uri: str | None = Field(None, alias="logoUri")
     contacts: list[str] | None = None
@@ -127,6 +137,11 @@ class McpOAuthConfig(BaseModel):
         if self.scopes:
             return " ".join(self.scopes)
         return "openid profile email"
+
+    @property
+    def is_dcr(self) -> bool:
+        """Whether this config uses Dynamic Client Registration (no pre-configured client_id)."""
+        return self.client_id is None and self.registration_url is not None
 
 
 class AuthenticationConfig(BaseModel):

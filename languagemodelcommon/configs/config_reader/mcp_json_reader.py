@@ -90,11 +90,13 @@ def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
     """Compute normalized auth_provider key for token scoping.
 
     Tokens are scoped per authorization-server + client_id pair.
-    When client_id is None (DCR), fall back to the server key.
+    For Dynamic Client Registration (no pre-configured client_id),
+    fall back to the server key so each MCP server gets its own
+    token scope.
     """
-    if not oauth.client_id:
-        return server_key
-    return f"mcp_oauth_{oauth.client_id}"
+    if oauth.client_id:
+        return f"mcp_oauth_{oauth.client_id}"
+    return server_key
 
 
 def resolve_mcp_servers(
