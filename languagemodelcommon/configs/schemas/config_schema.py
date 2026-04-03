@@ -62,6 +62,17 @@ class AgentParameterConfig(BaseModel):
     """The value of the parameter"""
 
 
+class McpOAuthClientMetadata(BaseModel):
+    """Client metadata for OAuth 2.1 Dynamic Client Registration (RFC 7591)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    client_name: str | None = Field(None, alias="client_name")
+    client_uri: str | None = Field(None, alias="client_uri")
+    logo_uri: str | None = Field(None, alias="logo_uri")
+    contacts: list[str] | None = None
+
+
 class McpOAuthConfig(BaseModel):
     """OAuth configuration from .mcp.json server entries.
 
@@ -70,13 +81,11 @@ class McpOAuthConfig(BaseModel):
        and endpoints are discovered automatically.
     2. **Explicit endpoints** – provide ``authorizationUrl`` and ``tokenUrl``
        directly (no discovery needed).
-
-    ``clientId`` is always required.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
-    client_id: str = Field(alias="clientId")
+    client_id: str | None = Field(None, alias="clientId")
     """The OIDC / OAuth2 client ID."""
 
     auth_server_metadata_url: str | None = Field(None, alias="authServerMetadataUrl")
@@ -99,6 +108,18 @@ class McpOAuthConfig(BaseModel):
 
     callback_port: int | None = Field(None, alias="callbackPort")
     """Optional local callback port for PKCE flows (client-side only)."""
+
+    registration_url: str | None = Field(None, alias="registrationUrl")
+    """RFC 7591 Dynamic Client Registration endpoint URL."""
+
+    use_pkce: bool = Field(True, alias="usePKCE")
+    """Whether to use PKCE. Defaults to True (OAuth 2.1 standard)."""
+
+    pkce_method: Literal["S256", "plain"] | None = Field("S256", alias="pkceMethod")
+    """PKCE challenge method."""
+
+    client_metadata: McpOAuthClientMetadata | None = Field(None, alias="clientMetadata")
+    """Client metadata for Dynamic Client Registration."""
 
     @property
     def scope_string(self) -> str:
