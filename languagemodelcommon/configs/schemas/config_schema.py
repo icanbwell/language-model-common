@@ -98,6 +98,18 @@ class McpOAuthConfig(BaseModel):
     client_id: str | None = Field(None, alias="clientId")
     """The OIDC / OAuth2 client ID."""
 
+    display_name: str | None = Field(None, alias="displayName")
+    """Human-readable name for this OAuth provider (used in UI and logging)."""
+
+    audience: str | None = None
+    """Expected audience claim for JWT validation.  Defaults to ``client_id``
+    when not set.  Useful for IdPs like Okta where the audience differs from
+    the client ID."""
+
+    issuer: str | None = None
+    """Expected issuer claim for JWT validation.  When omitted, the issuer is
+    discovered from ``authServerMetadataUrl``."""
+
     auth_server_metadata_url: str | None = Field(None, alias="authServerMetadataUrl")
     """The OIDC well-known / server metadata URL (discovery-based flow)."""
 
@@ -177,6 +189,12 @@ class AuthenticationConfig(BaseModel):
     """OAuth configuration resolved from .mcp.json.  When present, provides the
     OIDC client_id and well-known URL for this tool's MCP server."""
 
+    oauth_providers: List[McpOAuthConfig] | None = None
+    """Inline OAuth provider definitions for model-level authentication.
+    Each entry defines an OAuth/OIDC provider that callers must authenticate
+    with.  At runtime these are registered as auth providers and
+    ``auth_providers`` is auto-populated with the generated provider keys."""
+
 
 class ToolDefinitionConfig(BaseModel):
     """Static tool definition for lazy-loaded MCP tools"""
@@ -191,7 +209,7 @@ class ToolDefinitionConfig(BaseModel):
 class AgentConfig(AuthenticationConfig):
     """Tool configuration"""
 
-    friendly_name: str | None = None
+    display_name: str | None = None
     """An optional human-readable display name for the tool in the UI"""
 
     emoji: str | None = None

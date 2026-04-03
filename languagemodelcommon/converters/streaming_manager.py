@@ -62,8 +62,8 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.text_humanizer import Humanizer
-from languagemodelcommon.utilities.tool_friendly_name_mapper import (
-    ToolFriendlyNameMapper,
+from languagemodelcommon.utilities.tool_display_name_mapper import (
+    ToolDisplayNameMapper,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ class LangGraphStreamingManager:
         token_reducer: TokenReducer,
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
-        tool_friendly_name_mapper: ToolFriendlyNameMapper,
+        tool_display_name_mapper: ToolDisplayNameMapper,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
         if self.token_reducer is None:
@@ -134,13 +134,13 @@ class LangGraphStreamingManager:
         self._stream_buffers: dict[str, _StreamBuffer] = {}
         self._streamed_text_fragments: dict[str, list[str]] = {}
 
-        self.tool_friendly_name_mapper = tool_friendly_name_mapper
-        if tool_friendly_name_mapper is None:
-            raise ValueError("tool_friendly_name_mapper must not be None")
-        if not isinstance(tool_friendly_name_mapper, ToolFriendlyNameMapper):
+        self.tool_display_name_mapper = tool_display_name_mapper
+        if tool_display_name_mapper is None:
+            raise ValueError("tool_display_name_mapper must not be None")
+        if not isinstance(tool_display_name_mapper, ToolDisplayNameMapper):
             raise TypeError(
-                f"tool_friendly_name_mapper must be an instance of "
-                f"ToolFriendlyNameMapper: {type(tool_friendly_name_mapper)}"
+                f"tool_display_name_mapper must be an instance of "
+                f"ToolDisplayNameMapper: {type(tool_display_name_mapper)}"
             )
 
     async def handle_langchain_event(
@@ -352,7 +352,7 @@ class LangGraphStreamingManager:
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
-            content_text: str = self.tool_friendly_name_mapper.get_message_for_tool(
+            content_text: str = self.tool_display_name_mapper.get_message_for_tool(
                 tool_name=tool_name, tool_input=tool_input
             )
             buffered_chunk = await self._buffer_stream_content(
@@ -460,8 +460,8 @@ class LangGraphStreamingManager:
                         content_text=tool_message_or_artifact_content,
                     )
 
-                tool_friendly_name: str = (
-                    self.tool_friendly_name_mapper.get_name_for_tool(
+                tool_display_name: str = (
+                    self.tool_display_name_mapper.get_name_for_tool(
                         tool_name=tool_name,
                         tool_input=tool_input,
                     )
@@ -479,7 +479,7 @@ class LangGraphStreamingManager:
                     and write_result.file_url
                 ):
                     # send a follow-up message with the file URL
-                    content_text: str = f"\n\n[Click to download {tool_friendly_name} Output]({write_result.file_url})\n\n"
+                    content_text: str = f"\n\n[Click to download {tool_display_name} Output]({write_result.file_url})\n\n"
                     yield chat_request_wrapper.create_sse_message(
                         request_id=request_information.request_id,
                         content=content_text,
@@ -732,7 +732,7 @@ class LangGraphStreamingManager:
             error_content: str = (
                 f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
             )
-            tool_friendly_name: str = self.tool_friendly_name_mapper.get_name_for_tool(
+            tool_display_name: str = self.tool_display_name_mapper.get_name_for_tool(
                 tool_name=tool_name or "unknown",
                 tool_input=tool_input,
             )
@@ -748,7 +748,7 @@ class LangGraphStreamingManager:
                 and write_result.file_path
                 and write_result.file_url
             ):
-                download_text: str = f"\n\n[Click to download {tool_friendly_name} Error Output]({write_result.file_url})\n\n"
+                download_text: str = f"\n\n[Click to download {tool_display_name} Error Output]({write_result.file_url})\n\n"
                 yield chat_request_wrapper.create_sse_message(
                     request_id=request_information.request_id,
                     content=download_text,

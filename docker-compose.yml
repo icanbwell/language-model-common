@@ -7,7 +7,8 @@ services:
       context: .
     volumes:
       - ./:/usr/src/languagemodelcommon
-#      - ../langchain-ai-skills-framework/langchain_ai_skills_framework:/usr/local/lib/python3.12/site-packages/langchain_ai_skills_framework:ro
+      - ../oidc-auth-lib/oidcauthlib:/usr/local/lib/python3.12/site-packages/oidcauthlib:ro
+      #      - ../langchain-ai-skills-framework/langchain_ai_skills_framework:/usr/local/lib/python3.12/site-packages/langchain_ai_skills_framework:ro
     container_name: languagemodelcommon_dev
     working_dir: /usr/src/languagemodelcommon
     env_file:

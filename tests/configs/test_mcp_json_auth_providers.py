@@ -25,7 +25,7 @@ class TestBuildAuthConfigsFromMcpJson:
                     "clientId": "client-123",
                     "wellKnownUri": "https://idp.example.com/.well-known/openid-configuration",
                     "scope": "openid profile",
-                    "friendlyName": "My IdP",
+                    "displayName": "My IdP",
                 }
             }
         )
@@ -66,8 +66,8 @@ class TestBuildAuthConfigsFromMcpJson:
         assert cfg.client_secret == "super-secret"  # pragma: allowlist secret
         assert cfg.extra_info == {"tenant": "abc", "region": "us-east-1"}
 
-    def test_defaults_friendly_name_and_scope(self) -> None:
-        """friendlyName defaults to key name, scope defaults to 'openid profile email'."""
+    def test_defaults_display_name_and_scope(self) -> None:
+        """displayName defaults to key name, scope defaults to 'openid profile email'."""
         mcp = _make_config(
             {
                 "default-provider": {
@@ -108,12 +108,12 @@ class TestBuildAuthConfigsFromMcpJson:
                     "audience": "https://alpha.example.com",
                     "clientId": "alpha-client",
                     "scope": "openid",
-                    "friendlyName": "Alpha IdP",
+                    "displayName": "Alpha IdP",
                 },
                 "idp-beta": {
                     "audience": "https://beta.example.com",
                     "clientId": "beta-client",
-                    "friendlyName": "Beta IdP",
+                    "displayName": "Beta IdP",
                     "issuer": "https://beta-issuer.example.com",
                 },
             }

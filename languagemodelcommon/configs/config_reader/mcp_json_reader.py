@@ -57,7 +57,7 @@ class AuthProviderEntry(BaseModel):
     client_id: str | None = Field(None, alias="clientId")
     client_secret: str | None = Field(None, alias="clientSecret")
     well_known_uri: str | None = Field(None, alias="wellKnownUri")
-    friendly_name: str | None = Field(None, alias="friendlyName")
+    display_name: str | None = Field(None, alias="displayName")
     scope: str | None = None
     extra_info: Dict[str, Any] | None = Field(None, alias="extraInfo")
     authorization_endpoint: str | None = Field(None, alias="authorizationEndpoint")
@@ -119,7 +119,7 @@ def build_auth_configs_from_mcp_json(
     for provider_name, entry in mcp_config.authProviders.items():
         config = AuthConfig(
             auth_provider=provider_name,
-            friendly_name=entry.friendly_name or provider_name,
+            friendly_name=entry.display_name or provider_name,
             audience=entry.audience,
             issuer=entry.issuer,
             client_id=entry.client_id,  # type: ignore[arg-type]  # Optional in oidcauthlib>=3.1
