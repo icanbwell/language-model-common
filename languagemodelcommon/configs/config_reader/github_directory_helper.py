@@ -19,7 +19,7 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 def download_github_directory(github_uri: str) -> Path:
     """Download a ``github://`` URI to a local cache directory using fsspec."""
-    from langchain_ai_skills_framework.loaders.github_directory_downloader import (  # type: ignore[import-not-found]
+    from langchain_ai_skills_framework.loaders.github_directory_downloader import (
         GithubDirectoryDownloader,
     )
 
