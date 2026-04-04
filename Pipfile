@@ -62,6 +62,8 @@ beautifulsoup4 = ">=4.12.3"
 oidcauthlib = ">=3.0.3"
 # fsspec is a Python library for working with filesystems
 fsspec = ">=2026.2.0"
+# authlib is a Python library for OAuth and OpenID Connect
+authlib = ">=1.6.5"
 
 [dev-packages]
 setuptools=">=60.9.3"
@@ -89,6 +91,8 @@ types-boto3-bedrock = ">=1.40.0"
 types-boto3-s3 = ">=1.40.0"
 types-boto3-textract = ">=1.40.0"
 types-boto3-bedrock-runtime = ">=1.40.0"
+# types-Authlib is a Python library for typing Authlib
+types-Authlib = ">=1.6.5"
 # moto is a Python library for mocking AWS services
 moto = { version = ">=5.1.11", extras = ["s3"] }
 # respx is a Python library for mocking HTTP requests in tests

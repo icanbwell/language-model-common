@@ -67,7 +67,7 @@ setup(
         "langchain-openai>=1.1.6",
         "langchain-core>=1.2.5",
         "langgraph>=1.0.0",
-        "pydantic<3.0.0,>=2.0",
+        "pydantic>=2.0,<3.0.0",
         "mcp>=1.11.0",
         "langchain-mcp-adapters>=0.2.1",
         "langmem>=0.0.30",
@@ -82,6 +82,7 @@ setup(
         "beautifulsoup4>=4.12.3",
         "oidcauthlib>=3.0.3",
         "fsspec>=2026.2.0",
+        "authlib>=1.6.5",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
