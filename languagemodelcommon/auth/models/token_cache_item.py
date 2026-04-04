@@ -143,7 +143,7 @@ class TokenCacheItem(BaseDbModel):
             raise ValueError("Token must have a subject claim.")
 
         token_cache_item: TokenCacheItem = TokenCacheItem(
-            _id=ObjectId(),
+            id=ObjectId(),
             created=datetime.now(UTC),
             updated=None,
             refreshed=None,

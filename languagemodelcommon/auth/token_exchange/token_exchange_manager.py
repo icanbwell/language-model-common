@@ -537,7 +537,7 @@ class TokenExchangeManager:
             raise ValueError("referring_subject must be provided in the state")
 
         token_cache_item: TokenCacheItem = TokenCacheItem(
-            _id=ObjectId(),
+            id=ObjectId(),
             access_token=access_token_item,
             id_token=id_token_item,
             refresh_token=refresh_token_item,
