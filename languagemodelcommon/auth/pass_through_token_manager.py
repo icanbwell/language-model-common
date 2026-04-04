@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, List, cast
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -74,6 +75,11 @@ class PassThroughTokenManager:
         if not isinstance(self.dcr_manager, DcrManager):
             raise TypeError("dcr_manager must be an instance of DcrManager")
 
+        # Per-provider locks to prevent concurrent DCR registrations for
+        # the same auth server.  This ensures only one client_id is created
+        # per DCR server even under concurrent requests.
+        self._dcr_locks: Dict[str, asyncio.Lock] = {}
+
     async def check_tokens_are_valid_for_tools(
         self,
         *,
@@ -112,79 +118,135 @@ class PassThroughTokenManager:
         Uses ``DcrManager`` for credential resolution (pre-registered or DCR)
         and ``AuthManager.register_dynamic_provider()`` for OAuth client
         registration with proper PKCE config.
+
+        A per-provider asyncio lock ensures that concurrent requests for
+        the same ``auth_provider`` serialize through DCR, so only one
+        client_id is created per DCR server.
         """
+        # Fast path: already registered in-memory (no lock needed)
         existing: AuthConfig | None = (
             self.auth_config_reader.get_config_for_auth_provider(
                 auth_provider=auth_provider
             )
         )
         if existing is not None:
+            logger.debug(
+                "OAuth provider '%s' already registered in-memory "
+                "(client_id=%s) — skipping registration",
+                auth_provider,
+                existing.client_id,
+            )
             return existing
 
-        # Resolve client_id — either from config or via DCR
-        client_id = oauth.client_id
-        client_secret = oauth.client_secret
+        # Acquire a per-provider lock so concurrent requests for the same
+        # server serialize through DCR instead of each creating a new client.
+        if auth_provider not in self._dcr_locks:
+            self._dcr_locks[auth_provider] = asyncio.Lock()
+        lock = self._dcr_locks[auth_provider]
 
-        dcr_result = await self.dcr_manager.resolve_dcr_credentials(
-            auth_provider=auth_provider,
-            registration_url=oauth.registration_url,
-            client_id=oauth.client_id,
-            client_name=(
-                oauth.client_metadata.client_name if oauth.client_metadata else None
-            ),
-            client_uri=(
-                oauth.client_metadata.client_uri if oauth.client_metadata else None
-            ),
-            logo_uri=(
-                oauth.client_metadata.logo_uri if oauth.client_metadata else None
-            ),
-            contacts=(
-                oauth.client_metadata.contacts if oauth.client_metadata else None
-            ),
-        )
+        async with lock:
+            # Re-check after acquiring the lock — another coroutine may have
+            # completed registration while we were waiting.
+            existing = self.auth_config_reader.get_config_for_auth_provider(
+                auth_provider=auth_provider
+            )
+            if existing is not None:
+                logger.info(
+                    "OAuth provider '%s' was registered by another request "
+                    "while waiting for lock (client_id=%s)",
+                    auth_provider,
+                    existing.client_id,
+                )
+                return existing
 
-        if dcr_result is not None:
-            client_id = dcr_result.client_id
-            client_secret = dcr_result.client_secret
-
-        if not client_id:
-            raise ValueError(
-                f"Could not resolve client_id for auth_provider '{auth_provider}'"
+            logger.info(
+                "OAuth provider '%s' not yet registered — resolving "
+                "credentials (registration_url=%s, has_client_id=%s)",
+                auth_provider,
+                oauth.registration_url,
+                oauth.client_id is not None,
             )
 
-        auth_config = AuthConfig(
-            auth_provider=auth_provider,
-            friendly_name=oauth.display_name or auth_provider,
-            audience=oauth.audience or client_id,
-            issuer=oauth.issuer,
-            client_id=client_id,
-            client_secret=client_secret,
-            well_known_uri=oauth.auth_server_metadata_url,
-            scope=oauth.scope_string,
-            authorization_endpoint=oauth.authorization_url,
-            token_endpoint=oauth.token_url,
-            use_pkce=oauth.use_pkce,
-            pkce_method=oauth.pkce_method,
-            registration_url=oauth.registration_url,
-        )
+            # Resolve client_id — either from config or via DCR
+            client_id = oauth.client_id
+            client_secret = oauth.client_secret
 
-        # Register in AuthConfigReader for lookup (check for duplicates)
-        configs = self.auth_config_reader.get_auth_configs_for_all_auth_providers()
-        if not any(c.auth_provider == auth_provider for c in configs):
-            configs.append(auth_config)
+            dcr_result = await self.dcr_manager.resolve_dcr_credentials(
+                auth_provider=auth_provider,
+                registration_url=oauth.registration_url,
+                client_id=oauth.client_id,
+                client_name=(
+                    oauth.client_metadata.client_name if oauth.client_metadata else None
+                ),
+                client_uri=(
+                    oauth.client_metadata.client_uri if oauth.client_metadata else None
+                ),
+                logo_uri=(
+                    oauth.client_metadata.logo_uri if oauth.client_metadata else None
+                ),
+                contacts=(
+                    oauth.client_metadata.contacts if oauth.client_metadata else None
+                ),
+            )
 
-        # Register OAuth client via clean API
-        await self.auth_manager.register_dynamic_provider(auth_config=auth_config)
+            if dcr_result is not None:
+                logger.info(
+                    "DCR resolved credentials for '%s' — client_id=%s "
+                    "(overriding config client_id=%s)",
+                    auth_provider,
+                    dcr_result.client_id,
+                    oauth.client_id,
+                )
+                client_id = dcr_result.client_id
+                client_secret = dcr_result.client_secret
 
-        logger.info(
-            "Registered OAuth provider '%s' (client_id=%s, pkce=%s/%s)",
-            auth_provider,
-            client_id,
-            oauth.use_pkce,
-            oauth.pkce_method,
-        )
+            if not client_id:
+                logger.error(
+                    "Could not resolve client_id for '%s' — no DCR result "
+                    "and no config client_id (registration_url=%s)",
+                    auth_provider,
+                    oauth.registration_url,
+                )
+                raise ValueError(
+                    f"Could not resolve client_id for auth_provider '{auth_provider}'"
+                )
 
-        return auth_config
+            auth_config = AuthConfig(
+                auth_provider=auth_provider,
+                friendly_name=oauth.display_name or auth_provider,
+                audience=oauth.audience or client_id,
+                issuer=oauth.issuer,
+                client_id=client_id,
+                client_secret=client_secret,
+                well_known_uri=oauth.auth_server_metadata_url,
+                scope=oauth.scope_string,
+                authorization_endpoint=oauth.authorization_url,
+                token_endpoint=oauth.token_url,
+                use_pkce=oauth.use_pkce,
+                pkce_method=oauth.pkce_method,
+                registration_url=oauth.registration_url,
+            )
+
+            # Register in AuthConfigReader for lookup (check for duplicates)
+            configs = self.auth_config_reader.get_auth_configs_for_all_auth_providers()
+            if not any(c.auth_provider == auth_provider for c in configs):
+                configs.append(auth_config)
+
+            # Register OAuth client via clean API
+            await self.auth_manager.register_dynamic_provider(auth_config=auth_config)
+
+            logger.info(
+                "Registered OAuth provider '%s' (client_id=%s, pkce=%s/%s, "
+                "audience=%s, token_url=%s)",
+                auth_provider,
+                client_id,
+                oauth.use_pkce,
+                oauth.pkce_method,
+                auth_config.audience,
+                oauth.token_url,
+            )
+
+            return auth_config
 
     async def _resolve_oauth_providers(
         self,
@@ -200,8 +262,18 @@ class PassThroughTokenManager:
         if not authentication_config.oauth_providers:
             return
         if authentication_config.auth_providers:
-            # Already resolved (or manually specified alongside oauth_providers)
+            logger.debug(
+                "OAuth providers already resolved for '%s' — auth_providers=%s",
+                authentication_config.name,
+                authentication_config.auth_providers,
+            )
             return
+
+        logger.info(
+            "Resolving %d inline oauth_providers for '%s'",
+            len(authentication_config.oauth_providers),
+            authentication_config.name,
+        )
 
         provider_names: list[str] = []
         for oauth in authentication_config.oauth_providers:
@@ -209,6 +281,12 @@ class PassThroughTokenManager:
                 f"oauth_{oauth.client_id}"
                 if oauth.client_id
                 else f"oauth_{hash(oauth.auth_server_metadata_url)}"
+            )
+            logger.info(
+                "Resolving oauth_provider '%s' for tool '%s' (metadata_url=%s)",
+                provider_key,
+                authentication_config.name,
+                oauth.auth_server_metadata_url,
             )
             await self._ensure_oauth_provider_registered(
                 auth_provider=provider_key,
@@ -219,6 +297,11 @@ class PassThroughTokenManager:
         authentication_config.auth_providers = provider_names
         if not authentication_config.auth:
             authentication_config.auth = "jwt_token"
+        logger.info(
+            "Resolved oauth_providers for '%s' — auth_providers=%s",
+            authentication_config.name,
+            provider_names,
+        )
 
     async def check_tokens_are_valid_for_tool(
         self,
