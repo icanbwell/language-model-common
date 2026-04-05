@@ -438,10 +438,22 @@ class PassThroughTokenManager:
                 ),
             )
 
-        login_display_name: str = (
-            getattr(authentication_config, "display_name", None)
-            or authentication_config.name
+        oauth_display_name: str | None = (
+            authentication_config.oauth.display_name
+            if authentication_config.oauth and authentication_config.oauth.display_name
+            else None
         )
+        tool_display_name: str | None = getattr(
+            authentication_config, "display_name", None
+        )
+        base_display_name: str = (
+            oauth_display_name or tool_display_name or authentication_config.name
+        )
+        # Include the tool name in brackets when we have a separate display name
+        if base_display_name != authentication_config.name:
+            login_display_name = f"{base_display_name} ({authentication_config.name})"
+        else:
+            login_display_name = base_display_name
         error_message: str = (
             "\n"
             + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
