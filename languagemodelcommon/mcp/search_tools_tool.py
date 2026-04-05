@@ -107,8 +107,8 @@ class SearchToolsTool(BaseTool):
                 tool_names = [t["name"] for t in all_tools]
                 return (
                     f"No tools matched your search query, but the following "
-                    f"tools are available in this category: {', '.join(tool_names)}. "
+                    f"tools are available in {category} category:\n{', '.join(tool_names)}. "
                     f"Try searching with different keywords."
                 )
-            return "No tools found matching your query."
+            return f"No tools found matching your query in {category}"
         return json.dumps(results, indent=2)
