@@ -388,6 +388,25 @@ class ToolCatalog:
 
         return list(categories.values())
 
+    def list_tools(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List all tools, optionally filtered by category."""
+        entries = self._entries
+        if category:
+            entries = [
+                e
+                for e in entries
+                if (e.category and category.lower() in e.category.lower())
+                or category.lower() in e.server_name.lower()
+            ]
+        return [
+            {
+                **_format_tool_schema(e.tool),
+                "server_name": e.server_name,
+                "category": e.category,
+            }
+            for e in entries
+        ]
+
     @property
     def tool_count(self) -> int:
         return len(self._entries)

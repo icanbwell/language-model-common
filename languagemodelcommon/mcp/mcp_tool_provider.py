@@ -834,10 +834,15 @@ class _BoundToolResolver:
             )
         except AuthorizationMcpToolTokenInvalidException:
             # The MCP server returned 401. Trigger the full token
-            # resolution flow which generates login links for the user.
+            # resolution flow which either raises
+            # AuthorizationNeededException with login links (user must
+            # log in) or succeeds when the token was refreshed.
             await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
                 tool_config=agent_config,
             )
-            # If we get here the token was resolved — should not happen
-            # in a 401 scenario but re-raise to be safe.
-            raise
+            # Token was refreshed — retry the MCP call.
+            return await self._provider._list_mcp_tools_for_config(
+                tool_config=agent_config,
+                headers=self._headers,
+                auth_interceptor=self._auth_interceptor,
+            )

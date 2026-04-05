@@ -19,6 +19,10 @@ from mcp.types import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
+
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
@@ -97,6 +101,9 @@ class CallToolTool(BaseTool):
                 auth_interceptor=self.auth_interceptor,
             )
             return _call_tool_result_to_text(result)
+        except AuthorizationNeededException:
+            # Auth exceptions must propagate so the user sees login links
+            raise
         except Exception as e:
             logger.error(
                 "call_tool failed for %s on %s: %s: %s",

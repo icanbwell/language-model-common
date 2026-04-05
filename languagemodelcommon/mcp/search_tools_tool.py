@@ -86,11 +86,29 @@ class SearchToolsTool(BaseTool):
                         e,
                     )
 
-        results = self.catalog.search(
-            query=query,
-            category=category,
-            max_results=self.max_results,
-        )
+        try:
+            results = self.catalog.search(
+                query=query,
+                category=category,
+                max_results=self.max_results,
+            )
+        except Exception as e:
+            logger.error(
+                "search_tools catalog search failed: %s: %s",
+                type(e).__name__,
+                e,
+            )
+            return f"Error searching tools: {type(e).__name__}: {e}"
+
         if not results:
+            # List all tools in the category so the LLM knows what's available
+            all_tools = self.catalog.list_tools(category=category)
+            if all_tools:
+                tool_names = [t["name"] for t in all_tools]
+                return (
+                    f"No tools matched your search query, but the following "
+                    f"tools are available in this category: {', '.join(tool_names)}. "
+                    f"Try searching with different keywords."
+                )
             return "No tools found matching your query."
         return json.dumps(results, indent=2)
