@@ -339,11 +339,6 @@ class AgentConfig(AuthenticationConfig):
         description="Comma-separated names of specific tools to use from the MCP server. If omitted, all tools at the URL are used.",
     )
 
-    public_url: str | None = Field(
-        None,
-        description="Unauthenticated URL for MCP tool discovery (tools/list). Used when tool invocation requires auth but discovery does not.",
-    )
-
     lazy_load: bool | None = Field(
         None,
         description="If true, skip tool discovery from the MCP server and use tool_definitions instead.",
@@ -353,11 +348,6 @@ class AgentConfig(AuthenticationConfig):
         None,
         description="Static tool definitions for lazy-loaded tools. Each entry provides a tool name and description.",
     )
-
-    @model_validator(mode="after")
-    def _normalize_agent_urls(self) -> "AgentConfig":
-        self.public_url = _normalize_url(self.public_url)
-        return self
 
 
 class ModelConfig(BaseModel):

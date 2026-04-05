@@ -253,75 +253,6 @@ class MCPToolProvider:
         )
         return tools
 
-    async def _discover_tools_via_public_url(
-        self,
-        *,
-        tool_config: AgentConfig,
-        invocation_config: MCPConnectionConfig,
-        tool_call_timeout_seconds: int,
-        auth_interceptor: AuthMcpCallInterceptor,
-    ) -> List[BaseTool]:
-        """
-        Discover tools via an unauthenticated public_url, then create
-        LangChain tools that invoke via the authenticated main url.
-        """
-        public_url: str = tool_config.public_url  # type: ignore[assignment]
-        logger.info(
-            f"Discovering tools for {tool_config.name} via public_url: {public_url}"
-        )
-
-        # Build an unauthenticated discovery connection
-        discovery_config: MCPConnectionConfig = {
-            "url": public_url,
-            "transport": "streamable_http",
-            "httpx_client_factory": self.get_httpx_async_client,
-            "timeout": timedelta(seconds=tool_call_timeout_seconds),
-            "sse_read_timeout": timedelta(seconds=tool_call_timeout_seconds),
-        }
-        if tool_config.headers:
-            discovery_config["headers"] = {
-                key: os.path.expandvars(value)
-                for key, value in tool_config.headers.items()
-            }
-
-        callbacks = Callbacks(
-            on_progress=self.on_mcp_tool_progress,
-            on_logging_message=self.on_mcp_tool_logging,
-        )
-        mcp_callbacks = callbacks.to_mcp_format(
-            context=CallbackContext(server_name=tool_config.name)
-        )
-
-        # Discover tool metadata from the public (unauthenticated) endpoint
-        async with create_mcp_session(
-            discovery_config, mcp_callbacks=mcp_callbacks
-        ) as session:
-            await session.initialize()
-            mcp_tools: List[MCPTool] = await list_all_tools(session)
-
-        # Create LangChain tools that use the main url for invocation
-        tool_interceptors = [
-            auth_interceptor.get_tool_interceptor_auth(),
-            self.tracing_interceptor.get_tool_interceptor_tracing(),
-            self.truncation_interceptor.get_tool_interceptor_truncation(),
-        ]
-        tools: List[BaseTool] = [
-            mcp_tool_to_langchain_tool(
-                mcp_tool,
-                connection=invocation_config,
-                callbacks=callbacks,
-                tool_interceptors=tool_interceptors,
-                server_name=tool_config.name,
-            )
-            for mcp_tool in mcp_tools
-        ]
-
-        logger.info(
-            f"Discovered {len(tools)} tools for {tool_config.name} via public_url: "
-            f"{[t.name for t in tools]}"
-        )
-        return tools
-
     async def get_tools_by_url_async(
         self,
         *,
@@ -348,115 +279,99 @@ class MCPToolProvider:
 
         safe_header_keys = list(headers.keys()) if headers else []
         logger.info(
-            "get_tools_by_url_async called for tool: %s, url: %s, "
-            "public_url: %s, header_keys: %s",
+            "get_tools_by_url_async called for tool: %s, url: %s, header_keys: %s",
             tool_config.name,
             tool_config.url,
-            tool_config.public_url,
             safe_header_keys,
         )
 
         try:
             invocation_config = self._build_connection_config(tool_config)
-            tool_call_timeout_seconds: int = (
-                self.environment_variables.tool_call_timeout_seconds
-            )
 
             tool_names: List[str] | None = (
                 tool_config.tools.split(",") if tool_config.tools else None
             )
 
-            if tool_config.public_url:
-                # When public_url is set, use it for unauthenticated tool discovery
-                # and the main url for authenticated tool invocation.
-                tools = await self._discover_tools_via_public_url(
-                    tool_config=tool_config,
-                    invocation_config=invocation_config,
-                    tool_call_timeout_seconds=tool_call_timeout_seconds,
-                    auth_interceptor=auth_interceptor,
-                )
-            else:
-                # Standard path: single URL for both discovery and invocation.
-                # Attach auth headers for discovery if needed.
-                discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
-                if headers and tool_config.auth:
-                    if tool_config.auth_providers:
-                        resolved_header: (
-                            str | None
-                        ) = await auth_interceptor.resolve_auth_header_for_discovery(
-                            tool_config
-                        )
-                        if resolved_header:
-                            existing_headers = discovery_config.get("headers") or {}
-                            discovery_config["headers"] = {
-                                **existing_headers,
-                                "Authorization": resolved_header,
-                            }
-                    else:
-                        auth_header: str | None = (
-                            AuthMcpCallInterceptor._extract_auth_header(headers)
-                        )
-                        if auth_header:
-                            existing_headers = discovery_config.get("headers") or {}
-                            discovery_config["headers"] = {
-                                **existing_headers,
-                                "Authorization": auth_header,
-                            }
-
-                callbacks = Callbacks(
-                    on_progress=self.on_mcp_tool_progress,
-                    on_logging_message=self.on_mcp_tool_logging,
-                )
-                mcp_callbacks = callbacks.to_mcp_format(
-                    context=CallbackContext(server_name=tool_config.name)
-                )
-                tool_interceptors = [
-                    auth_interceptor.get_tool_interceptor_auth(),
-                    self.tracing_interceptor.get_tool_interceptor_tracing(),
-                    self.truncation_interceptor.get_tool_interceptor_truncation(),
-                ]
-
-                try:
-                    async with create_mcp_session(
-                        discovery_config, mcp_callbacks=mcp_callbacks
-                    ) as session:
-                        await session.initialize()
-                        mcp_tools = await list_all_tools(session)
-
-                    tools = [
-                        mcp_tool_to_langchain_tool(
-                            mcp_tool,
-                            connection=invocation_config,
-                            callbacks=callbacks,
-                            tool_interceptors=tool_interceptors,
-                            server_name=tool_config.name,
-                        )
-                        for mcp_tool in mcp_tools
-                    ]
-                except BaseException as e:
-                    tool_url = tool_config.url or "unknown"
-
-                    if (
-                        self._contains_http_401(e)
-                        and tool_config.oauth is None
-                        and not tool_config.oauth_providers
-                        and tool_url != "unknown"
-                    ):
-                        discovered = await self._attempt_auth_server_discovery(
-                            tool_config=tool_config,
-                        )
-                        if discovered:
-                            raise
-
-                    logger.error(
-                        "get_tools_by_url_async Failed to discover tools from "
-                        "%s at %s: %s: %s",
-                        tool_config.name,
-                        tool_url,
-                        type(e).__name__,
-                        e,
+            # Attach auth headers for discovery if needed.
+            discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
+            if headers and tool_config.auth:
+                if tool_config.auth_providers:
+                    resolved_header: (
+                        str | None
+                    ) = await auth_interceptor.resolve_auth_header_for_discovery(
+                        tool_config
                     )
-                    return []
+                    if resolved_header:
+                        existing_headers = discovery_config.get("headers") or {}
+                        discovery_config["headers"] = {
+                            **existing_headers,
+                            "Authorization": resolved_header,
+                        }
+                else:
+                    auth_header: str | None = (
+                        AuthMcpCallInterceptor._extract_auth_header(headers)
+                    )
+                    if auth_header:
+                        existing_headers = discovery_config.get("headers") or {}
+                        discovery_config["headers"] = {
+                            **existing_headers,
+                            "Authorization": auth_header,
+                        }
+
+            callbacks = Callbacks(
+                on_progress=self.on_mcp_tool_progress,
+                on_logging_message=self.on_mcp_tool_logging,
+            )
+            mcp_callbacks = callbacks.to_mcp_format(
+                context=CallbackContext(server_name=tool_config.name)
+            )
+            tool_interceptors = [
+                auth_interceptor.get_tool_interceptor_auth(),
+                self.tracing_interceptor.get_tool_interceptor_tracing(),
+                self.truncation_interceptor.get_tool_interceptor_truncation(),
+            ]
+
+            try:
+                async with create_mcp_session(
+                    discovery_config, mcp_callbacks=mcp_callbacks
+                ) as session:
+                    await session.initialize()
+                    mcp_tools = await list_all_tools(session)
+
+                tools = [
+                    mcp_tool_to_langchain_tool(
+                        mcp_tool,
+                        connection=invocation_config,
+                        callbacks=callbacks,
+                        tool_interceptors=tool_interceptors,
+                        server_name=tool_config.name,
+                    )
+                    for mcp_tool in mcp_tools
+                ]
+            except BaseException as e:
+                tool_url = tool_config.url or "unknown"
+
+                if (
+                    self._contains_http_401(e)
+                    and tool_config.oauth is None
+                    and not tool_config.oauth_providers
+                    and tool_url != "unknown"
+                ):
+                    discovered = await self._attempt_auth_server_discovery(
+                        tool_config=tool_config,
+                    )
+                    if discovered:
+                        raise
+
+                logger.error(
+                    "get_tools_by_url_async Failed to discover tools from "
+                    "%s at %s: %s: %s",
+                    tool_config.name,
+                    tool_url,
+                    type(e).__name__,
+                    e,
+                )
+                return []
 
             if tool_names and tools:
                 tools = [t for t in tools if t.name in tool_names]
@@ -702,33 +617,11 @@ class MCPToolProvider:
         tool_url = tool_config.url or "unknown"
 
         try:
-            if tool_config.public_url:
-                # Use public URL for unauthenticated discovery
-                discovery_config: MCPConnectionConfig = {
-                    "url": tool_config.public_url,
-                    "transport": "streamable_http",
-                    "httpx_client_factory": self.get_httpx_async_client,
-                    "timeout": config.get("timeout", timedelta(seconds=30)),
-                    "sse_read_timeout": config.get(
-                        "sse_read_timeout", timedelta(seconds=300)
-                    ),
-                }
-                if tool_config.headers:
-                    discovery_config["headers"] = {
-                        key: os.path.expandvars(value)
-                        for key, value in tool_config.headers.items()
-                    }
-                async with create_mcp_session(
-                    discovery_config, mcp_callbacks=mcp_callbacks
-                ) as session:
-                    await session.initialize()
-                    mcp_tools = await list_all_tools(session)
-            else:
-                async with create_mcp_session(
-                    config, mcp_callbacks=mcp_callbacks
-                ) as session:
-                    await session.initialize()
-                    mcp_tools = await list_all_tools(session)
+            async with create_mcp_session(
+                config, mcp_callbacks=mcp_callbacks
+            ) as session:
+                await session.initialize()
+                mcp_tools = await list_all_tools(session)
         except BaseException as e:
             if not self._contains_http_401(e):
                 raise
