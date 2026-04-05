@@ -92,6 +92,25 @@ class AuthMcpCallInterceptor:
             tool_config=tool_config,
         )
 
+    async def resolve_auth_for_tool_with_login_links(
+        self, tool_config: AgentConfig
+    ) -> None:
+        """Trigger the full token resolution flow for a tool.
+
+        If the user needs to log in, this raises
+        ``AuthorizationNeededException`` with the login links included
+        in the message.  Call this after an MCP server returns 401 so
+        the user sees actionable login links instead of a bare error.
+        """
+        auth_header = self._extract_auth_header(self._headers)
+        # This will raise AuthorizationNeededException with login
+        # links if the user needs to authenticate.
+        await self.pass_through_token_manager.check_tokens_are_valid_for_tool(
+            auth_header=auth_header,
+            auth_information=self._auth_information,
+            authentication_config=tool_config,
+        )
+
     def get_tool_interceptor_auth(self) -> ToolCallInterceptor:
         async def tool_interceptor_auth(
             request: MCPToolCallRequest,
