@@ -23,6 +23,33 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 
 class ExceptionLogger:
     @staticmethod
+    def get_first_exception(exc: BaseException) -> BaseException:
+        """Unwrap ExceptionGroups to get the first leaf exception.
+
+        Recursively traverses nested ExceptionGroups and returns the
+        first non-group exception found.  Returns the exception itself
+        if it is not an ExceptionGroup.
+        """
+        if isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+            return ExceptionLogger.get_first_exception(exc.exceptions[0])
+        return exc
+
+    @staticmethod
+    def format_exception_message(exc: BaseException) -> str:
+        """Format an exception for display, unwrapping ExceptionGroups.
+
+        Recursively extracts all leaf exceptions from nested
+        ExceptionGroups and formats them as ``TypeName: message``.
+        Multiple leaf exceptions are joined with ``'; '``.
+        """
+        if isinstance(exc, BaseExceptionGroup):
+            parts = [
+                ExceptionLogger.format_exception_message(e) for e in exc.exceptions
+            ]
+            return "; ".join(parts)
+        return f"{type(exc).__name__}: {exc}"
+
+    @staticmethod
     def _exc_info_from_error(
         error: Exception | ExceptionGroup,
     ) -> tuple[type[BaseException], BaseException, TracebackType | None] | None:

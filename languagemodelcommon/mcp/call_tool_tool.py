@@ -26,6 +26,7 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -105,11 +106,11 @@ class CallToolTool(BaseTool):
             # Auth exceptions must propagate so the user sees login links
             raise
         except Exception as e:
+            error_detail = ExceptionLogger.format_exception_message(e)
             logger.error(
-                "call_tool failed for %s on %s: %s: %s",
+                "call_tool failed for %s on %s: %s",
                 name,
                 entry.server_name,
-                type(e).__name__,
-                e,
+                error_detail,
             )
-            return f"Error calling tool '{name}': {type(e).__name__}: {e}"
+            return f"Error calling tool '{name}': {error_detail}"

@@ -22,18 +22,11 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.MCP)
-
-
-def _format_exception(exc: BaseException) -> str:
-    """Unwrap ExceptionGroups to show the actual root cause(s)."""
-    if isinstance(exc, BaseExceptionGroup):
-        parts = [_format_exception(e) for e in exc.exceptions]
-        return "; ".join(parts)
-    return f"{type(exc).__name__}: {exc}"
 
 
 class SearchToolsInput(BaseModel):
@@ -90,7 +83,7 @@ class SearchToolsTool(BaseTool):
                 except Exception as e:
                     error_msg = (
                         f"Failed to connect to {server.server_name}: "
-                        f"{_format_exception(e)}"
+                        f"{ExceptionLogger.format_exception_message(e)}"
                     )
                     resolution_errors.append(error_msg)
                     logger.warning(

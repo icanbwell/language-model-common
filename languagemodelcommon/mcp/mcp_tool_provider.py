@@ -49,6 +49,7 @@ from languagemodelcommon.mcp.mcp_client import (
     call_mcp_tool_raw,
 )
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -462,7 +463,7 @@ class MCPToolProvider:
             return tools
         except* HTTPStatusError as e:
             tool_url = tool_config.url or "unknown"
-            first_exception = e.exceptions[0]
+            first_exception = ExceptionLogger.get_first_exception(e)
 
             tool_name = tool_config.name
             # Attempt auth server discovery on 401 when no OAuth is configured
@@ -486,10 +487,9 @@ class MCPToolProvider:
                     ) from e
 
             logger.error(
-                "get_tools_by_url_async HTTP error loading MCP tools from %s: %s %s",
+                "get_tools_by_url_async HTTP error loading MCP tools from %s: %s",
                 tool_url,
-                type(first_exception).__name__,
-                first_exception,
+                ExceptionLogger.format_exception_message(e),
             )
             raise AuthorizationMcpToolTokenInvalidException(
                 message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
@@ -501,12 +501,10 @@ class MCPToolProvider:
         except* McpToolUnauthorizedException as e:
             tool_url = tool_config.url or "unknown"
             tool_name = tool_config.name
-            unauth_exception = e.exceptions[0]
             logger.error(
-                "get_tools_by_url_async MCP Tool Unauthorized error loading MCP tools from %s: %s %s",
+                "get_tools_by_url_async MCP Tool Unauthorized error loading MCP tools from %s: %s",
                 tool_url,
-                type(unauth_exception).__name__,
-                unauth_exception,
+                ExceptionLogger.format_exception_message(e),
             )
             raise AuthorizationMcpToolTokenInvalidException(
                 message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
@@ -518,10 +516,9 @@ class MCPToolProvider:
         except* Exception as e:
             tool_url = tool_config.url or "unknown"
             logger.error(
-                "get_tools_by_url_async Failed to load MCP tools from %s: %s %s",
+                "get_tools_by_url_async Failed to load MCP tools from %s: %s",
                 tool_url,
-                type(e.exceptions[0]).__name__,
-                e,
+                ExceptionLogger.format_exception_message(e),
             )
             raise e
 
@@ -613,23 +610,29 @@ class MCPToolProvider:
                     )
                     all_tools.extend(tools_by_url)
                 except* AuthorizationMcpToolTokenInvalidException as auth_eg:
-                    auth_exception = auth_eg.exceptions[0]
                     logger.warning(
-                        f"get_tools_async No valid auth token for {tool.name} from {tool.url}, "
-                        f"skipping tool discovery: {type(auth_exception).__name__}: {auth_exception}"
+                        "get_tools_async No valid auth token for %s from %s, "
+                        "skipping tool discovery: %s",
+                        tool.name,
+                        tool.url,
+                        ExceptionLogger.format_exception_message(auth_eg),
                     )
                 except* AuthorizationNeededException as auth_needed_eg:
-                    auth_needed_exception = auth_needed_eg.exceptions[0]
                     logger.warning(
-                        f"get_tools_async Authorization needed for {tool.name} from {tool.url}, "
-                        f"prompting user to login: {type(auth_needed_exception).__name__}: {auth_needed_exception}"
+                        "get_tools_async Authorization needed for %s from %s, "
+                        "prompting user to login: %s",
+                        tool.name,
+                        tool.url,
+                        ExceptionLogger.format_exception_message(auth_needed_eg),
                     )
                     raise
                 except* Exception as conn_eg:
-                    conn_exception = conn_eg.exceptions[0]
                     logger.warning(
-                        f"get_tools_async Failed to connect to MCP server for {tool.name} at {tool.url}, "
-                        f"skipping tool: {type(conn_exception).__name__}: {conn_exception}"
+                        "get_tools_async Failed to connect to MCP server for %s at %s, "
+                        "skipping tool: %s",
+                        tool.name,
+                        tool.url,
+                        ExceptionLogger.format_exception_message(conn_eg),
                     )
         return all_tools
 

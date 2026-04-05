@@ -339,11 +339,10 @@ class LangGraphToOpenAIConverter:
 
                 return JSONResponse(content=content_json)
             except* TokenRetrievalError as e:
-                first_exception = e.exceptions[0]
                 error_message = (
-                    f"AWS Bedrock Token retrieval error: {type(first_exception)} {first_exception}."
-                    + "  If you are running locally, your AWS session may have expired."
-                    + "  Please re-authenticate using `aws sso login --profile [role]`."
+                    f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
                 logger.exception(error_message)
                 raise HTTPException(
@@ -351,11 +350,10 @@ class LangGraphToOpenAIConverter:
                     detail=error_message,
                 )
             except* botocore.exceptions.NoCredentialsError as e:
-                first_exception1 = e.exceptions[0]
                 error_message = (
-                    f"AWS Bedrock Login error: {type(first_exception1)} {first_exception1}."
-                    + "  If you are running locally, your AWS session may have expired."
-                    + "  Please re-authenticate using `aws sso login --profile [role]`."
+                    f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
                 logger.exception(error_message)
                 raise HTTPException(
@@ -363,28 +361,24 @@ class LangGraphToOpenAIConverter:
                     detail=error_message,
                 )
             except* Exception as e:
-                first_exception2 = e.exceptions[0] if len(e.exceptions) > 0 else e
-                # print type of first exception in ExceptionGroup
-                # if there is just one exception, we can log it directly
-                if len(e.exceptions) > 0:
-                    logger.exception(
-                        "ExceptionGroup in call_agent_with_input: %s %s",
-                        type(first_exception2),
-                        first_exception2,
-                    )
+                first_exception = ExceptionLogger.get_first_exception(e)
+                logger.exception(
+                    "ExceptionGroup in call_agent_with_input: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
                 # Get the traceback for the first exception
                 stack = "".join(
                     traceback.format_exception(
-                        type(first_exception2),
-                        first_exception2,
-                        first_exception2.__traceback__,
+                        type(first_exception),
+                        first_exception,
+                        first_exception.__traceback__,
                     )
                 )
-                log_message = f"Unexpected error: {type(first_exception2)} {first_exception2}\nStack trace:\n{stack}"
+                log_message = f"Unexpected error: {ExceptionLogger.format_exception_message(e)}\nStack trace:\n{stack}"
                 logger.exception(log_message)
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Unexpected error: {first_exception2}",
+                    detail=f"Unexpected error: {first_exception}",
                 )
 
     @staticmethod
