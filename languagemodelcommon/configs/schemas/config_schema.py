@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PromptConfig(BaseModel):
@@ -212,6 +213,45 @@ class McpOAuthConfig(BaseModel):
         return self.client_id is None and self.registration_url is not None
 
 
+def _normalize_url(value: str | None) -> str | None:
+    """Normalize a URL to catch common misconfiguration.
+
+    Detects malformed URLs where a path segment was concatenated onto
+    the port (e.g. ``http://host:5000google_drive``) and inserts the
+    missing ``/`` separator.  Also collapses double-slashes in the
+    path portion.
+    """
+    if not value:
+        return value
+    parsed = urlparse(value)
+    # Detect port-path concatenation: urlparse puts the mangled
+    # string into netloc when there's no valid port separator.
+    if (
+        parsed.scheme in ("http", "https")
+        and parsed.port is None
+        and ":" in parsed.netloc
+    ):
+        # e.g. "http://host:5000google_drive/tools" parses with
+        # netloc="host:5000google_drive" and port=None.
+        host_port = parsed.netloc
+        colon_idx = host_port.rfind(":")
+        port_and_rest = host_port[colon_idx + 1 :]
+        # Find where the digits end and the non-port text begins
+        digit_end = 0
+        for ch in port_and_rest:
+            if ch.isdigit():
+                digit_end += 1
+            else:
+                break
+        if digit_end > 0 and digit_end < len(port_and_rest):
+            # There's non-digit text after the port number
+            real_host_port = host_port[: colon_idx + 1 + digit_end]
+            extra_path = port_and_rest[digit_end:]
+            new_path = "/" + extra_path.lstrip("/") + parsed.path
+            value = parsed._replace(netloc=real_host_port, path=new_path).geturl()
+    return value
+
+
 class AuthenticationConfig(BaseModel):
     """Authentication configuration"""
 
@@ -254,6 +294,11 @@ class AuthenticationConfig(BaseModel):
         None,
         description="Inline OAuth provider definitions for model-level authentication. Each entry defines an OAuth/OIDC provider that callers must authenticate with. At runtime these are registered as auth providers and auth_providers is auto-populated.",
     )
+
+    @model_validator(mode="after")
+    def _normalize_urls(self) -> "AuthenticationConfig":
+        self.url = _normalize_url(self.url)
+        return self
 
 
 class ToolDefinitionConfig(BaseModel):
@@ -308,6 +353,11 @@ class AgentConfig(AuthenticationConfig):
         None,
         description="Static tool definitions for lazy-loaded tools. Each entry provides a tool name and description.",
     )
+
+    @model_validator(mode="after")
+    def _normalize_agent_urls(self) -> "AgentConfig":
+        self.public_url = _normalize_url(self.public_url)
+        return self
 
 
 class ModelConfig(BaseModel):
