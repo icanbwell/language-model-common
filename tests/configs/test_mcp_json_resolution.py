@@ -216,7 +216,8 @@ class TestResolveMcpServers:
         assert tool.issuers == ["https://accounts.google.com"]
         assert tool.auth_optional is True
 
-    def test_agent_auth_takes_precedence_over_mcp_json(self) -> None:
+    def test_mcp_json_overrides_inline_auth(self) -> None:
+        """mcp_server resolution always uses .mcp.json values."""
         config = ChatModelConfig(
             id="model-1",
             name="Model 1",
@@ -244,8 +245,8 @@ class TestResolveMcpServers:
         assert config.tools is not None
         tool = config.tools[0]
         assert tool.url == "https://mcp.example.com/drive/"
-        assert tool.auth == "oauth"
-        assert tool.headers == {"X-Custom": "mine"}
+        assert tool.auth == "jwt_token"
+        assert tool.headers == {"X-Client-Id": "test"}
 
     def test_resolves_agents_field(self) -> None:
         config = ChatModelConfig(
@@ -294,7 +295,8 @@ class TestResolveMcpServers:
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_abc123"]
 
-    def test_explicit_auth_not_overridden_by_oauth(self) -> None:
+    def test_oauth_overrides_inline_auth_and_providers(self) -> None:
+        """When .mcp.json has oauth, it overrides any inline auth/auth_providers."""
         config = ChatModelConfig(
             id="model-1",
             name="Model 1",
@@ -323,8 +325,8 @@ class TestResolveMcpServers:
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.oauth is not None
-        assert tool.auth == "oauth"
-        assert tool.auth_providers == ["custom-provider"]
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["mcp_oauth_abc123"]
 
     def test_oauth_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
         _write_json(

@@ -80,11 +80,12 @@ def resolve_mcp_servers(
     """Resolve ``mcp_server`` references on every ``AgentConfig``.
 
     For each agent/tool that has ``mcp_server`` set, look up the key in
-    *mcp_config* and populate ``url`` from the server entry.  The
-    ``mcp_server`` value is left intact for traceability.
+    *mcp_config* and populate ``url``, ``headers``, ``auth``, and related
+    fields from the server entry.  The ``mcp_server`` value is left intact
+    for traceability.
 
-    If a referenced server key is not found, a warning is logged and the
-    agent's existing ``url`` (if any) is left unchanged as a fallback.
+    All connection details for tools with ``mcp_server`` come exclusively
+    from ``.mcp.json``; inline values on the tool config are not supported.
     """
     servers = mcp_config.mcpServers
 
@@ -97,37 +98,33 @@ def resolve_mcp_servers(
             if entry is None:
                 logger.warning(
                     "MCP server '%s' referenced by tool '%s' in model '%s' "
-                    "not found in .mcp.json (available: %s). "
-                    "Falling back to inline url '%s'.",
+                    "not found in .mcp.json (available: %s).",
                     agent.mcp_server,
                     agent.name,
                     model.name,
                     list(servers.keys()),
-                    agent.url,
                 )
                 continue
             if entry.url:
                 agent.url = entry.url
-            if entry.headers and not agent.headers:
+            if entry.headers:
                 agent.headers = entry.headers
-            if entry.auth and not agent.auth:
+            if entry.auth:
                 agent.auth = entry.auth
-            if entry.auth_optional is not None and agent.auth_optional is None:
+            if entry.auth_optional is not None:
                 agent.auth_optional = entry.auth_optional
-            if entry.auth_providers and not agent.auth_providers:
+            if entry.auth_providers:
                 agent.auth_providers = entry.auth_providers
-            if entry.issuers and not agent.issuers:
+            if entry.issuers:
                 agent.issuers = entry.issuers
-            if entry.oauth and not agent.oauth:
+            if entry.oauth:
                 agent.oauth = entry.oauth
                 # Compute normalized auth_provider key for token scoping
                 provider_key = _compute_oauth_provider_key(
                     agent.mcp_server, entry.oauth
                 )
-                if not agent.auth:
-                    agent.auth = "jwt_token"
-                if not agent.auth_providers:
-                    agent.auth_providers = [provider_key]
+                agent.auth = "jwt_token"
+                agent.auth_providers = [provider_key]
             # Auto-set auth to "headers" when headers contain Authorization
             if (
                 not agent.auth
