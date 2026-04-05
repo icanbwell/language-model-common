@@ -625,9 +625,8 @@ class LangGraphStreamingManager:
         # append all the messages into content_text
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
-            content_text += (
-                f"--- Message {message_number + 1} by {input_message.type} ---\n"
-            )
+            name_suffix = f" ({input_message.name})" if input_message.name else ""
+            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
             content_text += f"{input_message.content}\n"
         if streamed_output:
             content_text += "--- Streamed assistant output ---\n"

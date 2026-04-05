@@ -9,6 +9,7 @@ from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
 from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import BaseTool
@@ -22,6 +23,8 @@ from languagemodelcommon.history.conversation_history_manager import (
     ConversationHistoryManager,
 )
 from languagemodelcommon.history.smart_history_manager import SmartHistoryManager
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.state.messages_state import MyMessagesState
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,7 @@ class GraphBuilder:
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
         skill_loader: SkillLoaderProtocol | None = None,
+        tool_catalog: ToolCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
     ) -> CompiledStateGraph[MyMessagesState]:
@@ -115,6 +119,12 @@ class GraphBuilder:
         )
 
         # Create react agent
+        middleware: list[AgentMiddleware] = [
+            SkillMiddleware(skill_loader=resolved_skill_loader),
+        ]
+        if tool_catalog is not None:
+            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+
         react_agent_runnable = create_agent(
             model=llm,
             tools=tools,
@@ -122,7 +132,7 @@ class GraphBuilder:
             store=store,
             checkpointer=None,  # Workflow handles checkpointing
             system_prompt=system_prompt,
-            middleware=[SkillMiddleware(skill_loader=resolved_skill_loader)],
+            middleware=middleware,
         )
 
         # Build workflow
