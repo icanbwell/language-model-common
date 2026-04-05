@@ -341,6 +341,7 @@ class TokenExchangeManager:
                         )
                         raise AuthorizationTokenCacheItemNotFoundException(
                             message="```\nToken provided in Authorization header has wrong auth provider:"
+                            + f"\nMCP server: {tool_config.name}"
                             + f"\nFound auth provider: {token_auth_provider} for client_id: {client_id}"
                             + f"\nTool expects auth provider: {','.join(tool_auth_providers)}"
                             + "\nCould not find a cached token for the tool for:\nauth_providers:"

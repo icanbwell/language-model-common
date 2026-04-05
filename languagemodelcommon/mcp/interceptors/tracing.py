@@ -3,7 +3,7 @@ import logging
 from logging import DEBUG
 from typing import Callable, Awaitable, Any
 
-from langchain_mcp_adapters.interceptors import (
+from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,
     MCPToolCallResult,
     ToolCallInterceptor,
@@ -119,9 +119,6 @@ class TracingMcpCallInterceptor:
                             if result.structuredContent is not None:
                                 span.set_attribute("mcp.result.structured", True)
                     except Exception:
-                        logger.info(
-                            f"MCP tool call failed for tool: {request.name}: {type(result)} {result}"
-                        )
                         pass
                     logger.debug(
                         f"Completed MCP tool call span: {span_name} for tool: {request.name}"

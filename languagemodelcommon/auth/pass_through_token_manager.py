@@ -282,6 +282,13 @@ class PassThroughTokenManager:
                 if oauth.client_id
                 else f"oauth_{hash(oauth.auth_server_metadata_url)}"
             )
+            # Ensure the display_name is set so login prompts show a
+            # human-readable name instead of the generated provider key.
+            if not oauth.display_name:
+                oauth.display_name = (
+                    getattr(authentication_config, "display_name", None)
+                    or authentication_config.name
+                )
             logger.info(
                 "Resolving oauth_provider '%s' for tool '%s' (metadata_url=%s)",
                 provider_key,
@@ -428,9 +435,13 @@ class PassThroughTokenManager:
                 ),
             )
 
+        login_display_name: str = (
+            getattr(authentication_config, "display_name", None)
+            or authentication_config.name
+        )
         error_message: str = (
             f"\nFollowing tools require authentication: {authentication_config.name}."
-            + f"\nClick here to [Login to {auth_config.friendly_name}]({authorization_url})."
+            + f"\nClick here to [Login to {login_display_name}]({authorization_url})."
         )
         if app_login_url_with_parameters:
             error_message += f"\nClick here to [Login to b.well App]({app_login_url_with_parameters})."

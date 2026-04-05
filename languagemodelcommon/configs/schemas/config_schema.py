@@ -267,6 +267,11 @@ class ToolDefinitionConfig(BaseModel):
 class AgentConfig(AuthenticationConfig):
     """Tool configuration"""
 
+    description: str | None = Field(
+        None,
+        description="Human-readable description of the category of tools available from this MCP server. Used in the system prompt to guide the LLM's tool discovery.",
+    )
+
     display_name: str | None = Field(
         None, description="Human-readable display name for the tool in the UI."
     )
@@ -400,6 +405,11 @@ class ChatModelConfig(BaseModel):
     streaming_enabled: bool | None = Field(
         None,
         description="Whether the upstream model supports streaming responses. Defaults to true.",
+    )
+
+    use_tool_discovery: bool | None = Field(
+        None,
+        description="When true, uses meta-tool discovery (search_tools + call_tool) instead of loading all MCP tools directly into the LLM context.",
     )
 
     def get_agents(self) -> List[AgentConfig]:

@@ -35,8 +35,7 @@ langgraph = ">=1.0.0"
 pydantic = ">=2.0,<3.0.0"  # needed by langchain
 # for testing the MCP client
 mcp = ">=1.11.0"
-# langchain_mcp_adapters is a Python library for working with MCP adapters in LangChain
-langchain_mcp_adapters = ">=0.2.1"
+# langchain_mcp_adapters replaced by custom MCP client in languagemodelcommon.mcp.mcp_client
 # langmem is a Python library for managing language model memory
 langmem = ">=0.0.30"
 # langgraph-checkpoint is a Python library for working with checkpoints in LangGraph

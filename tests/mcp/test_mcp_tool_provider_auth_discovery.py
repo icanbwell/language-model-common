@@ -56,12 +56,7 @@ def _make_401_exception_group() -> BaseExceptionGroup:
 
 
 @pytest.mark.asyncio
-@patch(
-    "languagemodelcommon.mcp.mcp_tool_provider.MultiServerMCPClient",
-)
-async def test_401_no_oauth_triggers_discovery(
-    mock_client_cls: MagicMock,
-) -> None:
+async def test_401_no_oauth_triggers_discovery() -> None:
     """401 with no OAuth config triggers discovery and re-raises."""
     discovered_config = _make_oauth_config(
         authorization_url="https://auth.example.com/authorize",
@@ -75,16 +70,21 @@ async def test_401_no_oauth_triggers_discovery(
         url="https://mcp.example.com/v1/mcp",
     )
 
-    mock_client_cls.return_value.get_tools = AsyncMock(
-        side_effect=_make_401_exception_group()
-    )
+    with patch(
+        "languagemodelcommon.mcp.mcp_tool_provider.create_mcp_session",
+    ) as mock_session_ctx:
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(side_effect=_make_401_exception_group())
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    with pytest.raises(BaseException):
-        await provider.get_tools_by_url_async(
-            tool_config=tool_config,
-            headers={},
-            auth_interceptor=auth_interceptor,
-        )
+        with pytest.raises(BaseException):
+            await provider.get_tools_by_url_async(
+                tool_config=tool_config,
+                headers={},
+                auth_interceptor=auth_interceptor,
+            )
 
     # Verify discovery was called
     discover_mock: AsyncMock = provider.auth_server_metadata_discovery.discover  # type: ignore[assignment]
@@ -106,12 +106,7 @@ async def test_401_no_oauth_triggers_discovery(
 
 
 @pytest.mark.asyncio
-@patch(
-    "languagemodelcommon.mcp.mcp_tool_provider.MultiServerMCPClient",
-)
-async def test_401_with_existing_oauth_skips_discovery(
-    mock_client_cls: MagicMock,
-) -> None:
+async def test_401_with_existing_oauth_skips_discovery() -> None:
     """401 when OAuth config is already set does not trigger discovery."""
     provider = _make_provider(
         discovery_result=_make_oauth_config(
@@ -130,15 +125,20 @@ async def test_401_with_existing_oauth_skips_discovery(
         ),
     )
 
-    mock_client_cls.return_value.get_tools = AsyncMock(
-        side_effect=_make_401_exception_group()
-    )
+    with patch(
+        "languagemodelcommon.mcp.mcp_tool_provider.create_mcp_session",
+    ) as mock_session_ctx:
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(side_effect=_make_401_exception_group())
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    result = await provider.get_tools_by_url_async(
-        tool_config=tool_config,
-        headers={},
-        auth_interceptor=auth_interceptor,
-    )
+        result = await provider.get_tools_by_url_async(
+            tool_config=tool_config,
+            headers={},
+            auth_interceptor=auth_interceptor,
+        )
 
     assert result == []
     discover_mock: AsyncMock = provider.auth_server_metadata_discovery.discover  # type: ignore[assignment]
@@ -146,12 +146,7 @@ async def test_401_with_existing_oauth_skips_discovery(
 
 
 @pytest.mark.asyncio
-@patch(
-    "languagemodelcommon.mcp.mcp_tool_provider.MultiServerMCPClient",
-)
-async def test_401_discovery_returns_none_falls_through(
-    mock_client_cls: MagicMock,
-) -> None:
+async def test_401_discovery_returns_none_falls_through() -> None:
     """401 discovery returns None — falls through to return []."""
     provider = _make_provider(discovery_result=None)
     auth_interceptor = MagicMock(spec=AuthMcpCallInterceptor)
@@ -161,15 +156,20 @@ async def test_401_discovery_returns_none_falls_through(
         url="https://mcp.example.com/v1/mcp",
     )
 
-    mock_client_cls.return_value.get_tools = AsyncMock(
-        side_effect=_make_401_exception_group()
-    )
+    with patch(
+        "languagemodelcommon.mcp.mcp_tool_provider.create_mcp_session",
+    ) as mock_session_ctx:
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.list_tools = AsyncMock(side_effect=_make_401_exception_group())
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-    result = await provider.get_tools_by_url_async(
-        tool_config=tool_config,
-        headers={},
-        auth_interceptor=auth_interceptor,
-    )
+        result = await provider.get_tools_by_url_async(
+            tool_config=tool_config,
+            headers={},
+            auth_interceptor=auth_interceptor,
+        )
 
     assert result == []
     discover_mock: AsyncMock = provider.auth_server_metadata_discovery.discover  # type: ignore[assignment]

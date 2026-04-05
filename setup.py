@@ -69,7 +69,6 @@ setup(
         "langgraph>=1.0.0",
         "pydantic>=2.0,<3.0.0",
         "mcp>=1.11.0",
-        "langchain-mcp-adapters>=0.2.1",
         "langmem>=0.0.30",
         "langgraph-checkpoint>=3.0.0",
         "langgraph-checkpoint-mongodb>=0.2.1",

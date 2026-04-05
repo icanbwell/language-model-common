@@ -2,7 +2,7 @@ import logging
 from logging import DEBUG
 from typing import List, Callable, Awaitable, Any
 
-from langchain_mcp_adapters.interceptors import (
+from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,
     MCPToolCallResult,
     ToolCallInterceptor,
@@ -103,14 +103,14 @@ class TruncationMcpCallInterceptor:
                 tokens_limit_left: int = max_token_limit
 
                 content_block_list: List[ContentBlock] = []
-                content_block1: ContentBlock
-                for content_block1 in result.content:
+                content_block_item: ContentBlock
+                for content_block_item in result.content:
                     # If there's a positive limit and we've exhausted it, stop processing further blocks
                     if max_token_limit > 0 >= tokens_limit_left:
                         break
 
-                    if isinstance(content_block1, TextContent):
-                        text: str = content_block1.text
+                    if isinstance(content_block_item, TextContent):
+                        text: str = content_block_item.text
                         token_count: int = self.token_reducer.count_tokens(text=text)
 
                         if max_token_limit > 0 and token_count > tokens_limit_left:
@@ -129,8 +129,8 @@ class TruncationMcpCallInterceptor:
 
                             # Only append if truncation produced some tokens
                             if truncated_count > 0:
-                                content_block1.text = truncated_text
-                                content_block_list.append(content_block1)
+                                content_block_item.text = truncated_text
+                                content_block_list.append(content_block_item)
                                 tokens_limit_left -= truncated_count
                             # If budget exhausted (or zero-length), stop
                             if max_token_limit > 0 >= tokens_limit_left:
@@ -138,7 +138,7 @@ class TruncationMcpCallInterceptor:
                                 break
                         else:
                             # No truncation needed (or no limit in effect)
-                            content_block_list.append(content_block1)
+                            content_block_list.append(content_block_item)
                             if max_token_limit > 0:
                                 tokens_limit_left -= token_count
                                 if tokens_limit_left <= 0:
@@ -147,7 +147,7 @@ class TruncationMcpCallInterceptor:
                                     break
                     else:
                         # Preserve non-text content blocks unchanged
-                        content_block_list.append(content_block1)
+                        content_block_list.append(content_block_item)
 
                 if logger.isEnabledFor(DEBUG):
                     logger.debug(

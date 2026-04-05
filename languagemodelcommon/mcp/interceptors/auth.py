@@ -2,7 +2,7 @@ import logging
 from typing import Callable, Awaitable, Dict, Any
 
 from httpx import HTTPStatusError
-from langchain_mcp_adapters.interceptors import (
+from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,
     MCPToolCallResult,
     ToolCallInterceptor,
