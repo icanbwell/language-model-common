@@ -16,6 +16,9 @@ from languagemodelcommon.configs.schemas.config_schema import (
     AuthenticationConfig,
     McpOAuthConfig,
 )
+from languagemodelcommon.auth.exceptions.authorization_mcp_tool_token_invalid_exception import (
+    AuthorizationMcpToolTokenInvalidException,
+)
 from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
 from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -440,7 +443,10 @@ class PassThroughTokenManager:
             or authentication_config.name
         )
         error_message: str = (
-            f"\nFollowing tools require authentication: {authentication_config.name}."
+            "\n"
+            + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                authentication_config.name
+            )
             + f"\nClick here to [Login to {login_display_name}]({authorization_url})."
         )
         if app_login_url_with_parameters:

@@ -21,3 +21,11 @@ class AuthorizationMcpToolTokenInvalidException(AuthorizationNeededException):
         self.message = message
         self.token: Token | None = token
         self.tool_url: str = tool_url
+
+    @staticmethod
+    def build_login_required_message(tool_name: str) -> str:
+        """Build the user-facing prefix shown before login links."""
+        return (
+            f"I found a tool **{tool_name}** that can help with your task. "
+            "This tool requires you to log in below."
+        )

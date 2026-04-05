@@ -478,8 +478,9 @@ class MCPToolProvider:
                 )
                 if discovered:
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=f"I found a tool **{tool_name}** that can help with your task. "
-                        + "This tool requires you to log in below.",
+                        message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                            tool_name
+                        ),
                         tool_url=tool_url,
                         token=None,
                     ) from e
@@ -491,8 +492,9 @@ class MCPToolProvider:
                 first_exception,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"I found a tool **{tool_name}** that can help with your task. "
-                + "This tool requires you to log in below.",
+                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -507,8 +509,9 @@ class MCPToolProvider:
                 unauth_exception,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"I found a tool **{tool_name}** that can help with your task. "
-                + "This tool requires you to log in below.",
+                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -738,15 +741,17 @@ class MCPToolProvider:
                 )
                 if discovered:
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=f"I found a tool **{tool_name}** that can help with your task. "
-                        + "This tool requires you to log in below.",
+                        message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                            tool_name
+                        ),
                         tool_url=tool_url,
                         token=None,
                     ) from e
 
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"I found a tool **{tool_name}** that can help with your task. "
-                + "This tool requires you to log in below.",
+                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
