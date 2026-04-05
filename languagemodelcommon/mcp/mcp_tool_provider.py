@@ -691,33 +691,62 @@ class MCPToolProvider:
             context=CallbackContext(server_name=tool_config.name)
         )
 
-        if tool_config.public_url:
-            # Use public URL for unauthenticated discovery
-            discovery_config: MCPConnectionConfig = {
-                "url": tool_config.public_url,
-                "transport": "streamable_http",
-                "httpx_client_factory": self.get_httpx_async_client,
-                "timeout": config.get("timeout", timedelta(seconds=30)),
-                "sse_read_timeout": config.get(
-                    "sse_read_timeout", timedelta(seconds=300)
-                ),
-            }
-            if tool_config.headers:
-                discovery_config["headers"] = {
-                    key: os.path.expandvars(value)
-                    for key, value in tool_config.headers.items()
+        tool_url = tool_config.url or "unknown"
+
+        try:
+            if tool_config.public_url:
+                # Use public URL for unauthenticated discovery
+                discovery_config: MCPConnectionConfig = {
+                    "url": tool_config.public_url,
+                    "transport": "streamable_http",
+                    "httpx_client_factory": self.get_httpx_async_client,
+                    "timeout": config.get("timeout", timedelta(seconds=30)),
+                    "sse_read_timeout": config.get(
+                        "sse_read_timeout", timedelta(seconds=300)
+                    ),
                 }
-            async with create_mcp_session(
-                discovery_config, mcp_callbacks=mcp_callbacks
-            ) as session:
-                await session.initialize()
-                mcp_tools = await list_all_tools(session)
-        else:
-            async with create_mcp_session(
-                config, mcp_callbacks=mcp_callbacks
-            ) as session:
-                await session.initialize()
-                mcp_tools = await list_all_tools(session)
+                if tool_config.headers:
+                    discovery_config["headers"] = {
+                        key: os.path.expandvars(value)
+                        for key, value in tool_config.headers.items()
+                    }
+                async with create_mcp_session(
+                    discovery_config, mcp_callbacks=mcp_callbacks
+                ) as session:
+                    await session.initialize()
+                    mcp_tools = await list_all_tools(session)
+            else:
+                async with create_mcp_session(
+                    config, mcp_callbacks=mcp_callbacks
+                ) as session:
+                    await session.initialize()
+                    mcp_tools = await list_all_tools(session)
+        except BaseException as e:
+            if not self._contains_http_401(e):
+                raise
+
+            if (
+                tool_config.oauth is None
+                and not tool_config.oauth_providers
+                and tool_url != "unknown"
+            ):
+                discovered = await self._attempt_auth_server_discovery(
+                    tool_config=tool_config,
+                )
+                if discovered:
+                    raise AuthorizationMcpToolTokenInvalidException(
+                        message=f"Authorization needed for MCP tools at {tool_url}. "
+                        + "Auth server discovered automatically — please log in.",
+                        tool_url=tool_url,
+                        token=None,
+                    ) from e
+
+            raise AuthorizationMcpToolTokenInvalidException(
+                message=f"Authorization needed for MCP tools at {tool_url}. "
+                + "Please provide a valid token in the Authorization header.",
+                tool_url=tool_url,
+                token=None,
+            ) from e
 
         # Filter by tool names if specified
         if tool_config.tools:

@@ -16,6 +16,9 @@ import logging
 from typing import Literal, Type
 
 from langchain_core.tools import BaseTool
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
@@ -72,6 +75,9 @@ class SearchToolsTool(BaseTool):
             for server in unresolved:
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
+                except AuthorizationNeededException:
+                    # Re-raise auth exceptions so the user sees login links
+                    raise
                 except Exception as e:
                     logger.warning(
                         "Failed to resolve server %s during search: %s: %s",
