@@ -1,10 +1,11 @@
 """Tests for mcp_client — session management, interceptor chain, content conversion."""
 
-from typing import Any
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages.content import TextContentBlock, ImageContentBlock
 from langchain_core.tools import ToolException
 from mcp.types import (
     CallToolResult,
@@ -13,6 +14,7 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
 )
+from pydantic import AnyUrl
 
 from languagemodelcommon.mcp.mcp_client import (
     build_interceptor_chain,
@@ -49,14 +51,14 @@ class TestBuildInterceptorChain:
 
         async def interceptor(
             req: MCPToolCallRequest,
-            handler: Any,
+            handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
         ) -> MCPToolCallResult:
             call_order.append("interceptor_before")
             result = await handler(req)
             call_order.append("interceptor_after")
             return result
 
-        handler = build_interceptor_chain(base, [interceptor])
+        handler = build_interceptor_chain(base, [interceptor])  # type: ignore[list-item]
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         await handler(request)
         assert call_order == ["interceptor_before", "base", "interceptor_after"]
@@ -71,7 +73,8 @@ class TestBuildInterceptorChain:
             return CallToolResult(content=[TextContent(type="text", text="ok")])
 
         async def interceptor_a(
-            req: MCPToolCallRequest, handler: Any
+            req: MCPToolCallRequest,
+            handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
         ) -> MCPToolCallResult:
             call_order.append("a_before")
             result = await handler(req)
@@ -79,14 +82,15 @@ class TestBuildInterceptorChain:
             return result
 
         async def interceptor_b(
-            req: MCPToolCallRequest, handler: Any
+            req: MCPToolCallRequest,
+            handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
         ) -> MCPToolCallResult:
             call_order.append("b_before")
             result = await handler(req)
             call_order.append("b_after")
             return result
 
-        handler = build_interceptor_chain(base, [interceptor_a, interceptor_b])
+        handler = build_interceptor_chain(base, [interceptor_a, interceptor_b])  # type: ignore[list-item]
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         await handler(request)
         assert call_order == [
@@ -107,12 +111,13 @@ class TestBuildInterceptorChain:
             )
 
         async def add_arg_interceptor(
-            req: MCPToolCallRequest, handler: Any
+            req: MCPToolCallRequest,
+            handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
         ) -> MCPToolCallResult:
             modified = req.override(args={**req.args, "key": "injected"})
             return await handler(modified)
 
-        handler = build_interceptor_chain(base, [add_arg_interceptor])
+        handler = build_interceptor_chain(base, [add_arg_interceptor])  # type: ignore[list-item]
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         result = await handler(request)
         assert result.content[0].text == "injected"  # type: ignore[union-attr]
@@ -122,23 +127,25 @@ class TestConvertMcpContentToLcBlock:
     def test_text_content(self) -> None:
         content = TextContent(type="text", text="hello world")
         result = convert_mcp_content_to_lc_block(content)
-        assert isinstance(result, TextContentBlock)
+        assert result["type"] == "text"
+        assert result["text"] == "hello world"
 
     def test_image_content(self) -> None:
         content = ImageContent(type="image", data="base64data", mimeType="image/png")
         result = convert_mcp_content_to_lc_block(content)
-        assert isinstance(result, ImageContentBlock)
+        assert result["type"] == "image"
 
     def test_embedded_text_resource(self) -> None:
         content = EmbeddedResource(
             type="resource",
             resource=TextResourceContents(
-                uri="file://test.txt",
+                uri=AnyUrl("file://test.txt"),
                 text="some text",
             ),
         )
         result = convert_mcp_content_to_lc_block(content)
-        assert isinstance(result, TextContentBlock)
+        assert result["type"] == "text"
+        assert result["text"] == "some text"
 
 
 class TestConvertCallToolResult:

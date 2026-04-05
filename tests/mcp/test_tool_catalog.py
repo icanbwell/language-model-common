@@ -148,7 +148,8 @@ class TestToolCatalog:
             ],
             agent_config=_agent_config(),
         )
-        results = catalog.search("patient")
+        # Use "patients" (matching the exact token in the tool name/description)
+        results = catalog.search("patients")
         assert len(results) > 0
         assert results[0]["name"] == "search_patients"
 

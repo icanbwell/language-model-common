@@ -12,7 +12,7 @@ import logging
 from typing import Literal, Type
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -47,8 +47,7 @@ class SearchToolsTool(BaseTool):
     catalog: ToolCatalog
     max_results: int = 10
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _run(self, query: str, category: str | None = None) -> str:
         results = self.catalog.search(

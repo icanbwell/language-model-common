@@ -17,7 +17,7 @@ from mcp.types import (
     EmbeddedResource,
     TextResourceContents,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
@@ -76,8 +76,7 @@ class CallToolTool(BaseTool):
     mcp_tool_provider: MCPToolProvider
     auth_interceptor: AuthMcpCallInterceptor
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _run(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         raise NotImplementedError("Use async version")

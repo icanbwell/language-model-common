@@ -1,5 +1,6 @@
 """Tests for CallToolTool — meta-tool for calling specific MCP tools by name."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,8 +11,10 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
 )
+from pydantic import AnyUrl
 
 from languagemodelcommon.mcp.call_tool_tool import (
+    CallToolInput,
     CallToolTool,
     _call_tool_result_to_text,
 )
@@ -22,6 +25,23 @@ from mcp.types import Tool as MCPTool
 
 def _agent_config() -> AgentConfig:
     return AgentConfig(name="server1", url="https://example.com/mcp")
+
+
+def _make_call_tool_tool(
+    catalog: ToolCatalog,
+    mcp_tool_provider: Any = None,
+    auth_interceptor: Any = None,
+) -> CallToolTool:
+    """Create a CallToolTool bypassing Pydantic validation for mock dependencies."""
+    return CallToolTool.model_construct(
+        name="call_tool",
+        description="Call a specific tool by name with the given arguments.",
+        args_schema=CallToolInput,
+        response_format="content",
+        catalog=catalog,
+        mcp_tool_provider=mcp_tool_provider or MagicMock(),
+        auth_interceptor=auth_interceptor or MagicMock(),
+    )
 
 
 class TestCallToolResultToText:
@@ -50,7 +70,7 @@ class TestCallToolResultToText:
                 EmbeddedResource(
                     type="resource",
                     resource=TextResourceContents(
-                        uri="file://test.txt",
+                        uri=AnyUrl("file://test.txt"),
                         text="resource text",
                     ),
                 )
@@ -72,11 +92,7 @@ class TestCallToolTool:
     @pytest.mark.asyncio
     async def test_tool_not_found(self) -> None:
         catalog = ToolCatalog()
-        tool = CallToolTool(
-            catalog=catalog,
-            mcp_tool_provider=MagicMock(),
-            auth_interceptor=MagicMock(),
-        )
+        tool = _make_call_tool_tool(catalog=catalog)
         result = await tool._arun(name="nonexistent", arguments={})
         assert "not found" in result
 
@@ -98,11 +114,7 @@ class TestCallToolTool:
             )
         )
 
-        tool = CallToolTool(
-            catalog=catalog,
-            mcp_tool_provider=mock_provider,
-            auth_interceptor=MagicMock(),
-        )
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         result = await tool._arun(name="my_tool", arguments={"key": "value"})
         assert result == "tool output"
         mock_provider.execute_mcp_tool.assert_awaited_once()
@@ -123,22 +135,14 @@ class TestCallToolTool:
             side_effect=RuntimeError("connection lost")
         )
 
-        tool = CallToolTool(
-            catalog=catalog,
-            mcp_tool_provider=mock_provider,
-            auth_interceptor=MagicMock(),
-        )
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         result = await tool._arun(name="failing_tool")
         assert "RuntimeError" in result
         assert "connection lost" in result
 
     def test_sync_run_raises(self) -> None:
         catalog = ToolCatalog()
-        tool = CallToolTool(
-            catalog=catalog,
-            mcp_tool_provider=MagicMock(),
-            auth_interceptor=MagicMock(),
-        )
+        tool = _make_call_tool_tool(catalog=catalog)
         with pytest.raises(NotImplementedError):
             tool._run(name="test")
 
@@ -159,11 +163,7 @@ class TestCallToolTool:
             return_value=CallToolResult(content=[TextContent(type="text", text="ok")])
         )
 
-        tool = CallToolTool(
-            catalog=catalog,
-            mcp_tool_provider=mock_provider,
-            auth_interceptor=MagicMock(),
-        )
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         await tool._arun(name="my_tool", arguments=None)
         call_kwargs = mock_provider.execute_mcp_tool.call_args.kwargs
         assert call_kwargs["arguments"] == {}
