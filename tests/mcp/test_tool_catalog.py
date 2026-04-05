@@ -1,7 +1,9 @@
 """Tests for ToolCatalog — BM25 Okapi search over MCP tool metadata."""
 
 from typing import Any
+from unittest.mock import AsyncMock
 
+import pytest
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
@@ -246,3 +248,130 @@ class TestToolCatalog:
             agent_config=_agent_config(),
         )
         assert catalog._index is None
+
+
+class TestServerRegistration:
+    def test_register_server(self) -> None:
+        catalog = ToolCatalog()
+        config = _agent_config("fhir")
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=config,
+        )
+        unresolved = catalog.get_unresolved_servers()
+        assert len(unresolved) == 1
+        assert unresolved[0].server_name == "fhir"
+        assert unresolved[0].category == "Healthcare"
+        assert unresolved[0].resolved is False
+
+    def test_get_unresolved_servers_by_category(self) -> None:
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare tools",
+            agent_config=_agent_config("fhir"),
+        )
+        catalog.register_server(
+            server_name="billing",
+            category="Financial tools",
+            agent_config=_agent_config("billing"),
+        )
+        healthcare = catalog.get_unresolved_servers("Healthcare")
+        assert len(healthcare) == 1
+        assert healthcare[0].server_name == "fhir"
+
+    def test_get_unresolved_servers_by_server_name(self) -> None:
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category=None,
+            agent_config=_agent_config("fhir"),
+        )
+        matched = catalog.get_unresolved_servers("fhir")
+        assert len(matched) == 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_server(self) -> None:
+        catalog = ToolCatalog()
+        config = _agent_config("fhir")
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=config,
+        )
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(
+            return_value=[
+                _mcp_tool("search_patients", "Search for patients"),
+            ]
+        )
+
+        await catalog.resolve_server("fhir", resolver)
+
+        assert catalog.get_unresolved_servers() == []
+        assert catalog.tool_count == 1
+        entry = catalog.get_tool("search_patients")
+        assert entry is not None
+        assert entry.server_name == "fhir"
+        resolver.resolve_tools.assert_awaited_once_with(agent_config=config)
+
+    @pytest.mark.asyncio
+    async def test_resolve_server_idempotent(self) -> None:
+        """Resolving the same server twice only calls the resolver once."""
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=_agent_config("fhir"),
+        )
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(return_value=[])
+
+        await catalog.resolve_server("fhir", resolver)
+        await catalog.resolve_server("fhir", resolver)
+
+        assert resolver.resolve_tools.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_resolve_unknown_server_is_noop(self) -> None:
+        catalog = ToolCatalog()
+        resolver = AsyncMock()
+        await catalog.resolve_server("nonexistent", resolver)
+        resolver.resolve_tools.assert_not_awaited()
+
+    def test_get_categories_includes_unresolved(self) -> None:
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=_agent_config("fhir"),
+        )
+        categories = catalog.get_categories()
+        assert len(categories) == 1
+        assert categories[0]["name"] == "fhir"
+        assert categories[0]["description"] == "Healthcare"
+        assert categories[0]["resolved"] is False
+        assert categories[0]["tool_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_categories_after_resolution(self) -> None:
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=_agent_config("fhir"),
+        )
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(
+            return_value=[_mcp_tool("t1"), _mcp_tool("t2")]
+        )
+        await catalog.resolve_server("fhir", resolver)
+
+        categories = catalog.get_categories()
+        assert len(categories) == 1
+        assert categories[0]["resolved"] is True
+        assert categories[0]["tool_count"] == 2

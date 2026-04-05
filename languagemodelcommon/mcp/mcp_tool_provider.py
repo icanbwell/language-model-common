@@ -3,10 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Dict, List
-
-if TYPE_CHECKING:
-    from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from typing import Any, Dict, List
 
 import httpx
 from httpx import HTTPStatusError
@@ -16,21 +13,24 @@ from mcp.types import (
     LoggingMessageNotificationParams,
     Tool as MCPTool,
 )
-from languagemodelcommon.configs.schemas.config_schema import AgentConfig
-from languagemodelcommon.utilities.logger.logging_transport import LoggingTransport
-from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
-from languagemodelcommon.auth.exceptions.authorization_mcp_tool_token_invalid_exception import (
-    AuthorizationMcpToolTokenInvalidException,
-)
 from oidcauthlib.auth.exceptions.authorization_needed_exception import (
     AuthorizationNeededException,
 )
-from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
-from languagemodelcommon.mcp.exceptions.mcp_tool_unauthorized_exception import (
-    McpToolUnauthorizedException,
+
+from languagemodelcommon.auth.exceptions.authorization_mcp_tool_token_invalid_exception import (
+    AuthorizationMcpToolTokenInvalidException,
 )
+from languagemodelcommon.auth.pass_through_token_manager import (
+    PassThroughTokenManager,
+)
+from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
+from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.mcp.auth_server_metadata_discovery import (
     McpAuthServerDiscoveryProtocol,
+)
+from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext
+from languagemodelcommon.mcp.exceptions.mcp_tool_unauthorized_exception import (
+    McpToolUnauthorizedException,
 )
 from languagemodelcommon.mcp.interceptors.auth import (
     AuthMcpCallInterceptor,
@@ -41,10 +41,6 @@ from languagemodelcommon.mcp.interceptors.tracing import (
 from languagemodelcommon.mcp.interceptors.truncation import (
     TruncationMcpCallInterceptor,
 )
-from languagemodelcommon.auth.pass_through_token_manager import (
-    PassThroughTokenManager,
-)
-from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext
 from languagemodelcommon.mcp.mcp_client import (
     MCPConnectionConfig,
     create_mcp_session,
@@ -52,11 +48,13 @@ from languagemodelcommon.mcp.mcp_client import (
     mcp_tool_to_langchain_tool,
     call_mcp_tool_raw,
 )
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-
+from languagemodelcommon.utilities.logger.logging_transport import LoggingTransport
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
 # OpenTelemetry propagation for trace context
 
@@ -336,6 +334,7 @@ class MCPToolProvider:
         Args:
             tool_config: An AgentConfig instance containing the tool's configuration.
             headers: A dictionary of headers to include in the request, such as Authorization.
+            auth_interceptor: An AuthMcpCallInterceptor instance.
         Returns:
             A list of BaseTool instances retrieved from the MCP.
         """
@@ -629,55 +628,32 @@ class MCPToolProvider:
                     )
         return all_tools
 
-    async def discover_tool_catalog(
+    def discover_tool_catalog(
         self,
         *,
         tools: list[AgentConfig],
-        headers: Dict[str, str],
-        auth_interceptor: AuthMcpCallInterceptor,
     ) -> "ToolCatalog":
-        """Discover MCP tools and build a ToolCatalog for meta-tool discovery.
+        """Build a ToolCatalog with lazily-resolved MCP servers.
 
-        Similar to get_tools_async but returns raw tool metadata in a
-        searchable catalog instead of LangChain BaseTool wrappers.
+        Registers each server's metadata (name, description) in the catalog
+        without contacting the MCP servers. Actual tool discovery is deferred
+        until the LLM calls ``search_tools`` with a matching category.
         """
-        from languagemodelcommon.mcp.tool_catalog import ToolCatalog
-
         catalog = ToolCatalog()
         for tool_config in tools:
             if tool_config.url is None:
                 continue
             logger.info(
-                "discover_tool_catalog Discovering tools from url: %s for tool: %s",
-                tool_config.url,
+                "discover_tool_catalog Registering server: %s (url: %s, category: %s)",
                 tool_config.name,
+                tool_config.url,
+                tool_config.description,
             )
-            try:
-                mcp_tools = await self._list_mcp_tools_for_config(
-                    tool_config=tool_config,
-                    headers=headers,
-                    auth_interceptor=auth_interceptor,
-                )
-                catalog.add_tools(
-                    server_name=tool_config.name,
-                    category=tool_config.description,
-                    tools=mcp_tools,
-                    agent_config=tool_config,
-                )
-            except* AuthorizationMcpToolTokenInvalidException as auth_eg:
-                auth_exception = auth_eg.exceptions[0]
-                logger.warning(
-                    f"discover_tool_catalog No valid auth token for {tool_config.name}, "
-                    f"skipping: {type(auth_exception).__name__}: {auth_exception}"
-                )
-            except* AuthorizationNeededException:
-                raise
-            except* Exception as conn_eg:
-                conn_exception = conn_eg.exceptions[0]
-                logger.warning(
-                    f"discover_tool_catalog Failed to connect to {tool_config.name} "
-                    f"at {tool_config.url}, skipping: {type(conn_exception).__name__}: {conn_exception}"
-                )
+            catalog.register_server(
+                server_name=tool_config.name,
+                category=tool_config.description,
+                agent_config=tool_config,
+            )
         return catalog
 
     async def _list_mcp_tools_for_config(
@@ -750,6 +726,23 @@ class MCPToolProvider:
 
         return mcp_tools
 
+    def create_tool_resolver(
+        self,
+        *,
+        headers: Dict[str, str],
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> ToolResolverProtocol:
+        """Create a resolver that lazily fetches tools from MCP servers.
+
+        The returned object satisfies ``ToolResolverProtocol`` and can be
+        passed to ``SearchToolsTool`` for on-demand tool resolution.
+        """
+        return _BoundToolResolver(
+            provider=self,
+            headers=headers,
+            auth_interceptor=auth_interceptor,
+        )
+
     async def execute_mcp_tool(
         self,
         *,
@@ -775,4 +768,29 @@ class MCPToolProvider:
                 self.tracing_interceptor.get_tool_interceptor_tracing(),
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ],
+        )
+
+
+class _BoundToolResolver:
+    """Adapts MCPToolProvider into a ToolResolverProtocol for a specific request context."""
+
+    def __init__(
+        self,
+        *,
+        provider: MCPToolProvider,
+        headers: Dict[str, str],
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> None:
+        self._provider = provider
+        self._headers = headers
+        self._auth_interceptor = auth_interceptor
+
+    async def resolve_tools(
+        self,
+        agent_config: AgentConfig,
+    ) -> List[MCPTool]:
+        return await self._provider._list_mcp_tools_for_config(
+            tool_config=agent_config,
+            headers=self._headers,
+            auth_interceptor=self._auth_interceptor,
         )

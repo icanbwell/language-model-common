@@ -2,15 +2,20 @@
 
 Provides a searchable index of MCP tools that supports ranked retrieval
 by keyword relevance. Used by the meta-discovery tools (search_tools, call_tool).
+
+Supports lazy resolution: servers can be registered with metadata only,
+and their tools are fetched on-demand when a search matches the server's
+category.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from mcp.types import Tool as MCPTool
 
@@ -19,6 +24,27 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.MCP)
+
+
+@runtime_checkable
+class ToolResolverProtocol(Protocol):
+    """Callback to lazily fetch tools from an MCP server."""
+
+    async def resolve_tools(
+        self,
+        agent_config: AgentConfig,
+    ) -> list[MCPTool]: ...
+
+
+@dataclass
+class ServerRegistration:
+    """An MCP server registered in the catalog, possibly not yet resolved."""
+
+    server_name: str
+    category: str | None
+    agent_config: AgentConfig
+    resolved: bool = False
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -152,12 +178,85 @@ def _format_tool_schema(tool: MCPTool) -> dict[str, Any]:
 
 
 class ToolCatalog:
-    """Searchable catalog of MCP tools with BM25 Okapi ranking."""
+    """Searchable catalog of MCP tools with BM25 Okapi ranking.
+
+    Supports two modes:
+    - **Eager:** Call ``add_tools`` to populate immediately.
+    - **Lazy:** Call ``register_server`` to record metadata only, then
+      ``resolve_server`` (or let ``SearchToolsTool`` do it) to fetch
+      tools on-demand when a search matches the server's category.
+    """
 
     def __init__(self) -> None:
         self._entries: list[ToolCatalogEntry] = []
         self._index: _BM25Index | None = None
         self._entries_by_name: dict[str, ToolCatalogEntry] = {}
+        self._servers: dict[str, ServerRegistration] = {}
+
+    def register_server(
+        self,
+        *,
+        server_name: str,
+        category: str | None,
+        agent_config: AgentConfig,
+    ) -> None:
+        """Register a server for lazy resolution (no MCP call yet)."""
+        self._servers[server_name] = ServerRegistration(
+            server_name=server_name,
+            category=category,
+            agent_config=agent_config,
+        )
+        logger.info(
+            "Registered server %s (category=%s) for lazy resolution",
+            server_name,
+            category,
+        )
+
+    async def resolve_server(
+        self,
+        server_name: str,
+        resolver: ToolResolverProtocol,
+    ) -> None:
+        """Resolve a registered server by fetching its tools via the resolver.
+
+        Safe to call concurrently — uses a per-server lock to prevent
+        duplicate resolution.
+        """
+        registration = self._servers.get(server_name)
+        if registration is None or registration.resolved:
+            return
+
+        async with registration._lock:
+            # Double-check after acquiring lock
+            if registration.resolved:
+                return
+
+            logger.info("Resolving tools for server %s", server_name)
+            tools = await resolver.resolve_tools(
+                agent_config=registration.agent_config,
+            )
+            self.add_tools(
+                server_name=server_name,
+                category=registration.category,
+                tools=tools,
+                agent_config=registration.agent_config,
+            )
+            registration.resolved = True
+            logger.info("Resolved %d tools for server %s", len(tools), server_name)
+
+    def get_unresolved_servers(
+        self, category: str | None = None
+    ) -> list[ServerRegistration]:
+        """Return unresolved server registrations, optionally filtered by category."""
+        unresolved = [s for s in self._servers.values() if not s.resolved]
+        if category is None:
+            return unresolved
+        return [
+            s
+            for s in unresolved
+            if (s.category and category.lower() in s.category.lower())
+            or category.lower() in s.server_name.lower()
+        ]
 
     def add_tools(
         self,
@@ -257,8 +356,24 @@ class ToolCatalog:
         return self._entries_by_name.get(name)
 
     def get_categories(self) -> list[dict[str, Any]]:
-        """Get a summary of tool categories for the system prompt."""
+        """Get a summary of tool categories for the system prompt.
+
+        Includes both resolved servers (with tool counts) and unresolved
+        servers (marked as available but not yet discovered).
+        """
         categories: dict[str, dict[str, Any]] = {}
+
+        # Include unresolved servers so the LLM knows they exist
+        for reg in self._servers.values():
+            if reg.server_name not in categories:
+                categories[reg.server_name] = {
+                    "name": reg.server_name,
+                    "description": reg.category or reg.server_name,
+                    "tool_count": 0,
+                    "resolved": reg.resolved,
+                }
+
+        # Include resolved tool counts
         for entry in self._entries:
             key = entry.server_name
             if key not in categories:
@@ -266,8 +381,11 @@ class ToolCatalog:
                     "name": key,
                     "description": entry.category or entry.server_name,
                     "tool_count": 0,
+                    "resolved": True,
                 }
             categories[key]["tool_count"] += 1
+            categories[key]["resolved"] = True
+
         return list(categories.values())
 
     @property
