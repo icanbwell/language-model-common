@@ -464,6 +464,7 @@ class MCPToolProvider:
             tool_url = tool_config.url or "unknown"
             first_exception = e.exceptions[0]
 
+            tool_name = tool_config.name
             # Attempt auth server discovery on 401 when no OAuth is configured
             if (
                 isinstance(first_exception, HTTPStatusError)
@@ -477,8 +478,8 @@ class MCPToolProvider:
                 )
                 if discovered:
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=f"Authorization needed for MCP tools at {tool_url}. "
-                        + "Auth server discovered automatically — please log in.",
+                        message=f"I found a tool **{tool_name}** that can help with your task. "
+                        + "This tool requires you to log in below.",
                         tool_url=tool_url,
                         token=None,
                     ) from e
@@ -490,13 +491,14 @@ class MCPToolProvider:
                 first_exception,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"Authorization needed for MCP tools at {tool_url}. "
-                + "Please provide a valid token in the Authorization header.",
+                message=f"I found a tool **{tool_name}** that can help with your task. "
+                + "This tool requires you to log in below.",
                 tool_url=tool_url,
                 token=None,
             ) from e
         except* McpToolUnauthorizedException as e:
             tool_url = tool_config.url or "unknown"
+            tool_name = tool_config.name
             unauth_exception = e.exceptions[0]
             logger.error(
                 "get_tools_by_url_async MCP Tool Unauthorized error loading MCP tools from %s: %s %s",
@@ -505,8 +507,8 @@ class MCPToolProvider:
                 unauth_exception,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"Authorization needed for MCP tools at {tool_url}. "
-                + "Please provide a valid token in the Authorization header.",
+                message=f"I found a tool **{tool_name}** that can help with your task. "
+                + "This tool requires you to log in below.",
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -725,6 +727,7 @@ class MCPToolProvider:
             if not self._contains_http_401(e):
                 raise
 
+            tool_name = tool_config.name
             if (
                 tool_config.oauth is None
                 and not tool_config.oauth_providers
@@ -735,15 +738,15 @@ class MCPToolProvider:
                 )
                 if discovered:
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=f"Authorization needed for MCP tools at {tool_url}. "
-                        + "Auth server discovered automatically — please log in.",
+                        message=f"I found a tool **{tool_name}** that can help with your task. "
+                        + "This tool requires you to log in below.",
                         tool_url=tool_url,
                         token=None,
                     ) from e
 
             raise AuthorizationMcpToolTokenInvalidException(
-                message=f"Authorization needed for MCP tools at {tool_url}. "
-                + "Please provide a valid token in the Authorization header.",
+                message=f"I found a tool **{tool_name}** that can help with your task. "
+                + "This tool requires you to log in below.",
                 tool_url=tool_url,
                 token=None,
             ) from e
