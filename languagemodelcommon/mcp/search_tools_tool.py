@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
+def _format_exception(exc: BaseException) -> str:
+    """Unwrap ExceptionGroups to show the actual root cause(s)."""
+    if isinstance(exc, BaseExceptionGroup):
+        parts = [_format_exception(e) for e in exc.exceptions]
+        return "; ".join(parts)
+    return f"{type(exc).__name__}: {exc}"
+
+
 class SearchToolsInput(BaseModel):
     category: str | None = Field(
         None,
@@ -82,7 +90,7 @@ class SearchToolsTool(BaseTool):
                 except Exception as e:
                     error_msg = (
                         f"Failed to connect to {server.server_name}: "
-                        f"{type(e).__name__}: {e}"
+                        f"{_format_exception(e)}"
                     )
                     resolution_errors.append(error_msg)
                     logger.warning(
