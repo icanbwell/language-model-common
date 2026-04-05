@@ -70,6 +70,7 @@ class SearchToolsTool(BaseTool):
 
     async def _arun(self, query: str, category: str | None = None) -> str:
         # Lazily resolve any unresolved servers matching the category
+        resolution_errors: list[str] = []
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
@@ -79,6 +80,11 @@ class SearchToolsTool(BaseTool):
                     # Re-raise auth exceptions so the user sees login links
                     raise
                 except Exception as e:
+                    error_msg = (
+                        f"Failed to connect to {server.server_name}: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    resolution_errors.append(error_msg)
                     logger.warning(
                         "Failed to resolve server %s during search: %s: %s",
                         server.server_name,
@@ -107,8 +113,16 @@ class SearchToolsTool(BaseTool):
                 tool_names = [t["name"] for t in all_tools]
                 return (
                     f"No tools matched your search query, but the following "
-                    f"tools are available in {category} category:\n{', '.join(tool_names)}. "
+                    f"tools are available in {category} category:\n"
+                    f"{', '.join(tool_names)}. "
                     f"Try searching with different keywords."
                 )
-            return f"No tools found matching your query in {category}"
+            if resolution_errors:
+                errors_detail = "\n".join(resolution_errors)
+                return (
+                    f"No tools found in {category}. "
+                    f"Tool discovery failed for the following servers:\n"
+                    f"{errors_detail}"
+                )
+            return f"No tools found matching your query in {category}."
         return json.dumps(results, indent=2)
