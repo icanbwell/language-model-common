@@ -4,8 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from oidcauthlib.auth.models.auth import AuthInformation
 
-from languagemodelcommon.utilities.tool_friendly_name_mapper import (
-    ToolFriendlyNameMapper,
+from languagemodelcommon.utilities.tool_display_name_mapper import (
+    ToolDisplayNameMapper,
 )
 
 
@@ -61,7 +61,7 @@ class RequestInformation(BaseModel):
         description="Indicates whether debug logging is enabled for this request.",
     )
 
-    tool_friendly_name_mapper: ToolFriendlyNameMapper | None = Field(
+    tool_display_name_mapper: ToolDisplayNameMapper | None = Field(
         default=None,
         description="Optional mapper for friendly tool display names in streaming output.",
     )

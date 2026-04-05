@@ -100,3 +100,17 @@ def test_env_var_substitution_missing_raises(tmp_path: Path, monkeypatch: Any) -
 
     with pytest.raises(ValueError, match="Missing environment variable"):
         FileConfigReader().read_model_configs(config_path=str(tmp_path))
+
+
+def test_discover_prompts_path_found(tmp_path: Path) -> None:
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "system.md").write_text("# System", encoding="utf-8")
+
+    result = FileConfigReader.discover_prompts_path(str(tmp_path))
+    assert result == str(prompts_dir)
+
+
+def test_discover_prompts_path_not_found(tmp_path: Path) -> None:
+    result = FileConfigReader.discover_prompts_path(str(tmp_path))
+    assert result is None
