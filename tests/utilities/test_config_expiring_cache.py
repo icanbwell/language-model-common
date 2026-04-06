@@ -8,7 +8,9 @@ from typing import List
 import pytest
 
 from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
-from languagemodelcommon.utilities.cache import ConfigExpiringCache
+from languagemodelcommon.utilities.cache.config_expiring_cache import (
+    ConfigExpiringCache,
+)
 
 
 @pytest.fixture

@@ -31,7 +31,9 @@ from languagemodelcommon.image_generation.providers.image_generation_provider im
 )
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
-from languagemodelcommon.utilities.cache import ConfigExpiringCache
+from languagemodelcommon.utilities.cache.config_expiring_cache import (
+    ConfigExpiringCache,
+)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
