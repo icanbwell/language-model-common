@@ -934,34 +934,38 @@ class LangGraphStreamingManager:
         request_information: RequestInformation,
         non_text_blocks: list[dict[str, Any]],
     ) -> AsyncGenerator[str | None, None]:
-        yield None  # we only turn on the below when we're doing deep debugging
-        # if not non_text_blocks:
-        #     return
-        # summaries: list[str] = []
-        # for block in non_text_blocks:
-        #     block_type = block.get("type", "unknown")
-        #     keys = sorted(
-        #         [
-        #             key
-        #             for key in block.keys()
-        #             # if key not in {"text", "token", "auth_token", "access_token"}
-        #         ]
-        #     )
-        #     summaries.append(f"type={block_type}, keys={keys}")
-        #
-        # yield None
-        # content_text = (
-        #     "\n> Non-text content blocks received: " + ", ".join(summaries) + "\n"
-        # )
-        # if content_text:
-        #     message = chat_request_wrapper.create_debug_sse_message(
-        #         request_id=request_information.request_id,
-        #         content=content_text,
-        #         usage_metadata=None,
-        #         source="on_chat_model_stream",
-        #     )
-        #     if message:
-        #         yield message
+        if not non_text_blocks:
+            return
+        for block in non_text_blocks:
+            block_type = block.get("type", "unknown")
+            if block_type in ("reasoning_content", "reasoning"):
+                reasoning_text = self._extract_reasoning_text(block)
+                if reasoning_text:
+                    content_text = (
+                        f"\n\n<details>\n<summary>Reasoning</summary>\n\n"
+                        f"{reasoning_text}\n\n"
+                        f"</details>\n\n"
+                    )
+                    message = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_information.request_id,
+                        content=content_text,
+                        usage_metadata=None,
+                        source="on_chat_model_stream",
+                    )
+                    if message:
+                        yield message
+
+    @staticmethod
+    def _extract_reasoning_text(block: dict[str, Any]) -> str | None:
+        """Extract reasoning text from a reasoning_content or reasoning block."""
+        block_type = block.get("type")
+        if block_type == "reasoning_content":
+            rc = block.get("reasoning_content", {})
+            if isinstance(rc, dict):
+                return rc.get("text")
+        elif block_type == "reasoning":
+            return block.get("reasoning")
+        return None
 
 
 @dataclass

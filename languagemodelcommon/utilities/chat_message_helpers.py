@@ -131,6 +131,22 @@ def iter_message_content_text_chunks(
                 if include_non_text_placeholders:
                     text_chunks.append(f"[{label}{suffix}]")
                 non_text_blocks.append(content_item)
+            elif content_item_type in ("reasoning_content", "reasoning"):
+                # Extended thinking / reasoning blocks from Anthropic models.
+                # Extract the reasoning text and store in non_text_blocks
+                # so callers (e.g. streaming_manager) can render it in
+                # debug mode via <details> without leaking it into the
+                # main response text.
+                reasoning_text: str | None = None
+                if content_item_type == "reasoning_content":
+                    rc = content_item.get("reasoning_content", {})
+                    if isinstance(rc, dict):
+                        reasoning_text = rc.get("text")
+                elif content_item_type == "reasoning":
+                    reasoning_text = content_item.get("reasoning")
+                non_text_blocks.append(content_item)
+                if include_non_text_placeholders and reasoning_text:
+                    text_chunks.append("[reasoning]")
             else:
                 non_text_blocks.append(content_item)
                 if include_non_text_placeholders:
