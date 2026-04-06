@@ -173,15 +173,18 @@ class PassThroughTokenManager:
                 )
                 return existing
 
-            # When the config has neither client_id nor registration_url,
-            # attempt RFC 8414 / OIDC Discovery to find the registration
-            # endpoint from the server's well-known metadata.
-            if (
-                not oauth.client_id
-                and not oauth.registration_url
-                and server_url
-                and self.auth_server_metadata_discovery
-            ):
+            # Attempt RFC 8414 / OIDC Discovery when we are missing key
+            # OAuth endpoints.  This covers two scenarios:
+            # 1. No client_id and no registration_url — discover both.
+            # 2. Has client_id but no well-known URL and no explicit
+            #    authorization_url — discover endpoints so we can build
+            #    the login link (e.g. GitHub MCP).
+            needs_discovery = (not oauth.client_id and not oauth.registration_url) or (
+                oauth.client_id
+                and not oauth.auth_server_metadata_url
+                and not oauth.authorization_url
+            )
+            if needs_discovery and server_url and self.auth_server_metadata_discovery:
                 logger.info(
                     "OAuth provider '%s' has no client_id or registration_url "
                     "— attempting auth server discovery from %s",
