@@ -16,7 +16,7 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 
 
 class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
-    def __init__(self, prompt_library_path: str) -> None:
+    def __init__(self, prompt_library_path: str | None) -> None:
         self._prompt_library_path = prompt_library_path
 
     @property
@@ -222,3 +222,56 @@ async def test_override_does_not_clobber_default_fields(
     assert len(configs) == 1
     assert configs[0].description == "override"
     assert configs[0].type == "custom"
+
+
+@pytest.mark.asyncio
+async def test_prompt_auto_discovered_from_prompts_folder(
+    cache_mock: AsyncMock, tmp_path: Any
+) -> None:
+    """When no PROMPT_LIBRARY_PATH is set, prompts/ alongside configs is used."""
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "system_prompt.md").write_text(
+        "# System\nYou are helpful.", encoding="utf-8"
+    )
+
+    (tmp_path / "model.json").write_text(
+        '{"id": "m1", "name": "Model", "description": "test", '
+        '"system_prompts": [{"name": "system_prompt"}]}',
+        encoding="utf-8",
+    )
+
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=PromptLibraryManager(
+            environment_variables=_StubPromptLibraryEnv(None)
+        ),
+    )
+    configs = await reader.read_model_configs_async()
+
+    assert configs[0].system_prompts is not None
+    assert configs[0].system_prompts[0].content == "# System\nYou are helpful."
+
+
+@pytest.mark.asyncio
+async def test_inline_prompt_content_still_works(
+    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+) -> None:
+    """Inline content in PromptConfig is preserved (backward compat)."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "m1", "name": "Model", "description": "test", '
+        '"system_prompts": [{"content": "You are a helpful assistant."}]}',
+        encoding="utf-8",
+    )
+
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        cache=cache_mock, prompt_library_manager=prompt_library_manager
+    )
+    configs = await reader.read_model_configs_async()
+
+    assert configs[0].system_prompts is not None
+    assert configs[0].system_prompts[0].content == "You are a helpful assistant."

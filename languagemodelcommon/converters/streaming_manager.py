@@ -30,18 +30,13 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 from typing import (
     Any,
-    cast,
-    Optional,
-)
-from typing import (
-    Dict,
     AsyncGenerator,
+    Dict,
+    Optional,
+    cast,
 )
 
-from langchain_core.messages import AIMessageChunk, BaseMessage
-from langchain_core.messages import (
-    ToolMessage,
-)
+from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.runnables.schema import (
     CustomStreamEvent,
     StandardStreamEvent,
@@ -67,8 +62,8 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.text_humanizer import Humanizer
-from languagemodelcommon.utilities.tool_friendly_name_mapper import (
-    ToolFriendlyNameMapper,
+from languagemodelcommon.utilities.tool_display_name_mapper import (
+    ToolDisplayNameMapper,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +92,7 @@ class LangGraphStreamingManager:
         token_reducer: TokenReducer,
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
-        tool_friendly_name_mapper: ToolFriendlyNameMapper,
+        tool_display_name_mapper: ToolDisplayNameMapper,
     ) -> None:
         self.token_reducer: TokenReducer = token_reducer
         if self.token_reducer is None:
@@ -139,13 +134,13 @@ class LangGraphStreamingManager:
         self._stream_buffers: dict[str, _StreamBuffer] = {}
         self._streamed_text_fragments: dict[str, list[str]] = {}
 
-        self.tool_friendly_name_mapper = tool_friendly_name_mapper
-        if tool_friendly_name_mapper is None:
-            raise ValueError("tool_friendly_name_mapper must not be None")
-        if not isinstance(tool_friendly_name_mapper, ToolFriendlyNameMapper):
+        self.tool_display_name_mapper = tool_display_name_mapper
+        if tool_display_name_mapper is None:
+            raise ValueError("tool_display_name_mapper must not be None")
+        if not isinstance(tool_display_name_mapper, ToolDisplayNameMapper):
             raise TypeError(
-                f"tool_friendly_name_mapper must be an instance of "
-                f"ToolFriendlyNameMapper: {type(tool_friendly_name_mapper)}"
+                f"tool_display_name_mapper must be an instance of "
+                f"ToolDisplayNameMapper: {type(tool_display_name_mapper)}"
             )
 
     async def handle_langchain_event(
@@ -236,6 +231,7 @@ class LangGraphStreamingManager:
                         chat_request_wrapper=chat_request_wrapper,
                         request_information=request_information,
                         tool_start_times=tool_start_times,
+                        user_id=user_id,
                     ):
                         if chunk:
                             yield chunk
@@ -356,7 +352,16 @@ class LangGraphStreamingManager:
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
-            content_text: str = self.tool_friendly_name_mapper.get_message_for_tool(
+            # Emit structured tool-start event (Responses API emits
+            # response.output_item.added; Chat Completions returns None).
+            tool_start_event = chat_request_wrapper.create_tool_start_sse_event(
+                request_id=request_information.request_id,
+                tool_name=tool_name,
+                tool_input=tool_input_display,
+            )
+            if tool_start_event:
+                yield tool_start_event
+            content_text: str = self.tool_display_name_mapper.get_message_for_tool(
                 tool_name=tool_name, tool_input=tool_input
             )
             buffered_chunk = await self._buffer_stream_content(
@@ -371,7 +376,9 @@ class LangGraphStreamingManager:
                     source="on_tool_start",
                 )
             debug_content_text: str = (
-                f"\n\n> Running Agent {tool_name}: {tool_input_display}\n"
+                f"\n\n<details>\n<summary>Agent: {tool_name}</summary>\n\n"
+                f"```json\n{json.dumps(tool_input_display, indent=2, default=str)}\n```\n\n"
+                f"</details>\n\n"
             )
             debug_message = chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
@@ -422,8 +429,10 @@ class LangGraphStreamingManager:
 
             tool_key: str = self.make_tool_key(tool_name, tool_input)
             start_time: Optional[float] = tool_start_times.pop(tool_key, None)
+            runtime_seconds: Optional[float] = None
             if start_time is not None:
                 elapsed: float = time.time() - start_time
+                runtime_seconds = elapsed
                 runtime_str = f"{elapsed:.2f}s"
                 logger.debug("Tool %s completed in %.2f seconds.", tool_name, elapsed)
             else:
@@ -431,6 +440,17 @@ class LangGraphStreamingManager:
                     "Tool %s end event received without matching start event.",
                     tool_name,
                 )
+
+            # Emit structured tool-end event (Responses API emits
+            # response.output_item.done; Chat Completions returns None).
+            tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
+                request_id=request_information.request_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                runtime_seconds=runtime_seconds,
+            )
+            if tool_end_event:
+                yield tool_end_event
 
             tool_message_content: str = (
                 self.convert_message_content_into_string(tool_message=tool_message)
@@ -464,8 +484,8 @@ class LangGraphStreamingManager:
                         content_text=tool_message_or_artifact_content,
                     )
 
-                tool_friendly_name: str = (
-                    self.tool_friendly_name_mapper.get_name_for_tool(
+                tool_display_name: str = (
+                    self.tool_display_name_mapper.get_name_for_tool(
                         tool_name=tool_name,
                         tool_input=tool_input,
                     )
@@ -483,7 +503,7 @@ class LangGraphStreamingManager:
                     and write_result.file_url
                 ):
                     # send a follow-up message with the file URL
-                    content_text: str = f"\n\n[Click to download {tool_friendly_name} Output]({write_result.file_url})\n\n"
+                    content_text: str = f"\n\n[Click to download {tool_display_name} Output]({write_result.file_url})\n\n"
                     yield chat_request_wrapper.create_sse_message(
                         request_id=request_information.request_id,
                         content=content_text,
@@ -510,13 +530,14 @@ class LangGraphStreamingManager:
                     if isinstance(structured_content, dict):
                         structured_content.pop("result", None)
 
-                    structured_content_text: str = (
-                        "\n--- Structured Content (w/o result) ---\n"
-                    )
-                    structured_content_text += json.dumps(
+                    structured_json = json.dumps(
                         structured_data_without_result, indent=2
                     )
-                    structured_content_text += "\n--- End Structured Content ---\n"
+                    structured_content_text: str = (
+                        f"\n\n<details>\n<summary>{tool_name} output</summary>\n\n"
+                        f"```json\n{structured_json}\n```\n\n"
+                        f"</details>\n\n"
+                    )
                     debug_message = chat_request_wrapper.create_debug_sse_message(
                         request_id=request_information.request_id,
                         content=structured_content_text,
@@ -527,7 +548,11 @@ class LangGraphStreamingManager:
                         yield debug_message
         else:
             logger.debug("on_tool_end: no tool message output")
-            content_text = f"\n\n> Tool completed with no output.{runtime_str}\n"
+            content_text = (
+                f"\n\n<details>\n<summary>Tool completed with no output</summary>\n\n"
+                f"Runtime: {runtime_str}\n\n"
+                f"</details>\n\n"
+            )
             debug_message = chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
                 content=content_text,
@@ -629,9 +654,8 @@ class LangGraphStreamingManager:
         # append all the messages into content_text
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
-            content_text += (
-                f"--- Message {message_number + 1} by {input_message.type} ---\n"
-            )
+            name_suffix = f" ({input_message.name})" if input_message.name else ""
+            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
             content_text += f"{input_message.content}\n"
         if streamed_output:
             content_text += "--- Streamed assistant output ---\n"
@@ -653,9 +677,14 @@ class LangGraphStreamingManager:
                 source="on_chat_model_end",
             )
         elif content_text:
+            collapsed_text: str = (
+                f"\n\n<details>\n<summary>Messages log</summary>\n\n"
+                f"```\n{content_text}\n```\n\n"
+                f"</details>\n\n"
+            )
             yield chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
-                content=content_text,
+                content=collapsed_text,
                 usage_metadata=None,
                 source="on_chat_model_end",
             )
@@ -695,14 +724,16 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
         tool_start_times: dict[str, float],
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Emit SSE when an MCP tool raises an error, including runtime if available."""
         # Extract error details
         tool_name: Optional[str] = event["name"] if "name" in event else None
         data = event["data"] if "data" in event else {}
         error_message: BaseException | Any | str = data.get("error") or str(event)
+        tool_input: Optional[Dict[str, Any]] = data.get("input")
         runtime_str: str = ""
-        tool_key: str = self.make_tool_key(tool_name, data.get("input"))
+        tool_key: str = self.make_tool_key(tool_name, tool_input)
         start_time: Optional[float] = tool_start_times.pop(tool_key, None)
         if start_time is not None:
             elapsed: float = time.time() - start_time
@@ -728,6 +759,42 @@ class LangGraphStreamingManager:
             usage_metadata=None,
             source="on_tool_error",
         )
+
+        # Write error output to file and provide download link (only on debug requests, same as _handle_on_tool_end)
+        if (
+            self.environment_variables.write_tool_output_to_file
+            and chat_request_wrapper.enable_debug_logging
+        ):
+            error_content: str = (
+                f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
+            )
+            self._append_streamed_text_fragment(
+                request_id=str(request_information.request_id),
+                content_text=error_content,
+            )
+            tool_display_name: str = self.tool_display_name_mapper.get_name_for_tool(
+                tool_name=tool_name or "unknown",
+                tool_input=tool_input,
+            )
+            write_result: (
+                DebugFileWriteResult | None
+            ) = await self.debug_file_writer.write_to_file_async(
+                content=error_content,
+                user_id=user_id,
+                file_name=tool_name or "unknown",
+            )
+            if (
+                write_result is not None
+                and write_result.file_path
+                and write_result.file_url
+            ):
+                download_text: str = f"\n\n[Click to download {tool_display_name} Error Output]({write_result.file_url})\n\n"
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_information.request_id,
+                    content=download_text,
+                    usage_metadata=None,
+                    source="on_tool_error",
+                )
 
     @staticmethod
     def make_tool_key(
@@ -874,34 +941,38 @@ class LangGraphStreamingManager:
         request_information: RequestInformation,
         non_text_blocks: list[dict[str, Any]],
     ) -> AsyncGenerator[str | None, None]:
-        yield None  # we only turn on the below when we're doing deep debugging
-        # if not non_text_blocks:
-        #     return
-        # summaries: list[str] = []
-        # for block in non_text_blocks:
-        #     block_type = block.get("type", "unknown")
-        #     keys = sorted(
-        #         [
-        #             key
-        #             for key in block.keys()
-        #             # if key not in {"text", "token", "auth_token", "access_token"}
-        #         ]
-        #     )
-        #     summaries.append(f"type={block_type}, keys={keys}")
-        #
-        # yield None
-        # content_text = (
-        #     "\n> Non-text content blocks received: " + ", ".join(summaries) + "\n"
-        # )
-        # if content_text:
-        #     message = chat_request_wrapper.create_debug_sse_message(
-        #         request_id=request_information.request_id,
-        #         content=content_text,
-        #         usage_metadata=None,
-        #         source="on_chat_model_stream",
-        #     )
-        #     if message:
-        #         yield message
+        if not non_text_blocks:
+            return
+        for block in non_text_blocks:
+            block_type = block.get("type", "unknown")
+            if block_type in ("reasoning_content", "reasoning"):
+                reasoning_text = self._extract_reasoning_text(block)
+                if reasoning_text:
+                    content_text = (
+                        f"\n\n<details>\n<summary>Reasoning</summary>\n\n"
+                        f"{reasoning_text}\n\n"
+                        f"</details>\n\n"
+                    )
+                    message = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_information.request_id,
+                        content=content_text,
+                        usage_metadata=None,
+                        source="on_chat_model_stream",
+                    )
+                    if message:
+                        yield message
+
+    @staticmethod
+    def _extract_reasoning_text(block: dict[str, Any]) -> str | None:
+        """Extract reasoning text from a reasoning_content or reasoning block."""
+        block_type = block.get("type")
+        if block_type == "reasoning_content":
+            rc = block.get("reasoning_content", {})
+            if isinstance(rc, dict):
+                return rc.get("text")
+        elif block_type == "reasoning":
+            return block.get("reasoning")
+        return None
 
 
 @dataclass

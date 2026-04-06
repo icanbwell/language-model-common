@@ -32,6 +32,10 @@ from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
 
 from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
+
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
@@ -214,6 +218,47 @@ class LangGraphToOpenAIConverter:
                 usage_metadata=None,
                 source="on_tool_error",
             )
+            # The on_chat_model_end event never fires because the exception
+            # terminates the event stream early.  Write the messages log here
+            # so that the debug download link is still available.
+            if chat_request_wrapper.enable_debug_logging:
+                streamed_output = self.streaming_manager._pop_streamed_text(
+                    request_id=str(request_id),
+                )
+                content_text = ""
+                if streamed_output:
+                    content_text += "--- Streamed assistant output ---\n"
+                    content_text += f"{streamed_output}\n"
+                content_text += f"--- AuthorizationNeededException ---\n{e.message}\n"
+                write_result = (
+                    await self.streaming_manager.debug_file_writer.write_to_file_async(
+                        file_name="messages",
+                        content=content_text,
+                        user_id=request_information.user_id,
+                    )
+                )
+                if write_result and write_result.file_url:
+                    debug_msg = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_id,
+                        content=f"\n\n[Click to download full messages log]({write_result.file_url})\n\n",
+                        usage_metadata=None,
+                        source="on_chat_model_end",
+                    )
+                    if debug_msg is not None:
+                        yield debug_msg
+                elif content_text:
+                    debug_msg = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_id,
+                        content=(
+                            f"\n\n<details>\n<summary>Messages log</summary>\n\n"
+                            f"```\n{content_text}\n```\n\n"
+                            f"</details>\n\n"
+                        ),
+                        usage_metadata=None,
+                        source="on_chat_model_end",
+                    )
+                    if debug_msg is not None:
+                        yield debug_msg
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
@@ -335,11 +380,10 @@ class LangGraphToOpenAIConverter:
 
                 return JSONResponse(content=content_json)
             except* TokenRetrievalError as e:
-                first_exception = e.exceptions[0]
                 error_message = (
-                    f"AWS Bedrock Token retrieval error: {type(first_exception)} {first_exception}."
-                    + "  If you are running locally, your AWS session may have expired."
-                    + "  Please re-authenticate using `aws sso login --profile [role]`."
+                    f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
                 logger.exception(error_message)
                 raise HTTPException(
@@ -347,11 +391,10 @@ class LangGraphToOpenAIConverter:
                     detail=error_message,
                 )
             except* botocore.exceptions.NoCredentialsError as e:
-                first_exception1 = e.exceptions[0]
                 error_message = (
-                    f"AWS Bedrock Login error: {type(first_exception1)} {first_exception1}."
-                    + "  If you are running locally, your AWS session may have expired."
-                    + "  Please re-authenticate using `aws sso login --profile [role]`."
+                    f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
+                    "  If you are running locally, your AWS session may have expired."
+                    "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
                 logger.exception(error_message)
                 raise HTTPException(
@@ -359,28 +402,24 @@ class LangGraphToOpenAIConverter:
                     detail=error_message,
                 )
             except* Exception as e:
-                first_exception2 = e.exceptions[0] if len(e.exceptions) > 0 else e
-                # print type of first exception in ExceptionGroup
-                # if there is just one exception, we can log it directly
-                if len(e.exceptions) > 0:
-                    logger.exception(
-                        "ExceptionGroup in call_agent_with_input: %s %s",
-                        type(first_exception2),
-                        first_exception2,
-                    )
+                first_exception = ExceptionLogger.get_first_exception(e)
+                logger.exception(
+                    "ExceptionGroup in call_agent_with_input: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
                 # Get the traceback for the first exception
                 stack = "".join(
                     traceback.format_exception(
-                        type(first_exception2),
-                        first_exception2,
-                        first_exception2.__traceback__,
+                        type(first_exception),
+                        first_exception,
+                        first_exception.__traceback__,
                     )
                 )
-                log_message = f"Unexpected error: {type(first_exception2)} {first_exception2}\nStack trace:\n{stack}"
+                log_message = f"Unexpected error: {ExceptionLogger.format_exception_message(e)}\nStack trace:\n{stack}"
                 logger.exception(log_message)
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Unexpected error: {first_exception2}",
+                    detail=f"Unexpected error: {first_exception}",
                 )
 
     @staticmethod
@@ -820,6 +859,7 @@ class LangGraphToOpenAIConverter:
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
         skill_loader: SkillLoaderProtocol,
+        tool_catalog: ToolCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
         Create a graph for the language model asynchronously.
@@ -834,6 +874,7 @@ class LangGraphToOpenAIConverter:
             checkpointer: Optional checkpointer for state management
             system_prompts: Optional list of system prompts to prepend to the agent
             skill_loader: Optional override for the skill loader (per-request scoping)
+            tool_catalog: Optional tool catalog for tool discovery middleware
         """
         resolved_skill_loader = skill_loader or self.skill_loader
         if not isinstance(resolved_skill_loader, SkillLoaderProtocol):
@@ -865,6 +906,12 @@ class LangGraphToOpenAIConverter:
             "provided" if skill_loader else "none",
         )
         # Create the react agent with optional system prompt
+        middleware: list[AgentMiddleware] = [
+            SkillMiddleware(skill_loader=skill_loader),
+        ]
+        if tool_catalog is not None:
+            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+
         react_agent_runnable = create_agent(
             model=llm,
             tools=tools,
@@ -872,7 +919,7 @@ class LangGraphToOpenAIConverter:
             store=store,
             checkpointer=checkpointer,
             system_prompt=system_prompt,
-            middleware=[SkillMiddleware(skill_loader=skill_loader)],
+            middleware=middleware,
         )
 
         # Build the workflow

@@ -1,7 +1,18 @@
+import json
 import logging
 import time
 from datetime import datetime, UTC
-from typing import AsyncIterable, Literal, Union, override, Optional, List, Any, cast
+from typing import (
+    AsyncIterable,
+    Dict,
+    Literal,
+    Union,
+    override,
+    Optional,
+    List,
+    Any,
+    cast,
+)
 
 from langchain_core.messages import AnyMessage
 from langchain_core.messages.ai import UsageMetadata
@@ -10,12 +21,18 @@ from openai.types.responses import (
     EasyInputMessageParam,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
+    ResponseCompletedEvent,
     Response,
     ResponseOutputItem,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseOutputRefusal,
     ResponseCreatedEvent,
+    ResponseUsage,
+)
+from openai.types.responses.response_usage import (
+    InputTokensDetails,
+    OutputTokensDetails,
 )
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
@@ -234,6 +251,75 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         )
 
     @override
+    def create_tool_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any] | None,
+    ) -> str | None:
+        """Emit a ``response.output_item.added`` event with a ``function_call`` item."""
+        event: Dict[str, Any] = {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "function_call",
+                "id": f"fc_{request_id}_{tool_name}",
+                "call_id": f"call_{request_id}_{tool_name}",
+                "name": tool_name,
+                "arguments": json.dumps(tool_input) if tool_input else "",
+                "status": "in_progress",
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_tool_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any] | None,
+        runtime_seconds: float | None,
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with a ``function_call`` item."""
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "function_call",
+                "id": f"fc_{request_id}_{tool_name}",
+                "call_id": f"call_{request_id}_{tool_name}",
+                "name": tool_name,
+                "arguments": json.dumps(tool_input) if tool_input else "",
+                "status": "completed",
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @staticmethod
+    def _convert_usage_to_response_usage(
+        usages: list[UsageMetadata],
+    ) -> ResponseUsage:
+        """Convert LangChain UsageMetadata list to OpenAI ResponseUsage."""
+        input_tokens = 0
+        output_tokens = 0
+        total_tokens = 0
+        for u in usages:
+            input_tokens += u.get("input_tokens", 0)
+            output_tokens += u.get("output_tokens", 0)
+            total_tokens += u.get("total_tokens", 0)
+        return ResponseUsage(
+            input_tokens=input_tokens,
+            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            output_tokens=output_tokens,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+            total_tokens=total_tokens,
+        )
+
+    @override
     def create_final_sse_message(
         self, *, request_id: str, usage_metadata: UsageMetadata | None, source: str
     ) -> str:
@@ -242,8 +328,33 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             request_id,
             source,
         )
-        # Format the final SSE message chunk
-        message: ResponseTextDoneEvent = ResponseTextDoneEvent(
+        # Build usage from accumulated metadata
+        response_usage: ResponseUsage | None = None
+        if usage_metadata:
+            response_usage = self._convert_usage_to_response_usage([usage_metadata])
+
+        parallel_tool_calls = self.effective_parallel_tool_calls()
+        # Emit response.completed event with the full Response including usage
+        completed_event: ResponseCompletedEvent = ResponseCompletedEvent(
+            response=Response(
+                id=request_id,
+                model=self.model,
+                status="completed",
+                created_at=time.time(),
+                object="response",
+                output=[],
+                parallel_tool_calls=(
+                    parallel_tool_calls if parallel_tool_calls is not None else False
+                ),
+                tools=[],
+                tool_choice="auto",
+                usage=response_usage,
+            ),
+            type="response.completed",
+            sequence_number=len(self._messages) + 1,
+        )
+        # Emit text done + completed event + [DONE]
+        text_done: ResponseTextDoneEvent = ResponseTextDoneEvent(
             item_id=request_id,
             content_index=0,
             output_index=len(self._messages),
@@ -252,7 +363,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             logprobs=[],
             text="",
         )
-        return f"data: {message.model_dump_json()}\n\n"
+        return (
+            f"data: {text_done.model_dump_json()}\n\n"
+            f"data: {completed_event.model_dump_json()}\n\n"
+            f"data: [DONE]\n\n"
+        )
 
     @staticmethod
     def convert_message_content(
@@ -300,6 +415,17 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                     type="message",
                 )
             )
+
+        # Aggregate usage from all response messages
+        usage_list: list[UsageMetadata] = [
+            m.usage_metadata
+            for m in responses
+            if hasattr(m, "usage_metadata") and m.usage_metadata
+        ]
+        response_usage: ResponseUsage | None = (
+            self._convert_usage_to_response_usage(usage_list) if usage_list else None
+        )
+
         parallel_tool_calls = self.effective_parallel_tool_calls()
         response: Response = Response(
             id=request_id,
@@ -312,8 +438,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             ),
             tools=[],
             tool_choice="auto",
+            usage=response_usage,
         )
-        # Usage metadata is not passed here, but could be added if available
         return response.model_dump(mode="json")
 
     @override
@@ -377,6 +503,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 source="stream_response",
             )
 
+            # Collect usage from all messages for the final event
+            accumulated_usage: UsageMetadata | None = None
             for response_message in response_messages1:
                 message_content: str = convert_message_content_to_string(
                     response_message.content
@@ -390,10 +518,37 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                     )
                     if delta_message:
                         yield delta_message
+                # Accumulate usage from each message
+                if (
+                    hasattr(response_message, "usage_metadata")
+                    and response_message.usage_metadata
+                ):
+                    if accumulated_usage is None:
+                        accumulated_usage = UsageMetadata(
+                            input_tokens=response_message.usage_metadata.get(
+                                "input_tokens", 0
+                            ),
+                            output_tokens=response_message.usage_metadata.get(
+                                "output_tokens", 0
+                            ),
+                            total_tokens=response_message.usage_metadata.get(
+                                "total_tokens", 0
+                            ),
+                        )
+                    else:
+                        accumulated_usage["input_tokens"] += (
+                            response_message.usage_metadata.get("input_tokens", 0)
+                        )
+                        accumulated_usage["output_tokens"] += (
+                            response_message.usage_metadata.get("output_tokens", 0)
+                        )
+                        accumulated_usage["total_tokens"] += (
+                            response_message.usage_metadata.get("total_tokens", 0)
+                        )
 
             yield self.create_final_sse_message(
                 request_id=request_id,
-                usage_metadata=None,
+                usage_metadata=accumulated_usage,
                 source="stream_response",
             )
 

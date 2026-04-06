@@ -31,13 +31,15 @@ from languagemodelcommon.image_generation.providers.image_generation_provider im
 )
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
-from languagemodelcommon.utilities.cache import ConfigExpiringCache
+from languagemodelcommon.utilities.cache.config_expiring_cache import (
+    ConfigExpiringCache,
+)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
-from languagemodelcommon.utilities.tool_friendly_name_mapper import (
-    ToolFriendlyNameMapper,
+from languagemodelcommon.utilities.tool_display_name_mapper import (
+    ToolDisplayNameMapper,
 )
 
 
@@ -105,7 +107,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 debug_file_writer=c.resolve(FileWriter),
                 token_reducer=c.resolve(TokenReducer),
-                tool_friendly_name_mapper=c.resolve(ToolFriendlyNameMapper),
+                tool_display_name_mapper=c.resolve(ToolDisplayNameMapper),
             ),
         )
         container.singleton(

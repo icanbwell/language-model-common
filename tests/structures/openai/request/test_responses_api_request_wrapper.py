@@ -157,9 +157,19 @@ class TestSSEMessages:
         result = wrapper.create_final_sse_message(
             request_id="req-1", usage_metadata=None, source="test"
         )
-        payload = json.loads(result[len("data: ") :])
-        assert payload["type"] == "response.output_text.done"
-        assert payload["item_id"] == "req-1"
+        # Final message contains multiple SSE events: text.done, response.completed, [DONE]
+        events = [
+            line[len("data: ") :]
+            for line in result.strip().split("\n")
+            if line.startswith("data: ")
+        ]
+        assert len(events) == 3
+        text_done = json.loads(events[0])
+        assert text_done["type"] == "response.output_text.done"
+        assert text_done["item_id"] == "req-1"
+        completed = json.loads(events[1])
+        assert completed["type"] == "response.completed"
+        assert events[2] == "[DONE]"
 
     def test_create_debug_sse_message_returns_none_when_debug_disabled(self) -> None:
         wrapper = _make_wrapper(enable_debug_logging=False)
@@ -273,7 +283,7 @@ class TestStreamResponse:
         )
         chunks = [chunk async for chunk in stream]
 
-        # created + 2 deltas + done = 4
+        # created + 2 deltas + final (text.done + completed + [DONE]) = 4
         assert len(chunks) == 4
 
         created = json.loads(chunks[0][len("data: ") :])
@@ -290,9 +300,18 @@ class TestStreamResponse:
         assert delta2["type"] == "response.output_text.delta"
         assert delta2["delta"] == "World\n"
 
-        done = json.loads(chunks[3][len("data: ") :])
-        assert done["type"] == "response.output_text.done"
-        assert done["text"] == ""
+        # Final chunk contains multiple SSE events
+        final_events = [
+            line[len("data: ") :]
+            for line in chunks[3].strip().split("\n")
+            if line.startswith("data: ")
+        ]
+        text_done = json.loads(final_events[0])
+        assert text_done["type"] == "response.output_text.done"
+        assert text_done["text"] == ""
+        completed = json.loads(final_events[1])
+        assert completed["type"] == "response.completed"
+        assert final_events[2] == "[DONE]"
 
     @pytest.mark.asyncio
     async def test_stream_response_skips_empty_content(self) -> None:

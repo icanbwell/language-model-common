@@ -3,7 +3,7 @@ import re
 
 from typing import Any
 
-_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
+_ENV_VAR_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-(.*?))?\}")
 
 
 def substitute_env_vars(payload: Any) -> Any:
@@ -19,9 +19,12 @@ def substitute_env_vars(payload: Any) -> Any:
 def _substitute_string(value: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         env_key = match.group(1)
+        default_value = match.group(2)
         env_value = os.environ.get(env_key)
         if env_value is not None:
             return env_value
+        if default_value is not None:
+            return default_value
         raise ValueError(f"Missing environment variable: {env_key}")
 
     if "${" not in value:

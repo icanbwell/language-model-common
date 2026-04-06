@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.TOOLS)
 
 
-class ToolFriendlyNameMapper:
+class ToolDisplayNameMapper:
     """Provide user-facing tool names for streaming progress updates."""
 
     def __init__(self, *, name_to_display_name: Dict[str, str] | None = None) -> None:
@@ -31,17 +31,17 @@ class ToolFriendlyNameMapper:
     @classmethod
     def from_mapping(
         cls, *, name_to_display_name: Mapping[str, str]
-    ) -> "ToolFriendlyNameMapper":
+    ) -> "ToolDisplayNameMapper":
         return cls(name_to_display_name=dict(name_to_display_name))
 
     @classmethod
-    def from_config_path(cls, *, config_path: str | None) -> "ToolFriendlyNameMapper":
+    def from_config_path(cls, *, config_path: str | None) -> "ToolDisplayNameMapper":
         if not config_path:
             return cls()
         path = Path(config_path)
         if not path.exists():
             logger.warning(
-                "Tool friendly name config path does not exist: %s",
+                "Tool display name config path does not exist: %s",
                 path,
             )
             return cls()
@@ -50,13 +50,13 @@ class ToolFriendlyNameMapper:
             data: Any = json.loads(raw_text)
         except Exception:
             logger.exception(
-                "Failed to load tool friendly name config from %s",
+                "Failed to load tool display name config from %s",
                 path,
             )
             return cls()
         if not isinstance(data, dict):
             logger.warning(
-                "Tool friendly name config must be a JSON object: %s",
+                "Tool display name config must be a JSON object: %s",
                 path,
             )
             return cls()

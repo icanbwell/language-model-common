@@ -174,8 +174,18 @@ def convert_responses_api_to_single_message(
 
     else:
         content = response.get("content", "")
-        if content:
+        if isinstance(content, str):
             combined_content += content
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") in (
+                    "input_text",
+                    "output_text",
+                    "text",
+                ):
+                    combined_content += item.get("text", "")
+                elif isinstance(item, str):
+                    combined_content += item
 
     if function_calls_list:
         combined_kwargs["tool_calls"] = function_calls_list
