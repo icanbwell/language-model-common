@@ -30,6 +30,10 @@ from openai.types.responses import (
     ResponseCreatedEvent,
     ResponseUsage,
 )
+from openai.types.responses.response_usage import (
+    InputTokensDetails,
+    OutputTokensDetails,
+)
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.schema.openai.responses import ResponsesRequest
@@ -309,7 +313,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             total_tokens += u.get("total_tokens", 0)
         return ResponseUsage(
             input_tokens=input_tokens,
+            input_tokens_details=InputTokensDetails(cached_tokens=0),
             output_tokens=output_tokens,
+            output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             total_tokens=total_tokens,
         )
 
@@ -518,7 +524,17 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                     and response_message.usage_metadata
                 ):
                     if accumulated_usage is None:
-                        accumulated_usage = dict(response_message.usage_metadata)
+                        accumulated_usage = UsageMetadata(
+                            input_tokens=response_message.usage_metadata.get(
+                                "input_tokens", 0
+                            ),
+                            output_tokens=response_message.usage_metadata.get(
+                                "output_tokens", 0
+                            ),
+                            total_tokens=response_message.usage_metadata.get(
+                                "total_tokens", 0
+                            ),
+                        )
                     else:
                         accumulated_usage["input_tokens"] += (
                             response_message.usage_metadata.get("input_tokens", 0)
