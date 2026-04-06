@@ -274,7 +274,26 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         self, *, request_id: str, usage_metadata: UsageMetadata | None, source: str
     ) -> str:
         logger.debug("Creating final SSE message from source: %s", source)
-        return "data: [DONE]\n\n"
+        # Emit a final chunk with usage before [DONE] so clients that set
+        # stream_options.include_usage=true can see token counts.
+        parts: list[str] = []
+        if usage_metadata:
+            usage = CompletionUsage(
+                prompt_tokens=usage_metadata["input_tokens"],
+                completion_tokens=usage_metadata["output_tokens"],
+                total_tokens=usage_metadata["total_tokens"],
+            )
+            final_chunk = ChatCompletionChunk(
+                id=request_id,
+                created=int(time.time()),
+                model=self.model,
+                choices=[],
+                usage=usage,
+                object="chat.completion.chunk",
+            )
+            parts.append(f"data: {json.dumps(final_chunk.model_dump())}\n\n")
+        parts.append("data: [DONE]\n\n")
+        return "".join(parts)
 
     @override
     def to_dict(self) -> dict[str, Any]:
