@@ -760,10 +760,17 @@ class LangGraphStreamingManager:
             source="on_tool_error",
         )
 
-        # Write error output to file and provide download link (same as _handle_on_tool_end)
-        if self.environment_variables.write_tool_output_to_file:
+        # Write error output to file and provide download link (only on debug requests, same as _handle_on_tool_end)
+        if (
+            self.environment_variables.write_tool_output_to_file
+            and chat_request_wrapper.enable_debug_logging
+        ):
             error_content: str = (
                 f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
+            )
+            self._append_streamed_text_fragment(
+                request_id=str(request_information.request_id),
+                content_text=error_content,
             )
             tool_display_name: str = self.tool_display_name_mapper.get_name_for_tool(
                 tool_name=tool_name or "unknown",

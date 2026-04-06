@@ -94,10 +94,15 @@ class TokenCacheItem(BaseDbModel):
     def is_valid_access_token(self) -> bool:
         """
         Check if the access token is valid based on its expiration time.
+        For opaque tokens (no decoded Token object), returns True if a raw
+        access token string exists since expiry cannot be determined locally.
         Returns:
             bool: True if the access token is valid, False otherwise.
         """
-        return self.access_token.is_valid() if self.access_token else False
+        if self.access_token:
+            return self.access_token.is_valid()
+        # Opaque token — we have the raw string but can't check expiry locally
+        return self.access_token_raw is not None
 
     def get_access_token_string(self) -> Optional[str]:
         """
@@ -189,6 +194,7 @@ class TokenCacheItem(BaseDbModel):
     def is_expired(self) -> bool:
         """
         Check if the token cache item is expired based on the access token.
+        For opaque tokens, returns False (not expired) if a raw access token exists.
         Returns:
             bool: True if the access token is expired, False otherwise.
         """
@@ -197,5 +203,5 @@ class TokenCacheItem(BaseDbModel):
             if self.id_token
             else not self.access_token.is_valid()
             if self.access_token
-            else True
+            else self.access_token_raw is None
         )
