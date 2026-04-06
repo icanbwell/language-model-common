@@ -376,7 +376,9 @@ class LangGraphStreamingManager:
                     source="on_tool_start",
                 )
             debug_content_text: str = (
-                f"\n\n> Running Agent {tool_name}: {tool_input_display}\n"
+                f"\n\n<details>\n<summary>Agent: {tool_name}</summary>\n\n"
+                f"```json\n{json.dumps(tool_input_display, indent=2, default=str)}\n```\n\n"
+                f"</details>\n\n"
             )
             debug_message = chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
@@ -528,13 +530,14 @@ class LangGraphStreamingManager:
                     if isinstance(structured_content, dict):
                         structured_content.pop("result", None)
 
-                    structured_content_text: str = (
-                        "\n--- Structured Content (w/o result) ---\n"
-                    )
-                    structured_content_text += json.dumps(
+                    structured_json = json.dumps(
                         structured_data_without_result, indent=2
                     )
-                    structured_content_text += "\n--- End Structured Content ---\n"
+                    structured_content_text: str = (
+                        f"\n\n<details>\n<summary>{tool_name} output</summary>\n\n"
+                        f"```json\n{structured_json}\n```\n\n"
+                        f"</details>\n\n"
+                    )
                     debug_message = chat_request_wrapper.create_debug_sse_message(
                         request_id=request_information.request_id,
                         content=structured_content_text,
@@ -545,7 +548,11 @@ class LangGraphStreamingManager:
                         yield debug_message
         else:
             logger.debug("on_tool_end: no tool message output")
-            content_text = f"\n\n> Tool completed with no output.{runtime_str}\n"
+            content_text = (
+                f"\n\n<details>\n<summary>Tool completed with no output</summary>\n\n"
+                f"Runtime: {runtime_str}\n\n"
+                f"</details>\n\n"
+            )
             debug_message = chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
                 content=content_text,
@@ -670,9 +677,14 @@ class LangGraphStreamingManager:
                 source="on_chat_model_end",
             )
         elif content_text:
+            collapsed_text: str = (
+                f"\n\n<details>\n<summary>Messages log</summary>\n\n"
+                f"```\n{content_text}\n```\n\n"
+                f"</details>\n\n"
+            )
             yield chat_request_wrapper.create_debug_sse_message(
                 request_id=request_information.request_id,
-                content=content_text,
+                content=collapsed_text,
                 usage_metadata=None,
                 source="on_chat_model_end",
             )
