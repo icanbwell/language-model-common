@@ -528,11 +528,27 @@ class MCPToolProvider:
                 except* AuthorizationMcpToolTokenInvalidException as auth_eg:
                     logger.warning(
                         "get_tools_async No valid auth token for %s from %s, "
-                        "skipping tool discovery: %s",
+                        "attempting login link resolution: %s",
                         tool.name,
                         tool.url,
                         ExceptionLogger.format_exception_message(auth_eg),
                     )
+                    # Trigger the full token resolution flow so the user
+                    # gets actionable login links instead of a silent skip.
+                    # If auth is needed this raises AuthorizationNeededException
+                    # with login links which propagates to the user.
+                    # If the token was refreshed it returns normally and we
+                    # retry tool discovery.
+                    await auth_interceptor.resolve_auth_for_tool_with_login_links(
+                        tool_config=tool,
+                    )
+                    # Token was refreshed — retry tool discovery.
+                    retry_tools = await self.get_tools_by_url_async(
+                        tool_config=tool,
+                        headers=headers,
+                        auth_interceptor=auth_interceptor,
+                    )
+                    all_tools.extend(retry_tools)
                 except* AuthorizationNeededException as auth_needed_eg:
                     logger.warning(
                         "get_tools_async Authorization needed for %s from %s, "
@@ -738,8 +754,16 @@ class _BoundToolResolver:
                 tool_config=agent_config,
             )
             # Token was refreshed — retry the MCP call.
-            return await self._provider._list_mcp_tools_for_config(
-                tool_config=agent_config,
-                headers=self._headers,
-                auth_interceptor=self._auth_interceptor,
-            )
+            try:
+                return await self._provider._list_mcp_tools_for_config(
+                    tool_config=agent_config,
+                    headers=self._headers,
+                    auth_interceptor=self._auth_interceptor,
+                )
+            except AuthorizationMcpToolTokenInvalidException:
+                # Retry also failed. Trigger login link resolution
+                # again so the user sees actionable links.
+                await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
+                    tool_config=agent_config,
+                )
+                raise
