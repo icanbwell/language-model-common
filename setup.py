@@ -79,7 +79,7 @@ setup(
         "pypdf>=6.6.0",
         "markdownify>=0.14.1",
         "beautifulsoup4>=4.12.3",
-        "oidcauthlib>=3.0.3",
+        "oidcauthlib>=3.0.6",
         "fsspec>=2026.2.0",
         "authlib>=1.6.5",
         "langchain-google-genai>=4.1.3",
