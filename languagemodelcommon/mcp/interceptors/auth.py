@@ -242,9 +242,9 @@ class AuthMcpCallInterceptor:
         tool_config: AgentConfig,
     ) -> str | None:
         if token_cache_item is not None:
-            token: Token | None = token_cache_item.get_access_token()
-            if token:
-                return f"Bearer {token.token}"
+            raw: str | None = token_cache_item.get_access_token_string()
+            if raw:
+                return f"Bearer {raw}"
 
         auth_bearer_token: str | None = TokenReader.extract_token(
             authorization_header=auth_header

@@ -479,9 +479,15 @@ class TokenExchangeManager:
         if not isinstance(token_cache_item, TokenCacheItem):
             raise TypeError(f"TokenCacheItem must be of type {TokenCacheItem.__name__}")
 
-        token_cache_item.access_token = Token.create_from_token(token=access_token)
-        token_cache_item.id_token = Token.create_from_token(token=id_token)
-        token_cache_item.refresh_token = Token.create_from_token(token=refresh_token)
+        token_cache_item.access_token = self._try_parse_token(
+            access_token, "access_token"
+        )
+        token_cache_item.access_token_raw = access_token
+        token_cache_item.id_token = self._try_parse_token(id_token, "id_token")
+        token_cache_item.refresh_token = self._try_parse_token(
+            refresh_token, "refresh_token"
+        )
+        token_cache_item.refresh_token_raw = refresh_token
         token_cache_item.refreshed = datetime.now(tz=UTC)
 
         new_token_item: TokenCacheItem = await self.save_token_async(
@@ -500,48 +506,46 @@ class TokenExchangeManager:
         url: str | None,
     ) -> TokenCacheItem:
         access_token: str | None = token.get("access_token")
-        access_token_item = Token.create_from_token(token=access_token)
-
-        id_token: str | None = token.get("id_token")
-        id_token_item = Token.create_from_token(token=id_token)
-
-        refresh_token: str | None = token.get("refresh_token")
-        # refresh tokens can be non JWTs so we should still create a token item for them even if we can't decode them
-        try:
-            refresh_token_item = Token.create_from_token(token=refresh_token)
-        except Exception:
-            refresh_token_item = None
-
         if access_token is None:
             raise ValueError("access_token was not found in the token response")
 
-        email: str | None = (
-            token.get("userinfo", {}).get("email")
-            or (access_token_item.email if access_token_item else None)
-            or (id_token_item.email if id_token_item else None)
-        )
-        subject: str | None = (
-            token.get("userinfo", {}).get("sub")
-            or (access_token_item.subject if access_token_item else None)
-            or (id_token_item.subject if id_token_item else None)
-        )
+        # Tokens may be opaque (non-JWT) for OAuth 2.0 providers (e.g., Atlassian).
+        # Parse each token tolerantly — store the raw string regardless.
+        access_token_item = self._try_parse_token(access_token, "access_token")
+        id_token_raw: str | None = token.get("id_token")
+        id_token_item = self._try_parse_token(id_token_raw, "id_token")
+        refresh_token: str | None = token.get("refresh_token")
+        refresh_token_item = self._try_parse_token(refresh_token, "refresh_token")
 
-        if not subject:
-            raise ValueError("subject must be provided in the token")
-
-        logger.debug(f"Email received: {email}")
-        logger.debug(f"Subject received: {subject}")
         referring_email = state_decoded.get("referring_email")
         referring_subject = state_decoded.get("referring_subject")
 
         if not referring_subject:
             raise ValueError("referring_subject must be provided in the state")
 
+        email: str | None = (
+            token.get("userinfo", {}).get("email")
+            or (access_token_item.email if access_token_item else None)
+            or (id_token_item.email if id_token_item else None)
+            or referring_email
+        )
+        subject: str | None = (
+            token.get("userinfo", {}).get("sub")
+            or (access_token_item.subject if access_token_item else None)
+            or (id_token_item.subject if id_token_item else None)
+            or referring_subject
+        )
+
+        if not subject:
+            raise ValueError("subject must be provided in the token or state")
+
         token_cache_item: TokenCacheItem = TokenCacheItem(
             id=ObjectId(),
             access_token=access_token_item,
             id_token=id_token_item,
             refresh_token=refresh_token_item,
+            access_token_raw=access_token,
+            refresh_token_raw=refresh_token,
             email=email,
             subject=subject,
             issuer=auth_config.issuer,
@@ -552,9 +556,18 @@ class TokenExchangeManager:
             created=datetime.now(UTC),
             referring_email=referring_email,
             referring_subject=referring_subject,
-            refresh_token_raw=refresh_token,
         )
         return token_cache_item
+
+    @staticmethod
+    def _try_parse_token(raw: str | None, label: str) -> Token | None:
+        if not raw:
+            return None
+        try:
+            return Token.create_from_token(token=raw)
+        except Exception:
+            logger.info("%s is not a JWT — treating as opaque token", label)
+            return None
 
     async def delete_token_async(
         self, referring_subject: str, auth_provider: str

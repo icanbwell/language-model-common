@@ -65,6 +65,11 @@ class TokenCacheItem(BaseDbModel):
         default=None, description="The refresh token used to obtain new access tokens."
     )
 
+    access_token_raw: Optional[str] = Field(
+        default=None,
+        description="The raw access token string. Stored because the access token may be opaque (non-JWT) for some providers (e.g., Atlassian).",
+    )
+
     refresh_token_raw: Optional[str] = Field(
         default=None,
         description="The raw refresh token string, stored for use in token refresh operations. This is necessary because the refresh token may not be a JWT and may not have the same structure as access or ID tokens.",
@@ -94,11 +99,20 @@ class TokenCacheItem(BaseDbModel):
         """
         return self.access_token.is_valid() if self.access_token else False
 
+    def get_access_token_string(self) -> Optional[str]:
+        """
+        Gets the raw access token string, preferring the decoded Token's string
+        but falling back to access_token_raw for opaque tokens.
+        """
+        if self.access_token:
+            return self.access_token.token
+        return self.access_token_raw
+
     def get_access_token(self) -> Optional[Token]:
         """
-        Gets the ID token if it is valid, otherwise returns the access token.
+        Gets the access token Token object if available.
         Returns:
-            Optional[str]: The id token if valid, otherwise the access token.
+            Optional[Token]: The access token if present, otherwise None.
         """
         return self.access_token if self.access_token else None
 

@@ -184,11 +184,7 @@ class TokenStorageAuthManager(FastAPIAuthManager):
         await self.token_exchange_manager.save_token_async(
             token_cache_item=token_cache_item, refreshed=False
         )
-        access_token: str | None = (
-            token_cache_item.access_token.token
-            if token_cache_item.access_token
-            else None
-        )
+        access_token: str | None = token_cache_item.get_access_token_string()
         if logger.isEnabledFor(logging.DEBUG):
             access_token_decoded: Dict[str, Any] | None = (
                 await self.token_reader.decode_token_async(
