@@ -1,5 +1,6 @@
 import logging
 from typing import cast
+from urllib.parse import urlparse
 
 import requests
 from authlib.integrations.requests_client import OAuth2Session
@@ -14,6 +15,24 @@ class OAuthAuthenticator:
     Helper class for OAuth2 authentication.
 
     """
+
+    @staticmethod
+    def _validate_same_origin(provider_url: str, endpoint_url: str) -> None:
+        """Validate that endpoint_url shares the same scheme+host as provider_url.
+
+        Prevents chained SSRF where a compromised well-known response could
+        redirect token requests to an internal service (e.g. cloud metadata).
+        """
+        provider = urlparse(provider_url)
+        endpoint = urlparse(endpoint_url)
+        if (provider.scheme, provider.hostname) != (
+            endpoint.scheme,
+            endpoint.hostname,
+        ):
+            raise ValueError(
+                f"token_endpoint origin ({endpoint.scheme}://{endpoint.hostname}) "
+                f"does not match provider origin ({provider.scheme}://{provider.hostname})"
+            )
 
     @staticmethod
     def login_and_get_oauth_access_token(
@@ -46,6 +65,8 @@ class OAuthAuthenticator:
         resp.raise_for_status()
         openid_config = resp.json()
         token_endpoint = openid_config["token_endpoint"]
+
+        OAuthAuthenticator._validate_same_origin(openid_provider_url, token_endpoint)
 
         # https://docs.authlib.org/en/latest/client/oauth2.html
         client = OAuth2Session(
