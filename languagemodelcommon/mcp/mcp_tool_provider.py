@@ -529,12 +529,11 @@ class MCPToolProvider:
                 except* AuthorizationMcpToolTokenInvalidException as auth_eg:
                     logger.warning(
                         "get_tools_async No valid auth token for %s from %s, "
-                        "prompting user to login: %s",
+                        "skipping tool: %s",
                         tool.name,
                         tool.url,
                         ExceptionLogger.format_exception_message(auth_eg),
                     )
-                    raise
                 except* AuthorizationNeededException as auth_needed_eg:
                     logger.warning(
                         "get_tools_async Authorization needed for %s from %s, "
