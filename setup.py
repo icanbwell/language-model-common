@@ -82,6 +82,7 @@ setup(
         "oidcauthlib>=3.0.3",
         "fsspec>=2026.2.0",
         "authlib>=1.6.5",
+        "langchain-google-genai>=4.1.3",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
