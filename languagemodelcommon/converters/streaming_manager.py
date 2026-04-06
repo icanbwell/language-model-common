@@ -352,6 +352,15 @@ class LangGraphStreamingManager:
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
+            # Emit structured tool-start event (Responses API emits
+            # response.output_item.added; Chat Completions returns None).
+            tool_start_event = chat_request_wrapper.create_tool_start_sse_event(
+                request_id=request_information.request_id,
+                tool_name=tool_name,
+                tool_input=tool_input_display,
+            )
+            if tool_start_event:
+                yield tool_start_event
             content_text: str = self.tool_display_name_mapper.get_message_for_tool(
                 tool_name=tool_name, tool_input=tool_input
             )
@@ -418,8 +427,10 @@ class LangGraphStreamingManager:
 
             tool_key: str = self.make_tool_key(tool_name, tool_input)
             start_time: Optional[float] = tool_start_times.pop(tool_key, None)
+            runtime_seconds: Optional[float] = None
             if start_time is not None:
                 elapsed: float = time.time() - start_time
+                runtime_seconds = elapsed
                 runtime_str = f"{elapsed:.2f}s"
                 logger.debug("Tool %s completed in %.2f seconds.", tool_name, elapsed)
             else:
@@ -427,6 +438,17 @@ class LangGraphStreamingManager:
                     "Tool %s end event received without matching start event.",
                     tool_name,
                 )
+
+            # Emit structured tool-end event (Responses API emits
+            # response.output_item.done; Chat Completions returns None).
+            tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
+                request_id=request_information.request_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                runtime_seconds=runtime_seconds,
+            )
+            if tool_end_event:
+                yield tool_end_event
 
             tool_message_content: str = (
                 self.convert_message_content_into_string(tool_message=tool_message)

@@ -1,7 +1,18 @@
+import json
 import logging
 import time
 from datetime import datetime, UTC
-from typing import AsyncIterable, Literal, Union, override, Optional, List, Any, cast
+from typing import (
+    AsyncIterable,
+    Dict,
+    Literal,
+    Union,
+    override,
+    Optional,
+    List,
+    Any,
+    cast,
+)
 
 from langchain_core.messages import AnyMessage
 from langchain_core.messages.ai import UsageMetadata
@@ -235,6 +246,55 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             else None
         )
 
+    @override
+    def create_tool_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any] | None,
+    ) -> str | None:
+        """Emit a ``response.output_item.added`` event with a ``function_call`` item."""
+        event: Dict[str, Any] = {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "function_call",
+                "id": f"fc_{request_id}_{tool_name}",
+                "call_id": f"call_{request_id}_{tool_name}",
+                "name": tool_name,
+                "arguments": json.dumps(tool_input) if tool_input else "",
+                "status": "in_progress",
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_tool_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: Dict[str, Any] | None,
+        runtime_seconds: float | None,
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with a ``function_call`` item."""
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "function_call",
+                "id": f"fc_{request_id}_{tool_name}",
+                "call_id": f"call_{request_id}_{tool_name}",
+                "name": tool_name,
+                "arguments": json.dumps(tool_input) if tool_input else "",
+                "status": "completed",
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
     @staticmethod
     def _convert_usage_to_response_usage(
         usages: list[UsageMetadata],
@@ -357,9 +417,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             if hasattr(m, "usage_metadata") and m.usage_metadata
         ]
         response_usage: ResponseUsage | None = (
-            self._convert_usage_to_response_usage(usage_list)
-            if usage_list
-            else None
+            self._convert_usage_to_response_usage(usage_list) if usage_list else None
         )
 
         parallel_tool_calls = self.effective_parallel_tool_calls()
@@ -455,13 +513,22 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                     if delta_message:
                         yield delta_message
                 # Accumulate usage from each message
-                if hasattr(response_message, "usage_metadata") and response_message.usage_metadata:
+                if (
+                    hasattr(response_message, "usage_metadata")
+                    and response_message.usage_metadata
+                ):
                     if accumulated_usage is None:
                         accumulated_usage = dict(response_message.usage_metadata)
                     else:
-                        accumulated_usage["input_tokens"] += response_message.usage_metadata.get("input_tokens", 0)
-                        accumulated_usage["output_tokens"] += response_message.usage_metadata.get("output_tokens", 0)
-                        accumulated_usage["total_tokens"] += response_message.usage_metadata.get("total_tokens", 0)
+                        accumulated_usage["input_tokens"] += (
+                            response_message.usage_metadata.get("input_tokens", 0)
+                        )
+                        accumulated_usage["output_tokens"] += (
+                            response_message.usage_metadata.get("output_tokens", 0)
+                        )
+                        accumulated_usage["total_tokens"] += (
+                            response_message.usage_metadata.get("total_tokens", 0)
+                        )
 
             yield self.create_final_sse_message(
                 request_id=request_id,

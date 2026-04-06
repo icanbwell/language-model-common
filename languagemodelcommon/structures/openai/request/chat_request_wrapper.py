@@ -226,6 +226,37 @@ class ChatRequestWrapper(abc.ABC):
         effective = getattr(self, "_effective_parallel_tool_calls", None)
         return effective if effective is not None else self.parallel_tool_calls
 
+    def create_tool_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any] | None,
+    ) -> str | None:
+        """Emit an SSE event when a tool begins execution.
+
+        The default implementation returns None (no-op).  Subclasses that
+        support structured tool events (e.g. Responses API) override this
+        to emit a typed SSE frame the client can use for status updates.
+        """
+        return None
+
+    def create_tool_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any] | None,
+        runtime_seconds: float | None,
+    ) -> str | None:
+        """Emit an SSE event when a tool finishes execution.
+
+        The default implementation returns None (no-op).  Subclasses that
+        support structured tool events (e.g. Responses API) override this
+        to emit a typed SSE frame the client can use for status updates.
+        """
+        return None
+
     @property
     @abstractmethod
     def enable_debug_logging(self) -> bool:
