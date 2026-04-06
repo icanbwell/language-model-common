@@ -218,6 +218,47 @@ class LangGraphToOpenAIConverter:
                 usage_metadata=None,
                 source="on_tool_error",
             )
+            # The on_chat_model_end event never fires because the exception
+            # terminates the event stream early.  Write the messages log here
+            # so that the debug download link is still available.
+            if chat_request_wrapper.enable_debug_logging:
+                streamed_output = self.streaming_manager._pop_streamed_text(
+                    request_id=str(request_id),
+                )
+                content_text = ""
+                if streamed_output:
+                    content_text += "--- Streamed assistant output ---\n"
+                    content_text += f"{streamed_output}\n"
+                content_text += f"--- AuthorizationNeededException ---\n{e.message}\n"
+                write_result = (
+                    await self.streaming_manager.debug_file_writer.write_to_file_async(
+                        file_name="messages",
+                        content=content_text,
+                        user_id=request_information.user_id,
+                    )
+                )
+                if write_result and write_result.file_url:
+                    debug_msg = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_id,
+                        content=f"\n\n[Click to download full messages log]({write_result.file_url})\n\n",
+                        usage_metadata=None,
+                        source="on_chat_model_end",
+                    )
+                    if debug_msg is not None:
+                        yield debug_msg
+                elif content_text:
+                    debug_msg = chat_request_wrapper.create_debug_sse_message(
+                        request_id=request_id,
+                        content=(
+                            f"\n\n<details>\n<summary>Messages log</summary>\n\n"
+                            f"```\n{content_text}\n```\n\n"
+                            f"</details>\n\n"
+                        ),
+                        usage_metadata=None,
+                        source="on_chat_model_end",
+                    )
+                    if debug_msg is not None:
+                        yield debug_msg
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)

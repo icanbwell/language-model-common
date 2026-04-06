@@ -490,7 +490,7 @@ class PassThroughTokenManager:
                         )
                     )
                 except Exception:
-                    logger.debug(
+                    logger.warning(
                         "Could not create authorization URL for %s",
                         authentication_config.name,
                         exc_info=True,
