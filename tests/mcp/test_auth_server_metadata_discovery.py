@@ -8,7 +8,7 @@ from languagemodelcommon.configs.schemas.config_schema import McpOAuthConfig
 from oidcauthlib.auth.well_known_configuration.auth_server_metadata import (
     AuthServerMetadata,
 )
-from languagemodelcommon.mcp.auth_server_metadata_discovery import (
+from languagemodelcommon.mcp.auth.auth_server_metadata_discovery import (
     McpAuthServerDiscovery,
 )
 

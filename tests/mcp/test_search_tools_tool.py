@@ -7,7 +7,7 @@ import pytest
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
-from languagemodelcommon.mcp.search_tools_tool import SearchToolsTool
+from languagemodelcommon.tools.mcp.search_tools_tool import SearchToolsTool
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 
 

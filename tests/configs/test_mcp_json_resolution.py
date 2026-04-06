@@ -432,6 +432,64 @@ class TestResolveMcpServers:
         assert server.oauth.redirect_uri == "http://localhost:8080/callback"
         assert server.oauth.auth_server_metadata_url is None
 
+    def test_resolves_display_name_from_mcp_json(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    display_name="Google Drive",
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.url == "https://mcp.example.com/drive/"
+        assert tool.display_name == "Google Drive"
+
+    def test_display_name_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
+        _write_json(
+            tmp_path / ".mcp.json",
+            _make_mcp_json(
+                {
+                    "google-drive": {
+                        "type": "http",
+                        "url": "https://mcp.example.com/drive/",
+                        "displayName": "Google Drive",
+                    }
+                }
+            ),
+        )
+
+        result = read_mcp_json(config_dir=str(tmp_path))
+
+        assert result is not None
+        server = result.mcpServers["google-drive"]
+        assert server.display_name == "Google Drive"
+
+    def test_display_name_not_set_when_absent(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.display_name is None
+
     def test_resolves_headers_auth_from_mcp_json(self) -> None:
         """Groundcover-style config: headers with Authorization, no oauth."""
         config = ChatModelConfig(

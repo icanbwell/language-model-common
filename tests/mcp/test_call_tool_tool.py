@@ -13,7 +13,7 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from languagemodelcommon.mcp.call_tool_tool import (
+from languagemodelcommon.tools.mcp.call_tool_tool import (
     CallToolInput,
     CallToolTool,
     _call_tool_result_to_text,

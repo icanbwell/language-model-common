@@ -107,6 +107,8 @@ def resolve_mcp_servers(
                 continue
             if entry.url:
                 agent.url = entry.url
+            if entry.display_name:
+                agent.display_name = entry.display_name
             if entry.headers:
                 agent.headers = entry.headers
             if entry.auth:

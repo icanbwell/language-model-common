@@ -200,6 +200,12 @@ class McpOAuthConfig(BaseModel):
         description="Client metadata for Dynamic Client Registration.",
     )
 
+    app_login_allowed: bool = Field(
+        False,
+        alias="appLoginAllowed",
+        description="When true, the 'Login to b.well App' option is shown alongside the OAuth login link.",
+    )
+
     @property
     def scope_string(self) -> str:
         """Return scopes as a space-separated string suitable for OAuth requests."""

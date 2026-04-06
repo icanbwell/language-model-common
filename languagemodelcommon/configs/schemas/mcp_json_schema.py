@@ -14,6 +14,15 @@ class McpServerEntry(BaseModel):
     url: str | None = None
     """The MCP server endpoint URL.  Supports ``${ENV_VAR}`` substitution."""
 
+    display_name: str | None = Field(
+        None,
+        alias="displayName",
+        description="Human-readable display name for this MCP server. "
+        "Used in login prompts and UI instead of the server key.",
+    )
+    """Human-readable display name shown in login prompts instead of the
+    server key (e.g., ``"Google Drive"`` instead of ``"google-drive"``)."""
+
     command: str | None = None
     """Command to launch a stdio-based MCP server."""
 
@@ -44,7 +53,7 @@ class McpServerEntry(BaseModel):
     oauth: McpOAuthConfig | None = None
     """OAuth configuration for this MCP server (clientId, authServerMetadataUrl)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
 class McpJsonConfig(BaseModel):

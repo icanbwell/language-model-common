@@ -417,7 +417,7 @@ class TokenExchangeManager:
             collection_name=collection_name,
             item=token_cache_item,
             keys={
-                "subject": token_cache_item.subject,
+                "referring_subject": token_cache_item.referring_subject,
                 "auth_provider": token_cache_item.auth_provider,
             },
             model_class=TokenCacheItem,

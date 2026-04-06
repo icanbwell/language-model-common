@@ -25,7 +25,7 @@ from languagemodelcommon.auth.pass_through_token_manager import (
 )
 from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
-from languagemodelcommon.mcp.auth_server_metadata_discovery import (
+from languagemodelcommon.mcp.auth.auth_server_metadata_discovery import (
     McpAuthServerDiscoveryProtocol,
 )
 from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext
@@ -152,6 +152,7 @@ class MCPToolProvider:
             auth=auth,
             headers=headers,
             timeout=timeout,
+            follow_redirects=True,
             transport=LoggingTransport(httpx.AsyncHTTPTransport()),
         )
 

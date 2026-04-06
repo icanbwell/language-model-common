@@ -446,32 +446,37 @@ class PassThroughTokenManager:
                 ),
             )
 
+        # Build the login display name:
+        # Format: "Login to {tool_display_name} ({oauth_provider_name})"
+        # e.g., "Login to Google Drive (Okta b.well)"
+        tool_display_name: str = (
+            getattr(authentication_config, "display_name", None)
+            or authentication_config.name
+        )
         oauth_display_name: str | None = (
             authentication_config.oauth.display_name
             if authentication_config.oauth and authentication_config.oauth.display_name
             else None
         )
-        tool_display_name: str | None = getattr(
-            authentication_config, "display_name", None
-        )
-        base_display_name: str = (
-            oauth_display_name or tool_display_name or authentication_config.name
-        )
-        # Include the tool name in brackets when we have a separate display name
-        if base_display_name != authentication_config.name:
-            login_display_name = f"{base_display_name} ({authentication_config.name})"
+        if oauth_display_name and oauth_display_name != tool_display_name:
+            login_display_name = f"{tool_display_name} ({oauth_display_name})"
         else:
-            login_display_name = base_display_name
+            login_display_name = tool_display_name
         error_message: str = (
             "\n"
             + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                authentication_config.name
+                tool_display_name
             )
             + f"\nClick here to [Login to {login_display_name}]({authorization_url})."
         )
-        if app_login_url_with_parameters:
+        app_login_allowed: bool = (
+            authentication_config.oauth.app_login_allowed
+            if authentication_config.oauth
+            else False
+        )
+        if app_login_allowed and app_login_url_with_parameters:
             error_message += f"\nClick here to [Login to b.well App]({app_login_url_with_parameters})."
-        if app_token_save_uri_with_parameters:
+        if app_login_allowed and app_token_save_uri_with_parameters:
             error_message += (
                 f"\nClick here to [Paste Token]({app_token_save_uri_with_parameters})."
             )

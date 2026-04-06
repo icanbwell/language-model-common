@@ -73,6 +73,7 @@ class McpHttpClientFactory:
             auth=auth,
             headers=headers,
             timeout=timeout,
+            follow_redirects=True,
         )
 
 
