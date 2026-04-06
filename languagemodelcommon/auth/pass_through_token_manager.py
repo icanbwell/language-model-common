@@ -476,7 +476,7 @@ class PassThroughTokenManager:
         )
         if app_login_allowed and app_login_url_with_parameters:
             error_message += f"\nClick here to [Login to b.well App]({app_login_url_with_parameters})."
-        if app_login_allowed and app_token_save_uri_with_parameters:
+        if app_token_save_uri_with_parameters:
             error_message += (
                 f"\nClick here to [Paste Token]({app_token_save_uri_with_parameters})."
             )
