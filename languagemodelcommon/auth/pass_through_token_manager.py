@@ -21,6 +21,9 @@ from languagemodelcommon.auth.exceptions.authorization_mcp_tool_token_invalid_ex
 )
 from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
 from languagemodelcommon.auth.tools.tool_auth_manager import ToolAuthManager
+from languagemodelcommon.mcp.auth.auth_server_metadata_discovery import (
+    McpAuthServerDiscoveryProtocol,
+)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -39,6 +42,7 @@ class PassThroughTokenManager:
         tool_auth_manager: ToolAuthManager,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         dcr_manager: DcrManager,
+        auth_server_metadata_discovery: McpAuthServerDiscoveryProtocol | None = None,
     ) -> None:
         self.auth_manager: AuthManager = auth_manager
         if self.auth_manager is None:
@@ -78,6 +82,8 @@ class PassThroughTokenManager:
         if not isinstance(self.dcr_manager, DcrManager):
             raise TypeError("dcr_manager must be an instance of DcrManager")
 
+        self.auth_server_metadata_discovery = auth_server_metadata_discovery
+
         # Per-provider locks to prevent concurrent DCR registrations for
         # the same auth server.  This ensures only one client_id is created
         # per DCR server even under concurrent requests.
@@ -115,12 +121,17 @@ class PassThroughTokenManager:
         *,
         auth_provider: str,
         oauth: McpOAuthConfig,
+        server_url: str | None = None,
     ) -> AuthConfig:
         """Dynamically register an auth provider from .mcp.json oauth config.
 
         Uses ``DcrManager`` for credential resolution (pre-registered or DCR)
         and ``AuthManager.register_dynamic_provider()`` for OAuth client
         registration with proper PKCE config.
+
+        When the config has neither ``client_id`` nor ``registration_url``,
+        attempts RFC 8414 / OIDC Discovery against *server_url* to discover
+        the registration endpoint before falling back to ``DcrManager``.
 
         A per-provider asyncio lock ensures that concurrent requests for
         the same ``auth_provider`` serialize through DCR, so only one
@@ -161,6 +172,44 @@ class PassThroughTokenManager:
                     existing.client_id,
                 )
                 return existing
+
+            # When the config has neither client_id nor registration_url,
+            # attempt RFC 8414 / OIDC Discovery to find the registration
+            # endpoint from the server's well-known metadata.
+            if (
+                not oauth.client_id
+                and not oauth.registration_url
+                and server_url
+                and self.auth_server_metadata_discovery
+            ):
+                logger.info(
+                    "OAuth provider '%s' has no client_id or registration_url "
+                    "— attempting auth server discovery from %s",
+                    auth_provider,
+                    server_url,
+                )
+                discovered = await self.auth_server_metadata_discovery.discover(
+                    mcp_server_url=server_url,
+                )
+                if discovered is not None:
+                    if discovered.registration_url:
+                        oauth.registration_url = discovered.registration_url
+                    if discovered.authorization_url and not oauth.authorization_url:
+                        oauth.authorization_url = discovered.authorization_url
+                    if discovered.token_url and not oauth.token_url:
+                        oauth.token_url = discovered.token_url
+                    if discovered.issuer and not oauth.issuer:
+                        oauth.issuer = discovered.issuer
+                    if discovered.scopes and not oauth.scopes:
+                        oauth.scopes = discovered.scopes
+                    logger.info(
+                        "Discovery populated OAuth config for '%s' "
+                        "(registration_url=%s, authorization_url=%s, token_url=%s)",
+                        auth_provider,
+                        oauth.registration_url,
+                        oauth.authorization_url,
+                        oauth.token_url,
+                    )
 
             logger.info(
                 "OAuth provider '%s' not yet registered — resolving "
@@ -309,6 +358,7 @@ class PassThroughTokenManager:
             await self._ensure_oauth_provider_registered(
                 auth_provider=provider_key,
                 oauth=oauth,
+                server_url=authentication_config.url,
             )
             provider_names.append(provider_key)
 
@@ -367,6 +417,7 @@ class PassThroughTokenManager:
             auth_config = await self._ensure_oauth_provider_registered(
                 auth_provider=tool_first_auth_provider,
                 oauth=authentication_config.oauth,
+                server_url=authentication_config.url,
             )
         if auth_config is None:
             raise ValueError(
@@ -382,93 +433,160 @@ class PassThroughTokenManager:
         if not tool_client_id:
             raise ValueError("Tool using authentication must have a client ID.")
 
-        # This is for logging in with Okta
-        authorization_url: (
-            str | None
-        ) = await self.auth_manager.create_authorization_url(
-            auth_provider=tool_auth_provider,
-            redirect_uri=auth_information.redirect_uri,
-            url=authentication_config.url,
-            referring_email=auth_information.email,
-            referring_subject=auth_information.subject,
+        error_message = await self.build_login_message_for_tool(
+            auth_information=auth_information,
+            authentication_config=authentication_config,
+            tool_auth_provider=tool_auth_provider,
+        )
+        return await self.tool_auth_manager.get_token_for_tool_async(
+            auth_header=auth_header,
+            error_message=error_message,
+            tool_config=authentication_config,
         )
 
-        app_login_uri = self.environment_variables.app_login_uri
+    async def build_login_message_for_tool(
+        self,
+        *,
+        auth_information: AuthInformation,
+        authentication_config: AuthenticationConfig,
+        tool_auth_provider: str | None = None,
+    ) -> str:
+        """Build a user-facing error message with login links for a tool.
+
+        Can be called independently of the full token-check flow to produce
+        an actionable message when an MCP server rejects a request.
+        """
+        if tool_auth_provider is None:
+            await self._resolve_oauth_providers(authentication_config)
+            providers = authentication_config.auth_providers
+            tool_auth_provider = providers[0] if providers else None
+
+        authorization_url: str | None = None
+        if (
+            tool_auth_provider
+            and auth_information.redirect_uri
+            and auth_information.subject
+        ):
+            auth_config: AuthConfig | None = (
+                self.auth_config_reader.get_config_for_auth_provider(
+                    auth_provider=tool_auth_provider
+                )
+            )
+            if auth_config is None and authentication_config.oauth:
+                auth_config = await self._ensure_oauth_provider_registered(
+                    auth_provider=tool_auth_provider,
+                    oauth=authentication_config.oauth,
+                    server_url=authentication_config.url,
+                )
+            if auth_config is not None:
+                try:
+                    authorization_url = (
+                        await self.auth_manager.create_authorization_url(
+                            auth_provider=tool_auth_provider,
+                            redirect_uri=auth_information.redirect_uri,
+                            url=authentication_config.url,
+                            referring_email=auth_information.email,
+                            referring_subject=auth_information.subject,
+                        )
+                    )
+                except Exception:
+                    logger.debug(
+                        "Could not create authorization URL for %s",
+                        authentication_config.name,
+                        exc_info=True,
+                    )
+
         app_login_url_with_parameters: str | None = None
-        if app_login_uri:
+        app_login_uri = self.environment_variables.app_login_uri
+        if (
+            app_login_uri
+            and tool_auth_provider
+            and auth_information.email
+            and auth_information.subject
+        ):
             parsed_login_uri = urlparse(app_login_uri)
             existing_query_params = dict(
                 parse_qsl(parsed_login_uri.query, keep_blank_values=True)
             )
-            login_query_params: dict[str, str | None] = {
-                "auth_provider": tool_auth_provider,
-                "referring_email": auth_information.email,
-                "referring_subject": auth_information.subject,
-            }
-            # create state
             sanitized_login_query_params = {
-                "state": (AuthHelper.encode_state(content=login_query_params)),
-            }
-            merged_query_params = {
-                **existing_query_params,
-                **sanitized_login_query_params,
+                "state": AuthHelper.encode_state(
+                    content={
+                        "auth_provider": tool_auth_provider,
+                        "referring_email": auth_information.email,
+                        "referring_subject": auth_information.subject,
+                    }
+                ),
             }
             app_login_url_with_parameters = cast(  # type: ignore[redundant-cast]
                 str,
                 urlunparse(
-                    parsed_login_uri._replace(query=urlencode(merged_query_params))
+                    parsed_login_uri._replace(
+                        query=urlencode(
+                            {**existing_query_params, **sanitized_login_query_params}
+                        )
+                    )
                 ),
             )
 
-        app_token_save_uri = self.environment_variables.app_token_save_uri
         app_token_save_uri_with_parameters: str | None = None
-        if app_token_save_uri:
+        app_token_save_uri = self.environment_variables.app_token_save_uri
+        if (
+            app_token_save_uri
+            and tool_auth_provider
+            and auth_information.email
+            and auth_information.subject
+        ):
             parsed_token_save_uri = urlparse(app_token_save_uri)
             existing_query_params = dict(
                 parse_qsl(parsed_token_save_uri.query, keep_blank_values=True)
             )
-            token_save_query_params: dict[str, str | None] = {
-                "auth_provider": tool_auth_provider,
-                "referring_email": auth_information.email,
-                "referring_subject": auth_information.subject,
-            }
             sanitized_token_save_query_params = {
-                "state": (AuthHelper.encode_state(content=token_save_query_params)),
-            }
-            merged_query_params = {
-                **existing_query_params,
-                **sanitized_token_save_query_params,
+                "state": AuthHelper.encode_state(
+                    content={
+                        "auth_provider": tool_auth_provider,
+                        "referring_email": auth_information.email,
+                        "referring_subject": auth_information.subject,
+                    }
+                ),
             }
             app_token_save_uri_with_parameters = cast(  # type: ignore[redundant-cast]
                 str,
                 urlunparse(
-                    parsed_token_save_uri._replace(query=urlencode(merged_query_params))
+                    parsed_token_save_uri._replace(
+                        query=urlencode(
+                            {
+                                **existing_query_params,
+                                **sanitized_token_save_query_params,
+                            }
+                        )
+                    )
                 ),
             )
 
-        # Build the login display name:
-        # Format: "Login to {tool_display_name} ({oauth_provider_name})"
-        # e.g., "Login to Google Drive (Okta b.well)"
         tool_display_name: str = (
             getattr(authentication_config, "display_name", None)
             or authentication_config.name
         )
-        oauth_display_name: str | None = (
-            authentication_config.oauth.display_name
-            if authentication_config.oauth and authentication_config.oauth.display_name
-            else None
-        )
-        if oauth_display_name and oauth_display_name != tool_display_name:
-            login_display_name = f"{tool_display_name} ({oauth_display_name})"
-        else:
-            login_display_name = tool_display_name
         error_message: str = (
             "\n"
             + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
                 tool_display_name
             )
-            + f"\nClick here to [Login to {login_display_name}]({authorization_url})."
         )
+        if authorization_url:
+            oauth_display_name: str | None = (
+                authentication_config.oauth.display_name
+                if authentication_config.oauth
+                and authentication_config.oauth.display_name
+                else None
+            )
+            if oauth_display_name and oauth_display_name != tool_display_name:
+                login_display_name = f"{tool_display_name} ({oauth_display_name})"
+            else:
+                login_display_name = tool_display_name
+            error_message += (
+                f"\nClick here to [Login to {login_display_name}]({authorization_url})."
+            )
         app_login_allowed: bool = (
             authentication_config.oauth.app_login_allowed
             if authentication_config.oauth
@@ -480,8 +598,4 @@ class PassThroughTokenManager:
             error_message += (
                 f"\nClick here to [Paste Token]({app_token_save_uri_with_parameters})."
             )
-        return await self.tool_auth_manager.get_token_for_tool_async(
-            auth_header=auth_header,
-            error_message=error_message,
-            tool_config=authentication_config,
-        )
+        return error_message

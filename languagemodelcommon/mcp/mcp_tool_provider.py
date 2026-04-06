@@ -381,7 +381,6 @@ class MCPToolProvider:
             tool_url = tool_config.url or "unknown"
             first_exception = ExceptionLogger.get_first_exception(e)
 
-            tool_name = tool_config.name
             # Attempt auth server discovery on 401 when no OAuth is configured
             if (
                 isinstance(first_exception, HTTPStatusError)
@@ -394,10 +393,11 @@ class MCPToolProvider:
                     tool_config=tool_config,
                 )
                 if discovered:
+                    login_message = await auth_interceptor.build_login_message_for_tool(
+                        tool_config
+                    )
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                            tool_name
-                        ),
+                        message=login_message,
                         tool_url=tool_url,
                         token=None,
                     ) from e
@@ -407,25 +407,26 @@ class MCPToolProvider:
                 tool_url,
                 ExceptionLogger.format_exception_message(e),
             )
+            login_message = await auth_interceptor.build_login_message_for_tool(
+                tool_config
+            )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                    tool_name
-                ),
+                message=login_message,
                 tool_url=tool_url,
                 token=None,
             ) from e
         except* McpToolUnauthorizedException as e:
             tool_url = tool_config.url or "unknown"
-            tool_name = tool_config.name
             logger.error(
                 "get_tools_by_url_async MCP Tool Unauthorized error loading MCP tools from %s: %s",
                 tool_url,
                 ExceptionLogger.format_exception_message(e),
             )
+            login_message = await auth_interceptor.build_login_message_for_tool(
+                tool_config
+            )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                    tool_name
-                ),
+                message=login_message,
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -528,27 +529,12 @@ class MCPToolProvider:
                 except* AuthorizationMcpToolTokenInvalidException as auth_eg:
                     logger.warning(
                         "get_tools_async No valid auth token for %s from %s, "
-                        "attempting login link resolution: %s",
+                        "prompting user to login: %s",
                         tool.name,
                         tool.url,
                         ExceptionLogger.format_exception_message(auth_eg),
                     )
-                    # Trigger the full token resolution flow so the user
-                    # gets actionable login links instead of a silent skip.
-                    # If auth is needed this raises AuthorizationNeededException
-                    # with login links which propagates to the user.
-                    # If the token was refreshed it returns normally and we
-                    # retry tool discovery.
-                    await auth_interceptor.resolve_auth_for_tool_with_login_links(
-                        tool_config=tool,
-                    )
-                    # Token was refreshed — retry tool discovery.
-                    retry_tools = await self.get_tools_by_url_async(
-                        tool_config=tool,
-                        headers=headers,
-                        auth_interceptor=auth_interceptor,
-                    )
-                    all_tools.extend(retry_tools)
+                    raise
                 except* AuthorizationNeededException as auth_needed_eg:
                     logger.warning(
                         "get_tools_async Authorization needed for %s from %s, "
@@ -643,7 +629,6 @@ class MCPToolProvider:
             if not self._contains_http_401(e):
                 raise
 
-            tool_name = tool_config.name
             if (
                 tool_config.oauth is None
                 and not tool_config.oauth_providers
@@ -653,18 +638,20 @@ class MCPToolProvider:
                     tool_config=tool_config,
                 )
                 if discovered:
+                    login_message = await auth_interceptor.build_login_message_for_tool(
+                        tool_config
+                    )
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                            tool_name
-                        ),
+                        message=login_message,
                         tool_url=tool_url,
                         token=None,
                     ) from e
 
+            login_message = await auth_interceptor.build_login_message_for_tool(
+                tool_config
+            )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                    tool_name
-                ),
+                message=login_message,
                 tool_url=tool_url,
                 token=None,
             ) from e

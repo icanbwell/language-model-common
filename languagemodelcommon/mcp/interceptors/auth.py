@@ -111,6 +111,17 @@ class AuthMcpCallInterceptor:
             authentication_config=tool_config,
         )
 
+    async def build_login_message_for_tool(self, tool_config: AgentConfig) -> str:
+        """Build a user-facing error message with login links for a tool.
+
+        Unlike ``resolve_auth_for_tool_with_login_links`` this never
+        raises — it always returns the message string.
+        """
+        return await self.pass_through_token_manager.build_login_message_for_tool(
+            auth_information=self._auth_information,
+            authentication_config=tool_config,
+        )
+
     def get_tool_interceptor_auth(self) -> ToolCallInterceptor:
         async def tool_interceptor_auth(
             request: MCPToolCallRequest,
