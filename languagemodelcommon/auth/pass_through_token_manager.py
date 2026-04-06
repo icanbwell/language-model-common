@@ -174,13 +174,21 @@ class PassThroughTokenManager:
             client_id = oauth.client_id
             client_secret = oauth.client_secret
 
+            # Resolve client_name for DCR — explicit metadata takes
+            # precedence, then the OAuth display_name, then the
+            # auth_provider key.  Without a client_name the auth server
+            # will show "unknown client" on consent screens.
+            dcr_client_name: str | None = (
+                (oauth.client_metadata.client_name if oauth.client_metadata else None)
+                or oauth.display_name
+                or auth_provider
+            )
+
             dcr_result = await self.dcr_manager.resolve_dcr_credentials(
                 auth_provider=auth_provider,
                 registration_url=oauth.registration_url,
                 client_id=oauth.client_id,
-                client_name=(
-                    oauth.client_metadata.client_name if oauth.client_metadata else None
-                ),
+                client_name=dcr_client_name,
                 client_uri=(
                     oauth.client_metadata.client_uri if oauth.client_metadata else None
                 ),
