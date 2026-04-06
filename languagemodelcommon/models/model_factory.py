@@ -98,16 +98,16 @@ class ModelFactory:
                     thinking_budget,
                 )
 
+            if additional_fields:
+                model_parameters_dict["additional_model_request_fields"] = (
+                    additional_fields
+                )
+
             llm = ChatBedrockConverse(
                 client=bedrock_client,
                 provider="anthropic",
                 credentials_profile_name=aws_credentials_profile,
                 region_name=aws_region_name,
-                **(
-                    {"additional_model_request_fields": additional_fields}
-                    if additional_fields
-                    else {}
-                ),
                 **model_parameters_dict,
             )
         elif model_config.provider == "openai":
