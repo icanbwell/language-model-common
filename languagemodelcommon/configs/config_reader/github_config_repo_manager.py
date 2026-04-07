@@ -96,7 +96,8 @@ class GithubConfigRepoManager:
         ``{owner}-{repo}-{sha}``.  We flatten it so that the cache
         directory structure is stable across refreshes (no SHA in path).
         """
-        assert self._repo_url is not None  # noqa: S101
+        if not self._repo_url:
+            raise RuntimeError("Cannot download: GITHUB_CONFIG_REPO_URL is not set")
 
         zip_bytes = await self._download_zipball(self._repo_url)
         extract_dir = self._cache_dir.with_name(self._cache_dir.name + ".extract")
