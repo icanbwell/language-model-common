@@ -21,7 +21,11 @@ from languagemodelcommon.utilities.url_parser import UrlParser
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
-_CACHE_TTL_SECONDS = int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "120"))
+try:
+    _CACHE_TTL_SECONDS = int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "120"))
+except (ValueError, TypeError):
+    _CACHE_TTL_SECONDS = 120
+
 _CACHE_DIR = Path(
     os.environ.get(
         "GITHUB_CONFIG_CACHE_DIR",
@@ -29,7 +33,7 @@ _CACHE_DIR = Path(
     )
 )
 
-_cache_timestamps: dict[str, float] = {}
+_cache: dict[str, tuple[Path, float]] = {}
 
 
 def github_url_to_uri(url: str) -> str:
@@ -58,7 +62,7 @@ def github_url_to_uri(url: str) -> str:
 
     owner = parts[0]
     repo = parts[1]
-    branch = parts[3]
+    branch = unquote(parts[3])
     path = unquote("/".join(parts[4:])) if len(parts) > 4 else ""
 
     uri_path = f"/{repo}/{path}" if path else f"/{repo}"
@@ -66,20 +70,34 @@ def github_url_to_uri(url: str) -> str:
 
 
 def is_github_path(path: str) -> bool:
-    """Return ``True`` if *path* is a ``github://`` URI or ``https://github.com/`` URL."""
-    return path.startswith("github://") or UrlParser.is_github_url(path)
+    """Return ``True`` if *path* is a ``github://`` URI or a convertible GitHub tree URL.
+
+    Only matches ``https://github.com/owner/repo/tree/...`` URLs that
+    ``github_url_to_uri`` can convert.  Does not match API URLs like
+    ``https://api.github.com/...``.
+    """
+    if path.startswith("github://"):
+        return True
+    if not UrlParser.is_github_url(path):
+        return False
+    # Only accept tree URLs that github_url_to_uri can handle
+    parsed = urlsplit(path)
+    if parsed.hostname != "github.com":
+        return False
+    parts = [p for p in parsed.path.split("/") if p]
+    return len(parts) >= 4 and parts[2] == "tree"
 
 
 def to_github_uri(path: str) -> str:
     """Normalize a GitHub path to a ``github://`` URI.
 
     Passes ``github://`` URIs through unchanged and converts
-    ``https://github.com/`` URLs.  Raises :class:`ValueError` if
+    ``https://github.com/`` tree URLs.  Raises :class:`ValueError` if
     *path* is not a recognized GitHub path.
     """
     if path.startswith("github://"):
         return path
-    if UrlParser.is_github_url(path):
+    if is_github_path(path):
         return github_url_to_uri(path)
     raise ValueError(f"Not a GitHub path: {path}")
 
@@ -107,39 +125,26 @@ def download_github_directory(github_uri: str) -> Path:
     )
 
     now = time.monotonic()
-    last_download = _cache_timestamps.get(github_uri)
-    cache_path = _CACHE_DIR
+    cached = _cache.get(github_uri)
 
-    if last_download is not None and (now - last_download) < _CACHE_TTL_SECONDS:
-        # Reconstruct the expected target dir to return it without downloading.
-        downloader = GithubDirectoryDownloader()
-        git_loc = downloader.parse_github_uri(github_uri)
-        from hashlib import sha256
-
-        source_path = git_loc.path.strip("/")
-        ref = git_loc.branch or "HEAD"
-        key = f"{git_loc.owner}/{git_loc.repository}:{ref}:{source_path}"
-        cache_dir_name = (
-            f"{git_loc.owner}-{git_loc.repository}"
-            f"-{sha256(key.encode('utf-8')).hexdigest()[:12]}"
-        )
-        cached_dir = (cache_path / cache_dir_name).resolve()
-        if cached_dir.is_dir():
+    if cached is not None:
+        cached_path, cached_time = cached
+        if (now - cached_time) < _CACHE_TTL_SECONDS and cached_path.is_dir():
             logger.debug(
                 "Using cached GitHub download for %s (age: %.0fs)",
                 github_uri,
-                now - last_download,
+                now - cached_time,
             )
-            return cached_dir
+            return cached_path
 
     github_token = os.environ.get("GITHUB_TOKEN")
     downloader = GithubDirectoryDownloader()
     result: Path = downloader.download(
         source_uri=github_uri,
         github_token=github_token,
-        cache_path=cache_path,
+        cache_path=_CACHE_DIR,
     )
-    _cache_timestamps[github_uri] = now
+    _cache[github_uri] = (result, now)
     logger.info("Downloaded and cached GitHub content from %s", github_uri)
     return result
 

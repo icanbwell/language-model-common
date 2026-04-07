@@ -42,6 +42,7 @@ class PromptLibraryManager:
     @resolved_path.setter
     def resolved_path(self, value: str | None) -> None:
         self._resolved_path = value
+        self._github_resolved = False
 
     def _ensure_local_path(self) -> Path:
         """Return a local filesystem Path, downloading from GitHub if needed."""

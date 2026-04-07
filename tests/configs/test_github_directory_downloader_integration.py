@@ -64,6 +64,10 @@ def _make_prompt_library_manager(tmp_path: Path) -> PromptLibraryManager:
             "https://github.com/owner/repo/tree/main",
             "github://owner/repo?ref=main",
         ),
+        (
+            "https://github.com/owner/repo/tree/feature%2Ffoo/configs",
+            "github://owner/repo/configs?ref=feature/foo",
+        ),
     ],
 )
 def test_github_url_to_uri(url: str, expected: str) -> None:
@@ -93,6 +97,10 @@ def test_github_url_to_uri_invalid(url: str) -> None:
         ("https://github.com/owner/repo/tree/main/path", True),
         ("/local/path/to/configs", False),
         ("s3://bucket/path", False),
+        # api.github.com URLs are not convertible tree URLs
+        ("https://api.github.com/repos/owner/repo/zipball/main", False),
+        # GitHub URLs without /tree/ segment are not convertible
+        ("https://github.com/owner/repo", False),
     ],
 )
 def test_is_github_path(path: str, expected: bool) -> None:
