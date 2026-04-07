@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 _CACHE_TTL_SECONDS = int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "120"))
+_CACHE_DIR = Path(
+    os.environ.get(
+        "GITHUB_CONFIG_CACHE_DIR",
+        str(Path(tempfile.gettempdir()) / "github_config_cache"),
+    )
+)
 
 _cache_timestamps: dict[str, float] = {}
 
@@ -92,10 +98,9 @@ def resolve_github_path(path: str) -> Path:
 def download_github_directory(github_uri: str) -> Path:
     """Download a ``github://`` URI to a local cache directory using fsspec.
 
-    Results are cached for ``_CACHE_TTL_SECONDS`` (default 3600 s / 1 hour,
-    configurable via the ``GITHUB_CONFIG_CACHE_TTL_SECONDS`` env var).
-    Subsequent calls within the TTL return the previously downloaded path
-    without hitting GitHub.
+    Results are cached for ``CONFIG_CACHE_TIMEOUT_SECONDS`` (default 120 s).
+    The cache directory defaults to ``{tempdir}/github_config_cache`` and can
+    be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
     """
     from langchain_ai_skills_framework.loaders.github_directory_downloader import (
         GithubDirectoryDownloader,
@@ -103,7 +108,7 @@ def download_github_directory(github_uri: str) -> Path:
 
     now = time.monotonic()
     last_download = _cache_timestamps.get(github_uri)
-    cache_path = Path(tempfile.gettempdir()) / "github_config_cache"
+    cache_path = _CACHE_DIR
 
     if last_download is not None and (now - last_download) < _CACHE_TTL_SECONDS:
         # Reconstruct the expected target dir to return it without downloading.
