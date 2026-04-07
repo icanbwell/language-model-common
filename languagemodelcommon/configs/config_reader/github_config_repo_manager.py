@@ -81,7 +81,8 @@ class GithubConfigRepoManager:
             try:
                 await self._background_task
             except asyncio.CancelledError:
-                pass
+                # Expected during shutdown; task was cancelled successfully
+                logger.debug("Background task cancellation completed")
             logger.info("Background config refresh stopped")
 
     # ------------------------------------------------------------------
