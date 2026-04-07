@@ -11,6 +11,7 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -19,6 +20,10 @@ from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
+
+_CACHE_TTL_SECONDS = int(os.environ.get("GITHUB_CONFIG_CACHE_TTL_SECONDS", "3600"))
+
+_cache_timestamps: dict[str, float] = {}
 
 
 def github_url_to_uri(url: str) -> str:
@@ -85,19 +90,52 @@ def resolve_github_path(path: str) -> Path:
 
 
 def download_github_directory(github_uri: str) -> Path:
-    """Download a ``github://`` URI to a local cache directory using fsspec."""
+    """Download a ``github://`` URI to a local cache directory using fsspec.
+
+    Results are cached for ``_CACHE_TTL_SECONDS`` (default 3600 s / 1 hour,
+    configurable via the ``GITHUB_CONFIG_CACHE_TTL_SECONDS`` env var).
+    Subsequent calls within the TTL return the previously downloaded path
+    without hitting GitHub.
+    """
     from langchain_ai_skills_framework.loaders.github_directory_downloader import (
         GithubDirectoryDownloader,
     )
 
-    github_token = os.environ.get("GITHUB_TOKEN")
+    now = time.monotonic()
+    last_download = _cache_timestamps.get(github_uri)
     cache_path = Path(tempfile.gettempdir()) / "github_config_cache"
+
+    if last_download is not None and (now - last_download) < _CACHE_TTL_SECONDS:
+        # Reconstruct the expected target dir to return it without downloading.
+        downloader = GithubDirectoryDownloader()
+        git_loc = downloader.parse_github_uri(github_uri)
+        from hashlib import sha256
+
+        source_path = git_loc.path.strip("/")
+        ref = git_loc.branch or "HEAD"
+        key = f"{git_loc.owner}/{git_loc.repository}:{ref}:{source_path}"
+        cache_dir_name = (
+            f"{git_loc.owner}-{git_loc.repository}"
+            f"-{sha256(key.encode('utf-8')).hexdigest()[:12]}"
+        )
+        cached_dir = (cache_path / cache_dir_name).resolve()
+        if cached_dir.is_dir():
+            logger.debug(
+                "Using cached GitHub download for %s (age: %.0fs)",
+                github_uri,
+                now - last_download,
+            )
+            return cached_dir
+
+    github_token = os.environ.get("GITHUB_TOKEN")
     downloader = GithubDirectoryDownloader()
     result: Path = downloader.download(
         source_uri=github_uri,
         github_token=github_token,
         cache_path=cache_path,
     )
+    _cache_timestamps[github_uri] = now
+    logger.info("Downloaded and cached GitHub content from %s", github_uri)
     return result
 
 
