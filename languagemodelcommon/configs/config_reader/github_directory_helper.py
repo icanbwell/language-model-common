@@ -21,7 +21,7 @@ from languagemodelcommon.utilities.url_parser import UrlParser
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
-_CACHE_TTL_SECONDS = int(os.environ.get("GITHUB_CONFIG_CACHE_TTL_SECONDS", "3600"))
+_CACHE_TTL_SECONDS = int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "120"))
 
 _cache_timestamps: dict[str, float] = {}
 
