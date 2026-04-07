@@ -30,16 +30,6 @@ class UrlParser:
         )
 
     @staticmethod
-    def is_github_zip_url(url: str) -> bool:
-        parsed_url: ParseResult = urlparse(url)
-        host: Optional[str] = parsed_url.hostname
-        return (
-            host is not None
-            and (host == "github.com" or host.endswith(".github.com"))
-            and "zipball" in url
-        )
-
-    @staticmethod
     def get_url_for_file_name(file_name: str) -> str:
         """
         Get the URL for a given image file name
