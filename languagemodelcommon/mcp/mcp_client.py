@@ -31,17 +31,24 @@ from mcp.types import (
     ContentBlock,
     EmbeddedResource,
     ImageContent,
+    ReadResourceResult,
+    Resource as MCPResource,
     ResourceLink,
+    ResourceTemplate as MCPResourceTemplate,
     TextContent,
     TextResourceContents,
 )
 from mcp.types import Tool as MCPTool
+from pydantic import AnyUrl
 from typing_extensions import NotRequired, TypedDict
 
 from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext, _MCPCallbacks
 from languagemodelcommon.mcp.interceptors.types import (
+    MCPResourceReadRequest,
+    MCPResourceReadResult,
     MCPToolCallRequest,
     MCPToolCallResult,
+    ResourceReadInterceptor,
     ToolCallInterceptor,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -150,6 +157,55 @@ async def list_all_tools(session: ClientSession) -> list[MCPTool]:
     return all_tools
 
 
+# ---------- Resource listing ----------
+
+
+async def list_all_resources(session: ClientSession) -> list[MCPResource]:
+    """List all resources from an MCP session with pagination."""
+    cursor: str | None = None
+    all_resources: list[MCPResource] = []
+    iterations = 0
+
+    while True:
+        iterations += 1
+        if iterations > MAX_ITERATIONS:
+            raise RuntimeError("Exceeded max iterations while listing resources")
+
+        result = await session.list_resources(cursor=cursor)
+        if result.resources:
+            all_resources.extend(result.resources)
+        if not result.nextCursor:
+            break
+        cursor = result.nextCursor
+
+    return all_resources
+
+
+async def list_all_resource_templates(
+    session: ClientSession,
+) -> list[MCPResourceTemplate]:
+    """List all resource templates from an MCP session with pagination."""
+    cursor: str | None = None
+    all_templates: list[MCPResourceTemplate] = []
+    iterations = 0
+
+    while True:
+        iterations += 1
+        if iterations > MAX_ITERATIONS:
+            raise RuntimeError(
+                "Exceeded max iterations while listing resource templates"
+            )
+
+        result = await session.list_resource_templates(cursor=cursor)
+        if result.resourceTemplates:
+            all_templates.extend(result.resourceTemplates)
+        if not result.nextCursor:
+            break
+        cursor = result.nextCursor
+
+    return all_templates
+
+
 # ---------- Interceptor chain ----------
 
 
@@ -171,6 +227,31 @@ def build_interceptor_chain(
                     [MCPToolCallRequest], Awaitable[MCPToolCallResult]
                 ] = current_handler,
             ) -> MCPToolCallResult:
+                return await _interceptor(req, _handler)
+
+            handler = wrapped_handler
+
+    return handler
+
+
+def build_resource_interceptor_chain(
+    base_handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+    resource_interceptors: list[ResourceReadInterceptor] | None,
+) -> Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]]:
+    """Build composed handler chain for resource reads in onion pattern."""
+    handler = base_handler
+
+    if resource_interceptors:
+        for interceptor in reversed(resource_interceptors):
+            current_handler = handler
+
+            async def wrapped_handler(
+                req: MCPResourceReadRequest,
+                _interceptor: ResourceReadInterceptor = interceptor,
+                _handler: Callable[
+                    [MCPResourceReadRequest], Awaitable[MCPResourceReadResult]
+                ] = current_handler,
+            ) -> MCPResourceReadResult:
                 return await _interceptor(req, _handler)
 
             handler = wrapped_handler
@@ -252,6 +333,91 @@ async def call_mcp_tool_raw(
         headers=None,
     )
     return await handler(request)
+
+
+# ---------- Raw resource read ----------
+
+
+def _make_read_resource(
+    config: MCPConnectionConfig,
+    mcp_callbacks: _MCPCallbacks,
+) -> Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]]:
+    """Create a read_resource handler that opens a session and reads the resource."""
+
+    async def read_resource(
+        request: MCPResourceReadRequest,
+    ) -> MCPResourceReadResult:
+        effective_config = config
+        modified_headers = request.headers
+        if modified_headers is not None:
+            updated = dict(config)
+            existing_headers = config.get("headers") or {}
+            updated["headers"] = {**existing_headers, **modified_headers}
+            effective_config = updated  # type: ignore[assignment]
+
+        captured_exception = None
+        async with create_mcp_session(
+            effective_config, mcp_callbacks=mcp_callbacks
+        ) as session:
+            await session.initialize()
+            try:
+                result = await session.read_resource(AnyUrl(request.uri))
+            except Exception as e:
+                captured_exception = e
+
+        if captured_exception is not None:
+            raise captured_exception
+        return result
+
+    return read_resource
+
+
+async def read_mcp_resource_raw(
+    *,
+    config: MCPConnectionConfig,
+    uri: str,
+    server_name: str,
+    callbacks: Callbacks | None = None,
+    resource_interceptors: list[ResourceReadInterceptor] | None = None,
+) -> ReadResourceResult:
+    """Read an MCP resource and return the raw ReadResourceResult.
+
+    This is used by the read_resource meta-tool to proxy reads without
+    converting to LangChain format.
+    """
+    mcp_callbacks = (
+        callbacks.to_mcp_format(
+            context=CallbackContext(server_name=server_name)
+        )
+        if callbacks is not None
+        else _MCPCallbacks()
+    )
+
+    execute_read = _make_read_resource(config, mcp_callbacks)
+    handler = build_resource_interceptor_chain(execute_read, resource_interceptors)
+    request = MCPResourceReadRequest(
+        uri=uri,
+        server_name=server_name,
+        headers=None,
+    )
+    return await handler(request)
+
+
+# ---------- Resource content conversion ----------
+
+
+def convert_resource_contents_to_text(result: ReadResourceResult) -> str:
+    """Convert a ReadResourceResult to a text representation for the LLM."""
+    parts: list[str] = []
+    for content in result.contents:
+        if isinstance(content, TextResourceContents):
+            parts.append(content.text)
+        elif isinstance(content, BlobResourceContents):
+            mime_type = content.mimeType or "application/octet-stream"
+            parts.append(f"[Binary content: {mime_type}, uri: {content.uri}]")
+        else:
+            parts.append(f"[Resource content: {content.uri}]")
+    return "\n".join(parts)
 
 
 # ---------- Content conversion ----------

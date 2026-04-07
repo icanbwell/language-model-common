@@ -4,8 +4,11 @@ from logging import DEBUG
 from typing import Callable, Awaitable, Any
 
 from languagemodelcommon.mcp.interceptors.types import (
+    MCPResourceReadRequest,
+    MCPResourceReadResult,
     MCPToolCallRequest,
     MCPToolCallResult,
+    ResourceReadInterceptor,
     ToolCallInterceptor,
 )
 from mcp.types import (
@@ -134,3 +137,63 @@ class TracingMcpCallInterceptor:
                     raise
 
         return tool_interceptor_tracing
+
+    # noinspection PyMethodMayBeStatic
+    def get_resource_interceptor_tracing(self) -> ResourceReadInterceptor:
+        """Interceptor that wraps each MCP resource read in an OpenTelemetry span."""
+
+        async def resource_interceptor_tracing(
+            request: MCPResourceReadRequest,
+            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+        ) -> MCPResourceReadResult:
+            span_name = f"mcp.resource.read"
+            tracer = get_tracer(__name__)
+            with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
+                try:
+                    span.set_attribute("mcp.server_name", request.server_name)
+                    span.set_attribute("mcp.resource_uri", request.uri)
+                except Exception:
+                    pass
+
+                try:
+                    current_context: Context = otel_context.get_current()
+                    baggage_context: Context | None = baggage.set_baggage(
+                        "source",
+                        "language-model-gateway",
+                        context=current_context,
+                    )
+                    propagation_context: Context = (
+                        baggage_context
+                        if baggage_context is not None
+                        else current_context
+                    )
+                    if request.headers is None:
+                        request.headers = {}
+                    W3CBaggagePropagator().inject(
+                        carrier=request.headers,
+                        context=propagation_context,
+                    )
+                    TraceContextTextMapPropagator().inject(
+                        carrier=request.headers,
+                        context=propagation_context,
+                    )
+                except Exception as otel_err:
+                    logger.debug(f"OTEL inject failed: {type(otel_err)} {otel_err}")
+
+                try:
+                    result = await handler(request)
+                    try:
+                        span.set_attribute(
+                            "mcp.result.content_blocks", len(result.contents)
+                        )
+                    except Exception:
+                        pass
+                    return result
+                except Exception as err:
+                    try:
+                        span.record_exception(err)
+                    except Exception:
+                        pass
+                    raise
+
+        return resource_interceptor_tracing

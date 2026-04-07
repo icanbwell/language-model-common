@@ -34,6 +34,7 @@ from langchain_ai_skills_framework.middleware.skills_middleware import SkillMidd
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 
+from languagemodelcommon.mcp.resource_catalog import ResourceCatalog
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -860,6 +861,7 @@ class LangGraphToOpenAIConverter:
         system_prompts: List[str] | None = None,
         skill_loader: SkillLoaderProtocol,
         tool_catalog: ToolCatalog | None = None,
+        resource_catalog: ResourceCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
         Create a graph for the language model asynchronously.
@@ -875,6 +877,7 @@ class LangGraphToOpenAIConverter:
             system_prompts: Optional list of system prompts to prepend to the agent
             skill_loader: Optional override for the skill loader (per-request scoping)
             tool_catalog: Optional tool catalog for tool discovery middleware
+            resource_catalog: Optional resource catalog for resource discovery middleware
         """
         resolved_skill_loader = skill_loader or self.skill_loader
         if not isinstance(resolved_skill_loader, SkillLoaderProtocol):
@@ -910,7 +913,12 @@ class LangGraphToOpenAIConverter:
             SkillMiddleware(skill_loader=skill_loader),
         ]
         if tool_catalog is not None:
-            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+            middleware.append(
+                ToolDiscoveryMiddleware(
+                    catalog=tool_catalog,
+                    resource_catalog=resource_catalog,
+                )
+            )
 
         react_agent_runnable = create_agent(
             model=llm,

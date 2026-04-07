@@ -11,6 +11,9 @@ from langchain_core.tools import BaseTool
 from mcp.types import (
     CallToolResult,
     LoggingMessageNotificationParams,
+    ReadResourceResult,
+    Resource as MCPResource,
+    ResourceTemplate as MCPResourceTemplate,
     Tool as MCPTool,
 )
 from oidcauthlib.auth.exceptions.authorization_needed_exception import (
@@ -44,9 +47,16 @@ from languagemodelcommon.mcp.interceptors.truncation import (
 from languagemodelcommon.mcp.mcp_client import (
     MCPConnectionConfig,
     create_mcp_session,
+    list_all_resources,
+    list_all_resource_templates,
     list_all_tools,
     mcp_tool_to_langchain_tool,
     call_mcp_tool_raw,
+    read_mcp_resource_raw,
+)
+from languagemodelcommon.mcp.resource_catalog import (
+    ResourceCatalog,
+    ResourceResolverProtocol,
 )
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
@@ -707,6 +717,164 @@ class MCPToolProvider:
         )
 
 
+    # ---------- Resource support ----------
+
+    async def _list_mcp_resources_for_config(
+        self,
+        *,
+        tool_config: AgentConfig,
+        headers: Dict[str, str],
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> tuple[List[MCPResource], List[MCPResourceTemplate]]:
+        """List raw MCP resources and templates from a configured server."""
+        config = self._build_connection_config(tool_config)
+
+        if headers and tool_config.auth:
+            if tool_config.auth_providers:
+                resolved_header = (
+                    await auth_interceptor.resolve_auth_header_for_discovery(
+                        tool_config
+                    )
+                )
+                if resolved_header:
+                    existing = config.get("headers") or {}
+                    config["headers"] = {**existing, "Authorization": resolved_header}
+            else:
+                auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
+                if auth_header:
+                    existing = config.get("headers") or {}
+                    config["headers"] = {**existing, "Authorization": auth_header}
+
+        callbacks = Callbacks(
+            on_progress=self.on_mcp_tool_progress,
+            on_logging_message=self.on_mcp_tool_logging,
+        )
+        mcp_callbacks = callbacks.to_mcp_format(
+            context=CallbackContext(server_name=tool_config.name)
+        )
+
+        tool_url = tool_config.url or "unknown"
+
+        try:
+            async with create_mcp_session(
+                config, mcp_callbacks=mcp_callbacks
+            ) as session:
+                await session.initialize()
+
+                # Check if server supports resources
+                server_capabilities = session.server_capabilities
+                if (
+                    server_capabilities is None
+                    or server_capabilities.resources is None
+                ):
+                    logger.info(
+                        "Server %s does not advertise resource capabilities",
+                        tool_config.name,
+                    )
+                    return [], []
+
+                resources = await list_all_resources(session)
+                templates = await list_all_resource_templates(session)
+        except BaseException as e:
+            if not self._contains_http_401(e):
+                raise
+
+            if (
+                tool_config.oauth is None
+                and not tool_config.oauth_providers
+                and tool_url != "unknown"
+            ):
+                discovered = await self._attempt_auth_server_discovery(
+                    tool_config=tool_config,
+                )
+                if discovered:
+                    login_message = await auth_interceptor.build_login_message_for_tool(
+                        tool_config
+                    )
+                    raise AuthorizationMcpToolTokenInvalidException(
+                        message=login_message,
+                        tool_url=tool_url,
+                        token=None,
+                    ) from e
+
+            login_message = await auth_interceptor.build_login_message_for_tool(
+                tool_config
+            )
+            raise AuthorizationMcpToolTokenInvalidException(
+                message=login_message,
+                tool_url=tool_url,
+                token=None,
+            ) from e
+
+        return resources, templates
+
+    def discover_resource_catalog(
+        self,
+        *,
+        tools: list[AgentConfig],
+    ) -> ResourceCatalog:
+        """Build a ResourceCatalog with lazily-resolved MCP servers.
+
+        Registers each server's metadata in the catalog without contacting
+        the MCP servers. Actual resource discovery is deferred until the
+        LLM calls ``search_resources`` with a matching category.
+        """
+        catalog = ResourceCatalog()
+        for tool_config in tools:
+            if tool_config.url is None:
+                continue
+            logger.info(
+                "discover_resource_catalog Registering server: %s (url: %s, category: %s)",
+                tool_config.name,
+                tool_config.url,
+                tool_config.description,
+            )
+            catalog.register_server(
+                server_name=tool_config.name,
+                category=tool_config.description,
+                agent_config=tool_config,
+            )
+        return catalog
+
+    def create_resource_resolver(
+        self,
+        *,
+        headers: Dict[str, str],
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> ResourceResolverProtocol:
+        """Create a resolver that lazily fetches resources from MCP servers."""
+        return _BoundResourceResolver(
+            provider=self,
+            headers=headers,
+            auth_interceptor=auth_interceptor,
+        )
+
+    async def execute_mcp_resource_read(
+        self,
+        *,
+        uri: str,
+        agent_config: AgentConfig,
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> ReadResourceResult:
+        """Read an MCP resource by URI, applying the full interceptor chain."""
+        config = self._build_connection_config(agent_config)
+        callbacks = Callbacks(
+            on_progress=self.on_mcp_tool_progress,
+            on_logging_message=self.on_mcp_tool_logging,
+        )
+        return await read_mcp_resource_raw(
+            config=config,
+            uri=uri,
+            server_name=agent_config.name,
+            callbacks=callbacks,
+            resource_interceptors=[
+                auth_interceptor.get_resource_interceptor_auth(),
+                self.tracing_interceptor.get_resource_interceptor_tracing(),
+                self.truncation_interceptor.get_resource_interceptor_truncation(),
+            ],
+        )
+
+
 class _BoundToolResolver:
     """Adapts MCPToolProvider into a ToolResolverProtocol for a specific request context."""
 
@@ -749,6 +917,47 @@ class _BoundToolResolver:
             except AuthorizationMcpToolTokenInvalidException:
                 # Retry also failed. Trigger login link resolution
                 # again so the user sees actionable links.
+                await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
+                    tool_config=agent_config,
+                )
+                raise
+
+
+class _BoundResourceResolver:
+    """Adapts MCPToolProvider into a ResourceResolverProtocol for a specific request context."""
+
+    def __init__(
+        self,
+        *,
+        provider: MCPToolProvider,
+        headers: Dict[str, str],
+        auth_interceptor: AuthMcpCallInterceptor,
+    ) -> None:
+        self._provider = provider
+        self._headers = headers
+        self._auth_interceptor = auth_interceptor
+
+    async def resolve_resources(
+        self,
+        agent_config: AgentConfig,
+    ) -> tuple[List[MCPResource], List[MCPResourceTemplate]]:
+        try:
+            return await self._provider._list_mcp_resources_for_config(
+                tool_config=agent_config,
+                headers=self._headers,
+                auth_interceptor=self._auth_interceptor,
+            )
+        except AuthorizationMcpToolTokenInvalidException:
+            await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
+                tool_config=agent_config,
+            )
+            try:
+                return await self._provider._list_mcp_resources_for_config(
+                    tool_config=agent_config,
+                    headers=self._headers,
+                    auth_interceptor=self._auth_interceptor,
+                )
+            except AuthorizationMcpToolTokenInvalidException:
                 await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
                     tool_config=agent_config,
                 )

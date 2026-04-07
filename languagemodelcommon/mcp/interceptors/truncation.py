@@ -3,8 +3,11 @@ from logging import DEBUG
 from typing import List, Callable, Awaitable, Any
 
 from languagemodelcommon.mcp.interceptors.types import (
+    MCPResourceReadRequest,
+    MCPResourceReadResult,
     MCPToolCallRequest,
     MCPToolCallResult,
+    ResourceReadInterceptor,
     ToolCallInterceptor,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
@@ -172,3 +175,59 @@ class TruncationMcpCallInterceptor:
             return result
 
         return tool_interceptor_truncation
+
+    def get_resource_interceptor_truncation(self) -> ResourceReadInterceptor:
+        """Interceptor to truncate resource read output based on token limits."""
+
+        async def resource_interceptor_truncation(
+            request: MCPResourceReadRequest,
+            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+        ) -> MCPResourceReadResult:
+            from mcp.types import ReadResourceResult, TextResourceContents
+
+            result: MCPResourceReadResult = await handler(request)
+
+            if not isinstance(result, ReadResourceResult):
+                return result
+
+            max_token_limit: int = (
+                self.environment_variables.tool_output_token_limit or -1
+            )
+            if max_token_limit <= 0:
+                return result
+
+            tokens_limit_left: int = max_token_limit
+            truncated_contents = []
+
+            for content_item in result.contents:
+                if tokens_limit_left <= 0:
+                    break
+
+                if isinstance(content_item, TextResourceContents):
+                    text = content_item.text
+                    token_count = self.token_reducer.count_tokens(text=text)
+
+                    if token_count > tokens_limit_left:
+                        truncated_text = self.token_reducer.reduce_tokens(
+                            text=text,
+                            max_tokens=tokens_limit_left,
+                            preserve_start=0,
+                        )
+                        truncated_count = self.token_reducer.count_tokens(
+                            text=truncated_text
+                        )
+                        if truncated_count > 0:
+                            content_item.text = truncated_text
+                            truncated_contents.append(content_item)
+                            tokens_limit_left -= truncated_count
+                        break
+                    else:
+                        truncated_contents.append(content_item)
+                        tokens_limit_left -= token_count
+                else:
+                    truncated_contents.append(content_item)
+
+            result.contents = truncated_contents
+            return result
+
+        return resource_interceptor_truncation

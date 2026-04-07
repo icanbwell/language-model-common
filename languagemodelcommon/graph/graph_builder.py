@@ -23,6 +23,7 @@ from languagemodelcommon.history.conversation_history_manager import (
     ConversationHistoryManager,
 )
 from languagemodelcommon.history.smart_history_manager import SmartHistoryManager
+from languagemodelcommon.mcp.resource_catalog import ResourceCatalog
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.state.messages_state import MyMessagesState
@@ -57,6 +58,7 @@ class GraphBuilder:
         system_prompts: List[str] | None = None,
         skill_loader: SkillLoaderProtocol | None = None,
         tool_catalog: ToolCatalog | None = None,
+        resource_catalog: ResourceCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
     ) -> CompiledStateGraph[MyMessagesState]:
@@ -76,6 +78,7 @@ class GraphBuilder:
             checkpointer: Optional checkpointer for state management
             system_prompts: Optional list of system prompts to prepend
             skill_loader: Optional override for the skill loader (per-request scoping)
+            resource_catalog: Optional resource catalog for resource discovery middleware
             max_messages: Maximum number of messages before trimming
             max_tokens: Maximum tokens allowed in conversation history
 
@@ -123,7 +126,12 @@ class GraphBuilder:
             SkillMiddleware(skill_loader=resolved_skill_loader),
         ]
         if tool_catalog is not None:
-            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+            middleware.append(
+                ToolDiscoveryMiddleware(
+                    catalog=tool_catalog,
+                    resource_catalog=resource_catalog,
+                )
+            )
 
         react_agent_runnable = create_agent(
             model=llm,

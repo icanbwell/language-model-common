@@ -3,8 +3,11 @@ from typing import Callable, Awaitable, Dict, Any
 
 from httpx import HTTPStatusError
 from languagemodelcommon.mcp.interceptors.types import (
+    MCPResourceReadRequest,
+    MCPResourceReadResult,
     MCPToolCallRequest,
     MCPToolCallResult,
+    ResourceReadInterceptor,
     ToolCallInterceptor,
 )
 from mcp.types import CallToolResult, TextContent
@@ -170,6 +173,49 @@ class AuthMcpCallInterceptor:
             )
 
         return tool_interceptor_auth
+
+    def get_resource_interceptor_auth(self) -> ResourceReadInterceptor:
+        async def resource_interceptor_auth(
+            request: MCPResourceReadRequest,
+            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+        ) -> MCPResourceReadResult:
+            tool_config = self._tool_configs_by_server_name.get(request.server_name)
+            if tool_config is None or tool_config.auth != "jwt_token":
+                return await handler(request)
+
+            if not tool_config.auth_providers:
+                auth_header = self._extract_auth_header(self._headers)
+                if auth_header:
+                    existing_headers: Dict[str, Any] = dict(request.headers or {})
+                    existing_headers["Authorization"] = auth_header
+                    request = request.override(headers=existing_headers)
+                return await handler(request)
+
+            auth_header = self._extract_auth_header(self._headers)
+
+            token_cache_item: (
+                TokenCacheItem | None
+            ) = await self.pass_through_token_manager.check_tokens_are_valid_for_tool(
+                auth_header=auth_header,
+                auth_information=self._auth_information,
+                authentication_config=tool_config,
+            )
+
+            resolved_auth_header = self._resolve_auth_header(
+                token_cache_item=token_cache_item,
+                auth_header=auth_header,
+                tool_config=tool_config,
+            )
+
+            modified_request = request
+            if resolved_auth_header:
+                existing_headers = dict(request.headers or {})
+                existing_headers["Authorization"] = resolved_auth_header
+                modified_request = request.override(headers=existing_headers)
+
+            return await handler(modified_request)
+
+        return resource_interceptor_auth
 
     @staticmethod
     async def _call_handler_with_auth_error_handling(
