@@ -59,16 +59,28 @@ def is_github_path(path: str) -> bool:
     return path.startswith("github://") or UrlParser.is_github_url(path)
 
 
+def to_github_uri(path: str) -> str:
+    """Normalize a GitHub path to a ``github://`` URI.
+
+    Passes ``github://`` URIs through unchanged and converts
+    ``https://github.com/`` URLs.  Raises :class:`ValueError` if
+    *path* is not a recognized GitHub path.
+    """
+    if path.startswith("github://"):
+        return path
+    if UrlParser.is_github_url(path):
+        return github_url_to_uri(path)
+    raise ValueError(f"Not a GitHub path: {path}")
+
+
 def resolve_github_path(path: str) -> Path:
     """Resolve a GitHub path to a local directory.
 
     Accepts ``github://`` URIs, ``https://github.com/`` URLs, or local paths.
     GitHub paths are downloaded via fsspec; local paths are returned as-is.
     """
-    if path.startswith("github://"):
-        return download_github_directory(path)
-    if UrlParser.is_github_url(path):
-        return download_github_directory(github_url_to_uri(path))
+    if is_github_path(path):
+        return download_github_directory(to_github_uri(path))
     return Path(path)
 
 

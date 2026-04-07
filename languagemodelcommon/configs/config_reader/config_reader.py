@@ -10,10 +10,10 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
 )
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    github_url_to_uri,
     is_github_path,
     join_github_uri_path,
     resolve_github_path,
+    to_github_uri,
 )
 from languagemodelcommon.configs.config_reader.s3_config_reader import S3ConfigReader
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -27,8 +27,6 @@ from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-
-from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -211,12 +209,9 @@ class ConfigReader:
             logger.warning("Invalid client_id format: %s", client_id)
             return None
         if is_github_path(config_path):
-            github_uri = (
-                github_url_to_uri(config_path)
-                if UrlParser.is_github_url(config_path)
-                else config_path
+            return join_github_uri_path(
+                to_github_uri(config_path), f"clients/{client_id}"
             )
-            return join_github_uri_path(github_uri, f"clients/{client_id}")
         if config_path.startswith("s3"):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
         config_folder = Path(config_path)
@@ -366,12 +361,9 @@ class ConfigReader:
                 PROMPTS_FOLDER_NAME,
             )
 
-            github_uri = (
-                github_url_to_uri(config_path)
-                if UrlParser.is_github_url(config_path)
-                else config_path
+            prompts_uri = join_github_uri_path(
+                to_github_uri(config_path), PROMPTS_FOLDER_NAME
             )
-            prompts_uri = join_github_uri_path(github_uri, PROMPTS_FOLDER_NAME)
             try:
                 local_path = resolve_github_path(prompts_uri)
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
