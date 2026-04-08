@@ -270,14 +270,41 @@ class TokenExchangeManager:
                 )
 
                 # see if this token is valid for this tool or if we need to do a token exchange
-                if (
-                    # either we have an auth provider for the client id in the token
+                token_matches_tool: bool = bool(
                     token_auth_provider
-                    and (  # and token's auth provider matches one of the tool's auth providers
-                        token_auth_provider.lower()
-                        in [c.lower() for c in tool_auth_providers]
-                    )
-                ):
+                    and token_auth_provider.lower()
+                    in [c.lower() for c in tool_auth_providers]
+                )
+
+                # If the auth_provider name didn't match (e.g. gateway
+                # provider "oktaaiden" vs MCP tool provider
+                # "mcp_oauth_<client_id>"), check whether the token's
+                # client_id matches the client_id configured on any of
+                # the tool's auth providers.  This covers the common
+                # case where the user already holds a valid token for
+                # the same Okta application the MCP tool requires.
+                if not token_matches_tool and client_id:
+                    original_provider = token_auth_provider
+                    for tool_ap in tool_auth_providers:
+                        tool_auth_config = (
+                            self.auth_config_reader.get_config_for_auth_provider(
+                                auth_provider=tool_ap
+                            )
+                        )
+                        if tool_auth_config and tool_auth_config.client_id == client_id:
+                            token_auth_provider = tool_ap
+                            token_matches_tool = True
+                            logger.debug(
+                                "Token client_id '%s' matches tool auth "
+                                "provider '%s' by client_id (resolved "
+                                "provider name was '%s')",
+                                client_id,
+                                tool_ap,
+                                original_provider,
+                            )
+                            break
+
+                if token_matches_tool and token_auth_provider:
                     # token is valid but check if it's expired
                     logger.debug(
                         f"Token is valid for tool {tool_config.name} "
