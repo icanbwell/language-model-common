@@ -51,6 +51,19 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 MAX_ITERATIONS = 1000
 
+
+class McpSessionError(Exception):
+    """Raised when an MCP session cannot be established or fails unexpectedly.
+
+    Wraps lower-level exceptions with actionable context (URL, timeout values,
+    HTTP status) so operators can diagnose connectivity problems in production.
+    """
+
+    def __init__(self, message: str, *, url: str | None = None) -> None:
+        super().__init__(message)
+        self.url = url
+
+
 DEFAULT_TIMEOUT = timedelta(seconds=30)
 DEFAULT_SSE_READ_TIMEOUT = timedelta(seconds=300)
 
@@ -113,17 +126,53 @@ async def create_mcp_session(
         if mcp_callbacks.logging_callback is not None:
             session_kwargs["logging_callback"] = mcp_callbacks.logging_callback
 
-    async with (
-        streamablehttp_client(
-            url,
-            headers,
-            timeout,
-            sse_read_timeout,
-            **kwargs,
-        ) as (read, write, _),
-        ClientSession(read, write, **session_kwargs) as session,
-    ):
-        yield session
+    try:
+        async with (
+            streamablehttp_client(
+                url,
+                headers,
+                timeout,
+                sse_read_timeout,
+                **kwargs,
+            ) as (read, write, _),
+            ClientSession(read, write, **session_kwargs) as session,
+        ):
+            yield session
+    except httpx.ConnectError as e:
+        raise McpSessionError(
+            f"Connection refused — is the MCP server running at {url}? "
+            f"({type(e).__name__}: {e})",
+            url=url,
+        ) from e
+    except httpx.ConnectTimeout as e:
+        raise McpSessionError(
+            f"Connection timed out reaching MCP server at {url} "
+            f"(timeout={timeout}). ({type(e).__name__}: {e})",
+            url=url,
+        ) from e
+    except httpx.ReadTimeout as e:
+        raise McpSessionError(
+            f"Read timed out waiting for MCP server at {url} "
+            f"(sse_read_timeout={sse_read_timeout}). "
+            f"({type(e).__name__}: {e})",
+            url=url,
+        ) from e
+    except httpx.HTTPStatusError as e:
+        raise McpSessionError(
+            f"MCP server at {url} returned HTTP {e.response.status_code}. "
+            f"({type(e).__name__}: {e})",
+            url=url,
+        ) from e
+    except Exception as e:
+        # Re-raise with URL context if the original message is opaque
+        # (e.g. "Session terminated" from the MCP SDK).
+        msg = str(e)
+        if url not in msg:
+            raise McpSessionError(
+                f"MCP session failed for {url}: {type(e).__name__}: {msg}",
+                url=url,
+            ) from e
+        raise
 
 
 # ---------- Tool listing ----------
