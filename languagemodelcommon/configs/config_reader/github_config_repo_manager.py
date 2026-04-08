@@ -100,9 +100,17 @@ class GithubConfigRepoManager:
             raise RuntimeError("Cannot download: GITHUB_CONFIG_REPO_URL is not set")
 
         zip_bytes = await self._download_zipball(self._repo_url)
-        extract_dir = self._cache_dir.with_name(self._cache_dir.name + ".extract")
-        staging_dir = self._cache_dir.with_name(self._cache_dir.name + ".new")
-        old_dir = self._cache_dir.with_name(self._cache_dir.name + ".old")
+
+        # Place temporary directories *inside* the cache dir's parent to
+        # stay on the same filesystem.  In Kubernetes the cache dir is
+        # often a mounted volume; sibling paths created with `with_name()`
+        # may land on the container overlay FS, causing EXDEV (errno 18)
+        # on rename.  Using shutil.move handles the cross-device case
+        # gracefully by falling back to copy+delete.
+        parent = self._cache_dir.parent
+        extract_dir = parent / (self._cache_dir.name + ".extract")
+        staging_dir = parent / (self._cache_dir.name + ".new")
+        old_dir = parent / (self._cache_dir.name + ".old")
 
         # Extract into a temporary directory
         if extract_dir.exists():
@@ -115,17 +123,17 @@ class GithubConfigRepoManager:
         if staging_dir.exists():
             shutil.rmtree(staging_dir)
         if repo_root != extract_dir:
-            repo_root.rename(staging_dir)
+            shutil.move(str(repo_root), str(staging_dir))
             shutil.rmtree(extract_dir, ignore_errors=True)
         else:
-            extract_dir.rename(staging_dir)
+            shutil.move(str(extract_dir), str(staging_dir))
 
         # Atomic swap: staging → current, current → old
         if old_dir.exists():
             shutil.rmtree(old_dir)
         if self._cache_dir.exists():
-            self._cache_dir.rename(old_dir)
-        staging_dir.rename(self._cache_dir)
+            shutil.move(str(self._cache_dir), str(old_dir))
+        shutil.move(str(staging_dir), str(self._cache_dir))
 
         # Clean up old directory (best-effort)
         if old_dir.exists():
