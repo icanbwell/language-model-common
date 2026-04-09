@@ -1,7 +1,7 @@
 """Tests for _ensure_oauth_provider_registered discovery fallback.
 
 When an McpOAuthConfig has neither client_id nor registration_url,
-PassThroughTokenManager should attempt RFC 8414 / OIDC Discovery
+OAuthProviderRegistrar should attempt RFC 8414 / OIDC Discovery
 from the server URL to discover the registration endpoint before
 calling DcrManager.
 """
@@ -12,10 +12,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from languagemodelcommon.auth.oauth_provider_registrar import OAuthProviderRegistrar
 from languagemodelcommon.auth.pass_through_token_manager import (
     PassThroughTokenManager,
 )
 from languagemodelcommon.configs.schemas.config_schema import McpOAuthConfig
+from oidcauthlib.auth.auth_manager import AuthManager
+from oidcauthlib.auth.config.auth_config_reader import AuthConfigReader
 from oidcauthlib.auth.dcr.dcr_manager import DcrManager
 
 
@@ -24,11 +27,12 @@ def _make_manager(
     discovery_result: McpOAuthConfig | None = None,
     dcr_result: dict[str, Any] | None = None,
     existing_provider: bool = False,
+    discovery_instance: Any = "default",
 ) -> PassThroughTokenManager:
     """Create a PassThroughTokenManager with mocked dependencies."""
     manager = object.__new__(PassThroughTokenManager)
 
-    mock_auth_config_reader = MagicMock()
+    mock_auth_config_reader = MagicMock(spec=AuthConfigReader)
     if existing_provider:
         mock_config = MagicMock()
         mock_config.client_id = "existing-id"
@@ -38,7 +42,7 @@ def _make_manager(
         mock_auth_config_reader.get_auth_configs_for_all_auth_providers.return_value = []
 
     manager.auth_config_reader = mock_auth_config_reader
-    manager.auth_manager = MagicMock()
+    manager.auth_manager = MagicMock(spec=AuthManager)
     manager.auth_manager.register_dynamic_provider = AsyncMock()
     manager.tool_auth_manager = MagicMock()
     manager.environment_variables = MagicMock()
@@ -51,13 +55,24 @@ def _make_manager(
         mock_dcr.resolve_dcr_credentials = AsyncMock(return_value=dcr_registration)
     else:
         mock_dcr.resolve_dcr_credentials = AsyncMock(return_value=None)
-    manager.dcr_manager = mock_dcr
 
-    mock_discovery = MagicMock()
-    mock_discovery.discover = AsyncMock(return_value=discovery_result)
-    manager.auth_server_metadata_discovery = mock_discovery
+    if discovery_instance == "default":
+        mock_discovery = MagicMock()
+        mock_discovery.discover = AsyncMock(return_value=discovery_result)
+    else:
+        mock_discovery = discovery_instance
 
-    manager._dcr_locks = {}
+    registrar = OAuthProviderRegistrar(
+        dcr_manager=mock_dcr,
+        auth_config_reader=mock_auth_config_reader,
+        auth_server_metadata_discovery=mock_discovery,
+    )
+    manager._oauth_provider_registrar = registrar
+
+    # Expose mocks for test assertions
+    manager.dcr_manager = mock_dcr  # type: ignore[attr-defined]
+    manager.auth_server_metadata_discovery = mock_discovery  # type: ignore[attr-defined]
+
     return manager
 
 
@@ -179,8 +194,7 @@ async def test_discovery_skipped_when_no_server_url() -> None:
 @pytest.mark.asyncio
 async def test_discovery_skipped_when_no_discovery_instance() -> None:
     """Discovery is not attempted when auth_server_metadata_discovery is None."""
-    manager = _make_manager()
-    manager.auth_server_metadata_discovery = None
+    manager = _make_manager(discovery_instance=None)
 
     oauth = McpOAuthConfig.model_validate(
         {
