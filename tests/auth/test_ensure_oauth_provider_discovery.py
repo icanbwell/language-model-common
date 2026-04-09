@@ -109,7 +109,7 @@ async def test_discovery_populates_registration_url() -> None:
     )
 
     # Discovery was called with the server URL
-    manager.auth_server_metadata_discovery.discover.assert_awaited_once_with(  # type: ignore[union-attr]
+    manager.auth_server_metadata_discovery.discover.assert_awaited_once_with(  # type: ignore[attr-defined]
         mcp_server_url="https://mcp.atlassian.com/v1/mcp"
     )
 
@@ -144,7 +144,7 @@ async def test_discovery_skipped_when_client_id_present() -> None:
         server_url="https://mcp.example.com/v1/mcp",
     )
 
-    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[union-attr]
+    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -168,7 +168,7 @@ async def test_discovery_skipped_when_registration_url_present() -> None:
         server_url="https://mcp.example.com/v1/mcp",
     )
 
-    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[union-attr]
+    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -188,7 +188,7 @@ async def test_discovery_skipped_when_no_server_url() -> None:
             oauth=oauth,
         )
 
-    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[union-attr]
+    manager.auth_server_metadata_discovery.discover.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -228,7 +228,7 @@ async def test_discovery_returns_none_falls_through_to_error() -> None:
             server_url="https://mcp.example.com/v1/mcp",
         )
 
-    manager.auth_server_metadata_discovery.discover.assert_awaited_once()  # type: ignore[union-attr]
+    manager.auth_server_metadata_discovery.discover.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
