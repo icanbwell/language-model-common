@@ -97,3 +97,23 @@ def test_resolved_path_falls_back_to_env(tmp_path: Path) -> None:
     )
     assert manager.resolved_path == str(tmp_path)
     assert manager.get_prompt("prompt") == "from env"
+
+
+def test_setting_resolved_path_resets_github_resolution(tmp_path: Path) -> None:
+    """Setting resolved_path resets _github_resolved so a new GitHub path is re-resolved."""
+    dir_a = tmp_path / "a"
+    dir_a.mkdir()
+    (dir_a / "greeting.md").write_text("hello from a", encoding="utf-8")
+
+    dir_b = tmp_path / "b"
+    dir_b.mkdir()
+    (dir_b / "greeting.md").write_text("hello from b", encoding="utf-8")
+
+    manager = PromptLibraryManager(
+        environment_variables=_StubPromptLibraryEnv(str(dir_a))
+    )
+    assert manager.get_prompt("greeting") == "hello from a"
+
+    # After setting resolved_path, _github_resolved should be reset
+    manager.resolved_path = str(dir_b)
+    assert manager.get_prompt("greeting") == "hello from b"

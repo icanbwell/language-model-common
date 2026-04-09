@@ -63,10 +63,11 @@ class TestReadMcpJson:
     def test_env_var_overrides_config_dir(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        env_mcp = tmp_path / "custom" / ".mcp.json"
-        env_mcp.parent.mkdir()
+        custom_dir = tmp_path / "custom"
+        custom_dir.mkdir()
         _write_json(
-            env_mcp, _make_mcp_json({"env-server": {"url": "https://env.example.com/"}})
+            custom_dir / ".mcp.json",
+            _make_mcp_json({"env-server": {"url": "https://env.example.com/"}}),
         )
 
         # Also create one in config_dir to prove it's NOT used
@@ -75,7 +76,7 @@ class TestReadMcpJson:
             _make_mcp_json({"dir-server": {"url": "https://dir.example.com/"}}),
         )
 
-        monkeypatch.setenv(MCP_JSON_PATH_ENV, str(env_mcp))
+        monkeypatch.setenv(MCP_JSON_PATH_ENV, str(custom_dir))
         result = read_mcp_json(config_dir=str(tmp_path))
 
         assert result is not None
@@ -566,12 +567,14 @@ class TestFileConfigReaderMcpJsonIntegration:
             model_dir / "model.json", _make_model_config("drive", mcp_server="gd")
         )
 
-        mcp_file = tmp_path / "custom-mcp.json"
+        mcp_dir = tmp_path / "custom-mcp"
+        mcp_dir.mkdir()
         _write_json(
-            mcp_file, _make_mcp_json({"gd": {"url": "https://custom.example.com/"}})
+            mcp_dir / ".mcp.json",
+            _make_mcp_json({"gd": {"url": "https://custom.example.com/"}}),
         )
 
-        monkeypatch.setenv(MCP_JSON_PATH_ENV, str(mcp_file))
+        monkeypatch.setenv(MCP_JSON_PATH_ENV, str(mcp_dir))
         configs = FileConfigReader().read_model_configs(config_path=str(model_dir))
 
         assert len(configs) == 1

@@ -81,14 +81,19 @@ class SearchToolsTool(BaseTool):
                     # Re-raise auth exceptions so the user sees login links
                     raise
                 except Exception as e:
+                    server_url = (
+                        server.agent_config.url if server.agent_config else "unknown"
+                    )
                     error_msg = (
-                        f"Failed to connect to {server.server_name}: "
+                        f"Failed to connect to {server.server_name} "
+                        f"(url: {server_url}): "
                         f"{ExceptionLogger.format_exception_message(e)}"
                     )
                     resolution_errors.append(error_msg)
                     logger.warning(
-                        "Failed to resolve server %s during search: %s: %s",
+                        "Failed to resolve server %s at %s during search: %s: %s",
                         server.server_name,
+                        server_url,
                         type(e).__name__,
                         e,
                     )

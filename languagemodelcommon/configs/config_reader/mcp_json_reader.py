@@ -4,6 +4,10 @@ import os
 from pathlib import Path
 from typing import List
 
+from languagemodelcommon.configs.config_reader.github_directory_helper import (
+    is_github_path,
+    resolve_github_path,
+)
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
@@ -29,7 +33,9 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
     """Read and parse ``.mcp.json``.
 
     Resolution order for the file path:
-    1. ``MCP_JSON_PATH`` environment variable (absolute path to the file).
+    1. ``MCP_JSON_PATH`` environment variable (path to a directory containing
+       ``.mcp.json``).  Supports local paths, ``github://`` URIs, and
+       ``https://github.com/`` URLs.
     2. ``.mcp.json`` in *config_dir* (the model-configs directory).
 
     Returns ``None`` when no ``.mcp.json`` is found.
@@ -37,7 +43,11 @@ def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
     env_path = os.environ.get(MCP_JSON_PATH_ENV)
 
     if env_path:
-        mcp_json_path = Path(env_path).resolve()
+        if is_github_path(env_path):
+            resolved_dir = resolve_github_path(env_path)
+        else:
+            resolved_dir = Path(env_path).resolve()
+        mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
     elif config_dir:
         resolved_dir = Path(config_dir).resolve()
         mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()

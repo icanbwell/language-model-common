@@ -10,11 +10,10 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
 )
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    download_github_directory,
+    is_github_path,
     join_github_uri_path,
-)
-from languagemodelcommon.configs.config_reader.github_config_reader import (
-    GitHubConfigReader,
+    resolve_github_path,
+    to_github_uri,
 )
 from languagemodelcommon.configs.config_reader.s3_config_reader import S3ConfigReader
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -28,8 +27,6 @@ from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-
-from languagemodelcommon.utilities.url_parser import UrlParser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -176,19 +173,10 @@ class ConfigReader:
                 self._identifier,
                 len(models),
             )
-        elif config_path.startswith("github://"):
-            local_path = download_github_directory(config_path)
+        elif is_github_path(config_path):
+            local_path = resolve_github_path(config_path)
             models = FileConfigReader().read_model_configs(
                 config_path=str(local_path), exclude_dirs=exclude_dirs
-            )
-            logger.info(
-                "ConfigReader with id: %s loaded %s model configurations from GitHub (fsspec)",
-                self._identifier,
-                len(models),
-            )
-        elif UrlParser.is_github_url(config_path):
-            models = await GitHubConfigReader().read_model_configs(
-                github_url=config_path
             )
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from GitHub",
@@ -220,9 +208,11 @@ class ConfigReader:
         if not ConfigReader._is_valid_client_id(client_id):
             logger.warning("Invalid client_id format: %s", client_id)
             return None
-        if config_path.startswith("github://"):
-            return join_github_uri_path(config_path, f"clients/{client_id}")
-        if config_path.startswith("s3") or UrlParser.is_github_url(config_path):
+        if is_github_path(config_path):
+            return join_github_uri_path(
+                to_github_uri(config_path), f"clients/{client_id}"
+            )
+        if config_path.startswith("s3"):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
         config_folder = Path(config_path)
         override_folder = config_folder.joinpath("clients", client_id)
@@ -365,15 +355,17 @@ class ConfigReader:
             self._resolve_prompt_list(model.example_prompts)
 
     def _discover_prompts_path(self, config_path: str) -> str | None:
-        """Discover the prompts folder from config_path, supporting github:// URIs."""
-        if config_path.startswith("github://"):
+        """Discover the prompts folder from config_path, supporting GitHub paths."""
+        if is_github_path(config_path):
             from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
                 PROMPTS_FOLDER_NAME,
             )
 
-            prompts_uri = join_github_uri_path(config_path, PROMPTS_FOLDER_NAME)
+            prompts_uri = join_github_uri_path(
+                to_github_uri(config_path), PROMPTS_FOLDER_NAME
+            )
             try:
-                local_path = download_github_directory(prompts_uri)
+                local_path = resolve_github_path(prompts_uri)
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
                 return str(local_path)
             except Exception as e:

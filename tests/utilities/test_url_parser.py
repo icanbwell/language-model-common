@@ -22,14 +22,6 @@ class TestUrlParser:
         assert UrlParser.is_github_url("https://api.github.com/org/repo")
         assert not UrlParser.is_github_url("https://example.com/org/repo")
 
-    def test_is_github_zip_url_requires_zipball(self) -> None:
-        assert UrlParser.is_github_zip_url(
-            "https://api.github.com/repos/org/repo/zipball/main"
-        )
-        assert not UrlParser.is_github_zip_url(
-            "https://api.github.com/repos/org/repo/archive/main"
-        )
-
     def test_get_url_for_file_name_uses_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

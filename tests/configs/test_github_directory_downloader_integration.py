@@ -7,7 +7,10 @@ import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
+    github_url_to_uri,
+    is_github_path,
     join_github_uri_path,
+    resolve_github_path,
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
@@ -39,6 +42,104 @@ def _make_prompt_library_manager(tmp_path: Path) -> PromptLibraryManager:
     )
 
 
+# --- github_url_to_uri tests ---
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (
+            "https://github.com/owner/repo/tree/main/configs/chat",
+            "github://owner/repo/configs/chat?ref=main",
+        ),
+        (
+            "https://github.com/icanbwell/language-model-gateway-configuration/tree/main/configs/chat_completions/official",
+            "github://icanbwell/language-model-gateway-configuration/configs/chat_completions/official?ref=main",
+        ),
+        (
+            "https://github.com/owner/repo/tree/develop/path",
+            "github://owner/repo/path?ref=develop",
+        ),
+        (
+            "https://github.com/owner/repo/tree/main",
+            "github://owner/repo?ref=main",
+        ),
+        (
+            "https://github.com/owner/repo/tree/feature%2Ffoo/configs",
+            "github://owner/repo/configs?ref=feature/foo",
+        ),
+    ],
+)
+def test_github_url_to_uri(url: str, expected: str) -> None:
+    assert github_url_to_uri(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://notgithub.com/owner/repo/tree/main/configs",
+        "https://github.com/owner/repo/branch/main/configs",
+        "https://github.com/owner/repo/tree",
+    ],
+)
+def test_github_url_to_uri_invalid(url: str) -> None:
+    with pytest.raises(ValueError):
+        github_url_to_uri(url)
+
+
+# --- is_github_path tests ---
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("github://org/repo/configs?ref=main", True),
+        ("https://github.com/owner/repo/tree/main/path", True),
+        ("/local/path/to/configs", False),
+        ("s3://bucket/path", False),
+        # api.github.com URLs are not convertible tree URLs
+        ("https://api.github.com/repos/owner/repo/zipball/main", False),
+        # GitHub URLs without /tree/ segment are not convertible
+        ("https://github.com/owner/repo", False),
+    ],
+)
+def test_is_github_path(path: str, expected: bool) -> None:
+    assert is_github_path(path) == expected
+
+
+# --- resolve_github_path tests ---
+
+
+def test_resolve_github_path_local(tmp_path: Path) -> None:
+    result = resolve_github_path(str(tmp_path))
+    assert result == tmp_path
+
+
+def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
+    with patch(
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
+        return_value=tmp_path,
+    ) as mock_download:
+        result = resolve_github_path("github://org/repo/configs?ref=main")
+
+    assert result == tmp_path
+    mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
+
+
+def test_resolve_github_path_https_url(tmp_path: Path) -> None:
+    with patch(
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
+        return_value=tmp_path,
+    ) as mock_download:
+        result = resolve_github_path("https://github.com/owner/repo/tree/main/configs")
+
+    assert result == tmp_path
+    mock_download.assert_called_once_with("github://owner/repo/configs?ref=main")
+
+
+# --- ConfigReader integration tests ---
+
+
 @pytest.mark.asyncio
 async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> None:
     """ConfigReader uses GithubDirectoryDownloader for github:// URIs."""
@@ -57,7 +158,7 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
     with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
         return_value=local_dir,
     ) as mock_download:
         models = await reader.read_models_from_path_async(
@@ -67,6 +168,35 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     assert len(models) == 1
     assert models[0].name == "Model One"
     mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
+
+
+@pytest.mark.asyncio
+async def test_read_models_from_https_github_url(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """ConfigReader converts https://github.com/ URLs and downloads via fsspec."""
+    local_dir = tmp_path / "downloaded"
+    local_dir.mkdir()
+    _write_json(
+        local_dir / "model.json",
+        {"id": "m1", "name": "Model One"},
+    )
+
+    cache = ConfigExpiringCache(ttl_seconds=0)
+    prompt_mgr = _make_prompt_library_manager(tmp_path)
+    reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
+
+    with patch(
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
+        return_value=local_dir,
+    ) as mock_download:
+        models = await reader.read_models_from_path_async(
+            "https://github.com/owner/repo/tree/main/configs"
+        )
+
+    assert len(models) == 1
+    assert models[0].name == "Model One"
+    mock_download.assert_called_once_with("github://owner/repo/configs?ref=main")
 
 
 @pytest.mark.asyncio
@@ -92,7 +222,7 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
     with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
         return_value=local_dir,
     ):
         models = await reader.read_models_from_path_async(
@@ -124,7 +254,7 @@ async def test_read_model_configs_async_with_github_uri(
     reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
 
     with patch(
-        "languagemodelcommon.configs.config_reader.config_reader.download_github_directory",
+        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
         return_value=local_dir,
     ):
         models = await reader.read_model_configs_async()
@@ -139,6 +269,14 @@ def test_override_config_path_with_github_uri() -> None:
         client_id="client-123",
     )
     assert result == "github://org/repo/configs/clients/client-123?ref=main"
+
+
+def test_override_config_path_with_https_github_url() -> None:
+    result = ConfigReader._resolve_override_config_path(
+        config_path="https://github.com/owner/repo/tree/main/configs",
+        client_id="client-123",
+    )
+    assert result == "github://owner/repo/configs/clients/client-123?ref=main"
 
 
 def test_join_path_preserves_github_query_params() -> None:

@@ -365,8 +365,10 @@ class MCPToolProvider:
                         raise
 
                 logger.error(
-                    "get_tools_by_url_async Failed to discover tools from "
-                    "%s at %s: %s: %s",
+                    "get_tools_by_url_async Failed to discover tools "
+                    "from server '%s' at url '%s'. "
+                    "Verify the MCP server is running and reachable. "
+                    "%s: %s",
                     tool_config.name,
                     tool_url,
                     type(e).__name__,
