@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "277432435a5ae92caf24495d828f99b8c85bab133785ff2016f4fe4df25589a1"
+            "sha256": "363bc3285a51682ec3976e0242e0f85b07cbfdb7de760fd0a65a4360bc8ef3ef"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -2998,28 +2998,29 @@
         },
         "uv": {
             "hashes": [
-                "sha256:088165b9eed981d2c2a58566cc75dd052d613e47c65e2416842d07308f793a6f",
-                "sha256:089b9d338a64463956b6fee456f03f73c9a916479bdb29009600781dc1e1d2a7",
-                "sha256:0fde893b5ab9f6997fe357138e794bac09d144328052519fbbe2e6f72145e457",
-                "sha256:3b1fe09d5e1d8e19459cd28d7825a3b66ef147b98328345bad6e17b87c4fea48",
-                "sha256:3ff461335888336467402cc5cb792c911df95dd0b52e369182cfa4c902bb21f4",
-                "sha256:45006bcd9e8718248a23ab81448a5beb46a72a9dd508e3212d6f3b8c63aeb88a",
-                "sha256:55ba578752f29a3f2b22879b22a162edad1454e3216f3ca4694fdbd4093a6822",
-                "sha256:6708827ecb846d00c5512a7e4dc751c2e27b92e9bd55a0be390561ac68930c32",
-                "sha256:68fda574f2e5e7536a2b747dcea88329a71aad7222317e8f4717d0af8f99fbd4",
-                "sha256:6a6fcaf1fec28bbbdf0dfc5a0a6e34be4cea08c6287334b08c24cf187300f20d",
-                "sha256:71f5d0b9e73daa5d8a7e2db3fa2e22a4537d24bb4fe78130db797280280d4edc",
-                "sha256:794aae3bab141eafbe37c51dc5dd0139658a755a6fa9cc74d2dbd7c71dcc4826",
-                "sha256:8df030ea7563e99c09854e1bc82ab743dfa2d0ba18976e6861979cb40d04dba7",
-                "sha256:92ffc4d521ab2c4738ef05d8ef26f2750e26d31f3ad5611cdfefc52445be9ace",
-                "sha256:a62e29277efd39c35caf4a0fe739c4ebeb14d4ce4f02271f3f74271d608061ff",
-                "sha256:d2b3b0fa1693880ca354755c216ae1c65dd938a4f1a24374d0c3f4b9538e0ee6",
-                "sha256:deb533e780e8181e0859c68c84f546620072cd1bd827b38058cb86ebfba9bb7d",
-                "sha256:ebccdcdebd2b288925f0f7c18c39705dc783175952eacaf94912b01d3b381b86",
-                "sha256:ef0ae8ee2988928092616401ec7f473612b8e9589fe1567452c45dbc56840f85"
+                "sha256:0b096311b2743b228df911a19532b3f18fa420bf9530547aecd6a8e04bbfaccd",
+                "sha256:1c9218c8d4ac35ca6e617fb0951cc0ab2d907c91a6aea2617de0a5494cf162c0",
+                "sha256:4ed8150c26b5e319381d75ae2ce6aba1e9c65888f4850f4e3b3fa839953c90a5",
+                "sha256:5be013888420f96879c6e0d3081e7bcf51b539b034a01777041934457dfbedf3",
+                "sha256:6e8344f38fa29f85dcfd3e62dc35a700d2448f8e90381077ef393438dcd5012e",
+                "sha256:7ed9c6f70c25e8dfeedddf4eddaf14d353f5e6b0eb43da9a14d3a1033d51d915",
+                "sha256:904d537b4a6e798015b4a64ff5622023bd4601b43b6cd1e5f423d63471f5e948",
+                "sha256:93f736dddca03dae732c6fdea177328d3bc4bf137c75248f3d433c57416a4311",
+                "sha256:9e211c83cc890c569b86a4183fcf5f8b6f0c7adc33a839b699a98d30f1310d3a",
+                "sha256:9e2fe7ce12161d8016b7deb1eaad7905a76ff7afec13383333ca75e0c4b5425d",
+                "sha256:a28bea69c1186303d1200f155c7a28c449f8a4431e458fcf89360cc7ef546e40",
+                "sha256:a78f6d64b9950e24061bc7ec7f15ff8089ad7f5a976e7b65fcadce58fe02f613",
+                "sha256:ada04dcf89ddea5b69d27ac9cdc5ef575a82f90a209a1392e930de504b2321d6",
+                "sha256:bfb107b4dade1d2c9e572992b06992d51dd5f2136eb8ceee9e62dd124289e825",
+                "sha256:d2a1d2089afdf117ad19a4c1dd36b8189c00ae1ad4135d3bfbfced82342595cf",
+                "sha256:d68a013e609cebf82077cbeeb0809ed5e205257814273bfd31e02fc0353bbfc2",
+                "sha256:e3b21b7e80024c95ff339fcd147ac6fc3dd98d3613c9d45d3a1f4fd1057f127b",
+                "sha256:e96a66abe53fced0e3389008b8d2eff8278cfa8bb545d75631ae8ceb9c929aba",
+                "sha256:ffa5dc1cbb52bdce3b8447e83d1601a57ad4da6b523d77d4b47366db8b1ceb18"
             ],
+            "index": "pypi",
             "markers": "python_version >= '3.8'",
-            "version": "==0.11.3"
+            "version": "==0.11.6"
         },
         "uvicorn": {
             "hashes": [
@@ -5097,5 +5098,6 @@
             "markers": "python_version >= '3.9'",
             "version": "==1.0.4"
         }
-    }
+    },
+    "pipenvsetup": {}
 }
