@@ -91,11 +91,10 @@ class SearchToolsTool(BaseTool):
                     )
                     resolution_errors.append(error_msg)
                     logger.warning(
-                        "Failed to resolve server %s at %s during search: %s: %s",
+                        "Failed to resolve server %s at %s during search: %s",
                         server.server_name,
                         server_url,
-                        type(e).__name__,
-                        e,
+                        ExceptionLogger.format_exception_message(e),
                     )
 
         try:
@@ -106,11 +105,12 @@ class SearchToolsTool(BaseTool):
             )
         except Exception as e:
             logger.error(
-                "search_tools catalog search failed: %s: %s",
-                type(e).__name__,
-                e,
+                "search_tools catalog search failed: %s",
+                ExceptionLogger.format_exception_message(e),
             )
-            return f"Error searching tools: {type(e).__name__}: {e}"
+            return (
+                f"Error searching tools: {ExceptionLogger.format_exception_message(e)}"
+            )
 
         if not results:
             # List all tools in the category so the LLM knows what's available

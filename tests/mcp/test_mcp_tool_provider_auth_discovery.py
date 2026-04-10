@@ -205,3 +205,33 @@ class TestContainsHttp401:
     def test_non_http_error(self) -> None:
         eg = BaseExceptionGroup("test", [ValueError("not http")])
         assert MCPToolProvider._contains_http_401(eg) is False
+
+    def test_401_wrapped_in_cause_chain(self) -> None:
+        """A McpSessionError whose __cause__ contains a 401 should be detected."""
+        from languagemodelcommon.mcp.mcp_client import McpSessionError
+
+        response = httpx.Response(
+            401, request=httpx.Request("GET", "https://example.com")
+        )
+        http_exc = httpx.HTTPStatusError(
+            "401", request=response.request, response=response
+        )
+        eg = BaseExceptionGroup("task group", [http_exc])
+        wrapper = McpSessionError("MCP session failed", url="https://example.com")
+        wrapper.__cause__ = eg
+        assert MCPToolProvider._contains_http_401(wrapper) is True
+
+    def test_non_401_wrapped_in_cause_chain(self) -> None:
+        """A McpSessionError whose __cause__ contains a 500 should not match."""
+        from languagemodelcommon.mcp.mcp_client import McpSessionError
+
+        response = httpx.Response(
+            500, request=httpx.Request("GET", "https://example.com")
+        )
+        http_exc = httpx.HTTPStatusError(
+            "500", request=response.request, response=response
+        )
+        eg = BaseExceptionGroup("task group", [http_exc])
+        wrapper = McpSessionError("MCP session failed", url="https://example.com")
+        wrapper.__cause__ = eg
+        assert MCPToolProvider._contains_http_401(wrapper) is False

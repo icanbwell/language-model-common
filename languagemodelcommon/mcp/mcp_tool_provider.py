@@ -368,11 +368,10 @@ class MCPToolProvider:
                     "get_tools_by_url_async Failed to discover tools "
                     "from server '%s' at url '%s'. "
                     "Verify the MCP server is running and reachable. "
-                    "%s: %s",
+                    "%s",
                     tool_config.name,
                     tool_url,
-                    type(e).__name__,
-                    e,
+                    ExceptionLogger.format_exception_message(e),
                 )
                 return []
 
@@ -443,11 +442,18 @@ class MCPToolProvider:
 
     @staticmethod
     def _contains_http_401(exc: BaseException) -> bool:
-        """Check if an exception tree contains an HTTPStatusError with status 401."""
+        """Check if an exception tree contains an HTTPStatusError with status 401.
+
+        Traverses BaseExceptionGroup children and the ``__cause__`` chain so
+        that wrapped exceptions (e.g. McpSessionError wrapping an
+        ExceptionGroup containing an HTTP 401) are still detected.
+        """
         if isinstance(exc, HTTPStatusError) and exc.response.status_code == 401:
             return True
         if isinstance(exc, BaseExceptionGroup):
             return any(MCPToolProvider._contains_http_401(e) for e in exc.exceptions)
+        if exc.__cause__ is not None:
+            return MCPToolProvider._contains_http_401(exc.__cause__)
         return False
 
     async def _attempt_auth_server_discovery(

@@ -44,6 +44,7 @@ from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallResult,
     ToolCallInterceptor,
 )
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -164,14 +165,16 @@ async def create_mcp_session(
             url=url,
         ) from e
     except Exception as e:
-        # Re-raise with URL context if the original message is opaque
-        # (e.g. "Session terminated" from the MCP SDK).
-        msg = str(e)
+        # Unwrap ExceptionGroups so the error message surfaces the real
+        # cause (e.g. an HTTP 401) instead of the opaque "unhandled
+        # errors in a TaskGroup (1 sub-exception)" wrapper.
+        first = ExceptionLogger.get_first_exception(e)
+        msg = ExceptionLogger.format_exception_message(e)
         if url not in msg:
             raise McpSessionError(
-                f"MCP session failed for {url}: {type(e).__name__}: {msg}",
+                f"MCP session failed for {url}: {msg}",
                 url=url,
-            ) from e
+            ) from first
         raise
 
 
