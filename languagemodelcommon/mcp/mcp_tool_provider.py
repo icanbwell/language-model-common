@@ -586,6 +586,9 @@ class MCPToolProvider:
         all_tools: List[BaseTool] = []
         for i, result in enumerate(results):
             if isinstance(result, BaseException):
+                # CancelledError must propagate for proper task cancellation
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
                 # AuthorizationNeededException must propagate so user sees login links
                 if isinstance(
                     ExceptionLogger.get_first_exception(result),
@@ -667,47 +670,56 @@ class MCPToolProvider:
 
         tool_url = tool_config.url or "unknown"
 
-        try:
-            async with create_mcp_session(
-                config, mcp_callbacks=mcp_callbacks
-            ) as session:
-                await session.initialize()
-                mcp_tools = await list_all_tools_cached(
-                    session, url=tool_url, cache=self.tool_list_cache
-                )
-        except BaseException as e:
-            # Invalidate cache on auth errors so retry uses a fresh fetch
-            self.tool_list_cache.invalidate(tool_url)
-
-            if not self._contains_http_401(e):
-                raise
-
-            if (
-                tool_config.oauth is None
-                and not tool_config.oauth_providers
-                and tool_url != "unknown"
-            ):
-                discovered = await self._attempt_auth_server_discovery(
-                    tool_config=tool_config,
-                )
-                if discovered:
-                    login_message = await auth_interceptor.build_login_message_for_tool(
-                        tool_config
+        # Check cache before opening a session — avoids the TCP+TLS+initialize
+        # cost entirely on a cache hit, and returns valid cached data even if
+        # the server is temporarily unreachable.
+        cached = self.tool_list_cache.get(tool_url)
+        if cached is not None:
+            mcp_tools = cached
+        else:
+            try:
+                async with create_mcp_session(
+                    config, mcp_callbacks=mcp_callbacks
+                ) as session:
+                    await session.initialize()
+                    mcp_tools = await list_all_tools_cached(
+                        session, url=tool_url, cache=self.tool_list_cache
                     )
-                    raise AuthorizationMcpToolTokenInvalidException(
-                        message=login_message,
-                        tool_url=tool_url,
-                        token=None,
-                    ) from e
+            except BaseException as e:
+                if self._contains_http_401(e):
+                    # Invalidate cache on auth errors so retry uses a fresh fetch
+                    self.tool_list_cache.invalidate(tool_url)
+                else:
+                    raise
 
-            login_message = await auth_interceptor.build_login_message_for_tool(
-                tool_config
-            )
-            raise AuthorizationMcpToolTokenInvalidException(
-                message=login_message,
-                tool_url=tool_url,
-                token=None,
-            ) from e
+                if (
+                    tool_config.oauth is None
+                    and not tool_config.oauth_providers
+                    and tool_url != "unknown"
+                ):
+                    discovered = await self._attempt_auth_server_discovery(
+                        tool_config=tool_config,
+                    )
+                    if discovered:
+                        login_message = (
+                            await auth_interceptor.build_login_message_for_tool(
+                                tool_config
+                            )
+                        )
+                        raise AuthorizationMcpToolTokenInvalidException(
+                            message=login_message,
+                            tool_url=tool_url,
+                            token=None,
+                        ) from e
+
+                login_message = await auth_interceptor.build_login_message_for_tool(
+                    tool_config
+                )
+                raise AuthorizationMcpToolTokenInvalidException(
+                    message=login_message,
+                    tool_url=tool_url,
+                    token=None,
+                ) from e
 
         # Filter by tool names if specified
         if tool_config.tools:

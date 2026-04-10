@@ -129,7 +129,11 @@ async def create_mcp_session(
         # errors in a TaskGroup (1 sub-exception)" wrapper.
         first = ExceptionLogger.get_first_exception(e)
         msg = ExceptionLogger.format_exception_message(e)
-        if url not in msg:
+        # Use str(e) for the URL guard — not the unwrapped msg.
+        # format_exception_message recursively extracts leaf messages
+        # which often contain the URL, causing the guard to pass
+        # incorrectly and re-raising the raw ExceptionGroup.
+        if url not in str(e):
             raise McpSessionError(
                 f"MCP session failed for {url}: {msg}",
                 url=url,

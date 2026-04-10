@@ -72,11 +72,15 @@ def _make_execute_tool(
             session = await session_pool.get_session(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
-            return await session.call_tool(
-                request.name,
-                request.args,
-                progress_callback=mcp_callbacks.progress_callback,
-            )
+            try:
+                return await session.call_tool(
+                    request.name,
+                    request.args,
+                    progress_callback=mcp_callbacks.progress_callback,
+                )
+            except Exception:
+                await session_pool.evict(effective_config)
+                raise
 
         # Fallback: create a one-shot session (original behavior)
         captured_exception = None
