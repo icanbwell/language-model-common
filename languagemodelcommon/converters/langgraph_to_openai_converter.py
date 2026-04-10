@@ -43,6 +43,7 @@ from typing import (
     Iterable,
     Tuple,
     Literal,
+    cast,
 )
 
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
@@ -700,7 +701,7 @@ class LangGraphToOpenAIConverter:
                 "recursion_limit": default_recursion_limit,
             }
 
-        merged_config: RunnableConfig = config
+        merged_config: Dict[str, Any] = dict(config)
         configurable = merged_config.get("configurable")
         merged_configurable: Dict[str, Any] = (
             dict(configurable) if isinstance(configurable, dict) else {}
@@ -716,7 +717,7 @@ class LangGraphToOpenAIConverter:
         if "recursion_limit" not in merged_config:
             merged_config["recursion_limit"] = default_recursion_limit
 
-        return merged_config
+        return cast(RunnableConfig, merged_config)
 
     # noinspection SpellCheckingInspection
     async def ainvoke(
