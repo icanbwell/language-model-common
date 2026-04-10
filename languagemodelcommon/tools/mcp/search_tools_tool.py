@@ -104,13 +104,9 @@ class SearchToolsTool(BaseTool):
                 max_results=self.max_results,
             )
         except Exception as e:
-            logger.error(
-                "search_tools catalog search failed: %s",
-                ExceptionLogger.format_exception_message(e),
-            )
-            return (
-                f"Error searching tools: {ExceptionLogger.format_exception_message(e)}"
-            )
+            msg = ExceptionLogger.format_exception_message(e)
+            logger.error("search_tools catalog search failed: %s", msg)
+            return f"Error searching tools: {msg}"
 
         if not results:
             # List all tools in the category so the LLM knows what's available
