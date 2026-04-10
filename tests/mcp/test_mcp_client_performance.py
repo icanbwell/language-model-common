@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.types import Tool as MCPTool
 
-from languagemodelcommon.mcp.mcp_client import (
-    McpSessionPool,
+from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
+from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
     list_all_tools_cached,
 )

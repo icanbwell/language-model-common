@@ -208,7 +208,7 @@ class TestContainsHttp401:
 
     def test_401_wrapped_in_cause_chain(self) -> None:
         """A McpSessionError whose __cause__ contains a 401 should be detected."""
-        from languagemodelcommon.mcp.mcp_client import McpSessionError
+        from languagemodelcommon.mcp.mcp_client.session import McpSessionError
 
         response = httpx.Response(
             401, request=httpx.Request("GET", "https://example.com")
@@ -223,7 +223,7 @@ class TestContainsHttp401:
 
     def test_non_401_wrapped_in_cause_chain(self) -> None:
         """A McpSessionError whose __cause__ contains a 500 should not match."""
-        from languagemodelcommon.mcp.mcp_client import McpSessionError
+        from languagemodelcommon.mcp.mcp_client.session import McpSessionError
 
         response = httpx.Response(
             500, request=httpx.Request("GET", "https://example.com")
