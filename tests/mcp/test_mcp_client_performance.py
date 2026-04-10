@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -145,9 +144,7 @@ class TestListAllToolsCached:
             return_value=MagicMock(tools=tools, nextCursor=None)
         )
 
-        await list_all_tools_cached(
-            session, url="https://example.com", cache=cache
-        )
+        await list_all_tools_cached(session, url="https://example.com", cache=cache)
 
         # Second call should hit cache
         result = await list_all_tools_cached(
