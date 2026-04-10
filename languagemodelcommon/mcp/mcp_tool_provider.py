@@ -451,7 +451,12 @@ class MCPToolProvider:
         if isinstance(exc, HTTPStatusError) and exc.response.status_code == 401:
             return True
         if isinstance(exc, BaseExceptionGroup):
-            return any(MCPToolProvider._contains_http_401(e) for e in exc.exceptions)
+            return any(
+                MCPToolProvider._contains_http_401(e) for e in exc.exceptions
+            ) or (
+                exc.__cause__ is not None
+                and MCPToolProvider._contains_http_401(exc.__cause__)
+            )
         if exc.__cause__ is not None:
             return MCPToolProvider._contains_http_401(exc.__cause__)
         return False
