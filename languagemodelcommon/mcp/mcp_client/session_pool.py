@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,11 +23,11 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 @dataclass
 class _PooledSession:
-    """A live MCP session held open for reuse."""
+    """A live MCP session and its context manager lifecycle."""
 
     session: ClientSession
     url: str
-    cache_key: str
+    cm: AbstractAsyncContextManager[ClientSession]
 
 
 class McpSessionPool:
@@ -51,7 +52,6 @@ class McpSessionPool:
 
     def __init__(self) -> None:
         self._sessions: dict[str, _PooledSession] = {}
-        self._exit_stack: list[Any] = []
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -76,13 +76,12 @@ class McpSessionPool:
     ) -> None:
         # Close all pooled sessions in reverse order
         errors: list[BaseException] = []
-        for cm in reversed(self._exit_stack):
+        for pooled in reversed(list(self._sessions.values())):
             try:
-                await cm.__aexit__(None, None, None)
+                await pooled.cm.__aexit__(None, None, None)
             except BaseException as e:
                 errors.append(e)
         self._sessions.clear()
-        self._exit_stack.clear()
         if errors:
             logger.warning(
                 "Errors closing %d pooled MCP sessions: %s",
@@ -127,10 +126,7 @@ class McpSessionPool:
             except BaseException:
                 await cm.__aexit__(None, None, None)
                 raise
-            self._exit_stack.append(cm)
-            self._sessions[key] = _PooledSession(
-                session=session, url=url, cache_key=key
-            )
+            self._sessions[key] = _PooledSession(session=session, url=url, cm=cm)
             logger.info("Pooled new MCP session for %s", url)
             return session
 
@@ -142,17 +138,14 @@ class McpSessionPool:
         fresh connection instead of reusing the broken one.
         """
         key = self._cache_key(config)
-        url = config["url"]
         async with self._lock:
             pooled = self._sessions.pop(key, None)
             if pooled is None:
                 return
-            # Find and remove the matching CM from the exit stack
-            for i, cm in enumerate(self._exit_stack):
-                try:
-                    await cm.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning("Error closing evicted session for %s: %s", url, e)
-                del self._exit_stack[i]
-                break
-        logger.info("Evicted pooled MCP session for %s", url)
+            try:
+                await pooled.cm.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(
+                    "Error closing evicted session for %s: %s", pooled.url, e
+                )
+        logger.info("Evicted pooled MCP session for %s", pooled.url)
