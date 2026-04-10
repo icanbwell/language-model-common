@@ -575,9 +575,12 @@ class LangGraphToOpenAIConverter:
             request_information=request_information,
             config=config,
         )
+        runtime_context = {"user_id": request_information.user_id}
         try:
             output: Dict[str, Any] = await compiled_state_graph.ainvoke(
-                input=input_, config=config
+                input=input_,
+                config=config,
+                context=runtime_context,  # type: ignore[call-overload]
             )
         except AttributeError:
             # Fallback if errorfactory is not available
@@ -626,6 +629,7 @@ class LangGraphToOpenAIConverter:
             request_information=request_information,
             config=config,
         )
+        runtime_context = {"user_id": request_information.user_id}
         try:
             event: StandardStreamEvent | CustomStreamEvent
             async for event in compiled_state_graph.astream_events(
@@ -636,6 +640,7 @@ class LangGraphToOpenAIConverter:
                 ),
                 version="v2",
                 config=config,
+                context=runtime_context,
             ):
                 yield event
         except ToolException as e:
@@ -919,7 +924,10 @@ class LangGraphToOpenAIConverter:
         )
 
         # Build the workflow
-        workflow: StateGraph[MyMessagesState] = StateGraph(MyMessagesState)
+        workflow: StateGraph[MyMessagesState] = StateGraph(
+            MyMessagesState,
+            context_schema=dict,  # type: ignore[arg-type]
+        )
         workflow.add_node("react_agent", react_agent_runnable)
         workflow.set_entry_point("react_agent")
 
