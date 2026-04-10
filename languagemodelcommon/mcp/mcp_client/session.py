@@ -127,15 +127,16 @@ async def create_mcp_session(
         # Unwrap ExceptionGroups so the error message surfaces the real
         # cause (e.g. an HTTP 401) instead of the opaque "unhandled
         # errors in a TaskGroup (1 sub-exception)" wrapper.
-        first = ExceptionLogger.get_first_exception(e)
         msg = ExceptionLogger.format_exception_message(e)
         # Use str(e) for the URL guard — not the unwrapped msg.
         # format_exception_message recursively extracts leaf messages
         # which often contain the URL, causing the guard to pass
         # incorrectly and re-raising the raw ExceptionGroup.
+        # Chain from e (not first) to preserve the full exception tree
+        # so _contains_http_401 can traverse all children.
         if url not in str(e):
             raise McpSessionError(
                 f"MCP session failed for {url}: {msg}",
                 url=url,
-            ) from first
+            ) from e
         raise

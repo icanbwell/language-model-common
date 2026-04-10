@@ -669,11 +669,15 @@ class MCPToolProvider:
         )
 
         tool_url = tool_config.url or "unknown"
+        config_headers = config.get("headers") or {}
+        cache_key = ToolListCache.make_key(
+            tool_url, auth_header=config_headers.get("Authorization")
+        )
 
         # Check cache before opening a session — avoids the TCP+TLS+initialize
         # cost entirely on a cache hit, and returns valid cached data even if
         # the server is temporarily unreachable.
-        cached = self.tool_list_cache.get(tool_url)
+        cached = self.tool_list_cache.get(cache_key)
         if cached is not None:
             mcp_tools = cached
         else:
@@ -683,12 +687,15 @@ class MCPToolProvider:
                 ) as session:
                     await session.initialize()
                     mcp_tools = await list_all_tools_cached(
-                        session, url=tool_url, cache=self.tool_list_cache
+                        session,
+                        url=tool_url,
+                        cache=self.tool_list_cache,
+                        cache_key=cache_key,
                     )
             except BaseException as e:
                 if self._contains_http_401(e):
                     # Invalidate cache on auth errors so retry uses a fresh fetch
-                    self.tool_list_cache.invalidate(tool_url)
+                    self.tool_list_cache.invalidate(cache_key)
                 else:
                     raise
 
