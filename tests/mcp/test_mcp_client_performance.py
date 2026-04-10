@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.types import Tool as MCPTool
 
+from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
@@ -167,7 +168,7 @@ class TestMcpSessionPool:
     @pytest.mark.asyncio
     async def test_pool_reuses_session_for_same_url(self) -> None:
         """Two get_session calls for the same URL should return the same session."""
-        config = {"url": "https://example.com"}
+        config: MCPConnectionConfig = {"url": "https://example.com"}
         mock_session = AsyncMock()
 
         with patch(
@@ -187,17 +188,16 @@ class TestMcpSessionPool:
 
     @pytest.mark.asyncio
     async def test_pool_creates_separate_sessions_for_different_urls(self) -> None:
-        config_a = {"url": "https://a.com"}
-        config_b = {"url": "https://b.com"}
+        config_a: MCPConnectionConfig = {"url": "https://a.com"}
+        config_b: MCPConnectionConfig = {"url": "https://b.com"}
 
-        sessions = {}
         call_count = 0
 
         with patch(
             "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session"
         ) as mock_create:
 
-            def make_cm(*args, **kwargs):
+            def make_cm(*args: object, **kwargs: object) -> AsyncMock:
                 nonlocal call_count
                 call_count += 1
                 mock_session = AsyncMock()
