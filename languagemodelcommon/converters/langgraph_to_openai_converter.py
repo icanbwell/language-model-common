@@ -917,6 +917,7 @@ class LangGraphToOpenAIConverter:
             model=llm,
             tools=tools,
             state_schema=MyMessagesState,
+            context_schema=dict,  # type: ignore[misc]
             store=store,
             checkpointer=checkpointer,
             system_prompt=system_prompt,
