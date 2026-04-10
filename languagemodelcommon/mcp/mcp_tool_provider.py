@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -43,8 +44,11 @@ from languagemodelcommon.mcp.interceptors.truncation import (
 )
 from languagemodelcommon.mcp.mcp_client import (
     MCPConnectionConfig,
+    McpSessionPool,
+    ToolListCache,
     create_mcp_session,
     list_all_tools,
+    list_all_tools_cached,
     mcp_tool_to_langchain_tool,
     call_mcp_tool_raw,
 )
@@ -135,6 +139,7 @@ class MCPToolProvider:
             )
 
         self.auth_server_metadata_discovery = auth_server_metadata_discovery
+        self.tool_list_cache = ToolListCache(ttl_seconds=300.0)
 
     @staticmethod
     def get_httpx_async_client(
@@ -523,47 +528,74 @@ class MCPToolProvider:
         headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
     ) -> list[BaseTool]:
-        # get list of tools from the tools from each agent and then concatenate them
-        all_tools: List[BaseTool] = []
-        for tool in tools:
-            if tool.url is not None:
-                logger.info(
-                    "get_tools_async Fetching tools from url: %s for tool: %s",
-                    tool.url,
-                    tool.name,
+        """Fetch tools from all configured MCP servers concurrently."""
+        url_tools = [t for t in tools if t.url is not None]
+        if not url_tools:
+            return []
+
+        async def _fetch_one(tool: AgentConfig) -> List[BaseTool]:
+            """Fetch tools from a single MCP server, swallowing non-fatal errors."""
+            logger.info(
+                "get_tools_async Fetching tools from url: %s for tool: %s",
+                tool.url,
+                tool.name,
+            )
+            fetched: List[BaseTool] = []
+            try:
+                fetched = await self.get_tools_by_url_async(
+                    tool_config=tool,
+                    headers=headers,
+                    auth_interceptor=auth_interceptor,
                 )
-                try:
-                    tools_by_url: List[BaseTool] = await self.get_tools_by_url_async(
-                        tool_config=tool,
-                        headers=headers,
-                        auth_interceptor=auth_interceptor,
-                    )
-                    all_tools.extend(tools_by_url)
-                except* AuthorizationMcpToolTokenInvalidException as auth_eg:
-                    logger.warning(
-                        "get_tools_async No valid auth token for %s from %s, "
-                        "skipping tool: %s",
-                        tool.name,
-                        tool.url,
-                        ExceptionLogger.format_exception_message(auth_eg),
-                    )
-                except* AuthorizationNeededException as auth_needed_eg:
-                    logger.warning(
-                        "get_tools_async Authorization needed for %s from %s, "
-                        "prompting user to login: %s",
-                        tool.name,
-                        tool.url,
-                        ExceptionLogger.format_exception_message(auth_needed_eg),
-                    )
-                    raise
-                except* Exception as conn_eg:
-                    logger.warning(
-                        "get_tools_async Failed to connect to MCP server for %s at %s, "
-                        "skipping tool: %s",
-                        tool.name,
-                        tool.url,
-                        ExceptionLogger.format_exception_message(conn_eg),
-                    )
+            except* AuthorizationMcpToolTokenInvalidException as auth_eg:
+                logger.warning(
+                    "get_tools_async No valid auth token for %s from %s, "
+                    "skipping tool: %s",
+                    tool.name,
+                    tool.url,
+                    ExceptionLogger.format_exception_message(auth_eg),
+                )
+            except* AuthorizationNeededException as auth_needed_eg:
+                logger.warning(
+                    "get_tools_async Authorization needed for %s from %s, "
+                    "prompting user to login: %s",
+                    tool.name,
+                    tool.url,
+                    ExceptionLogger.format_exception_message(auth_needed_eg),
+                )
+                raise
+            except* Exception as conn_eg:
+                logger.warning(
+                    "get_tools_async Failed to connect to MCP server for %s at %s, "
+                    "skipping tool: %s",
+                    tool.name,
+                    tool.url,
+                    ExceptionLogger.format_exception_message(conn_eg),
+                )
+            return fetched
+
+        results = await asyncio.gather(
+            *[_fetch_one(tool) for tool in url_tools],
+            return_exceptions=True,
+        )
+
+        all_tools: List[BaseTool] = []
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                # AuthorizationNeededException must propagate so user sees login links
+                if isinstance(
+                    ExceptionLogger.get_first_exception(result),
+                    AuthorizationNeededException,
+                ):
+                    raise result
+                logger.warning(
+                    "get_tools_async Unexpected error for %s at %s: %s",
+                    url_tools[i].name,
+                    url_tools[i].url,
+                    ExceptionLogger.format_exception_message(result),
+                )
+            else:
+                all_tools.extend(result)
         return all_tools
 
     def discover_tool_catalog(
@@ -636,8 +668,13 @@ class MCPToolProvider:
                 config, mcp_callbacks=mcp_callbacks
             ) as session:
                 await session.initialize()
-                mcp_tools = await list_all_tools(session)
+                mcp_tools = await list_all_tools_cached(
+                    session, url=tool_url, cache=self.tool_list_cache
+                )
         except BaseException as e:
+            # Invalidate cache on auth errors so retry uses a fresh fetch
+            self.tool_list_cache.invalidate(tool_url)
+
             if not self._contains_http_401(e):
                 raise
 
@@ -699,6 +736,7 @@ class MCPToolProvider:
         arguments: Dict[str, Any],
         agent_config: AgentConfig,
         auth_interceptor: AuthMcpCallInterceptor,
+        session_pool: McpSessionPool | None = None,
     ) -> CallToolResult:
         """Execute an MCP tool by name, applying the full interceptor chain."""
         config = self._build_connection_config(agent_config)
@@ -717,6 +755,7 @@ class MCPToolProvider:
                 self.tracing_interceptor.get_tool_interceptor_tracing(),
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ],
+            session_pool=session_pool,
         )
 
 
