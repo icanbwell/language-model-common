@@ -6,7 +6,7 @@ A shared Python framework for building LLM-powered agent applications with LangC
 
 - **Multi-source configuration loading** — Read LLM model configs from local filesystem, AWS S3, or GitHub repositories with TTL-based caching and client-specific overrides
 - **LangGraph-to-OpenAI protocol conversion** — Stream LangGraph agent output as OpenAI-compatible Server-Sent Events (SSE) for chat completion APIs
-- **MCP (Model Context Protocol) integration** — Tool discovery with BM25 search ranking, OAuth 2.1/OIDC support, and dynamic client registration
+- **MCP (Model Context Protocol) integration** — Tool discovery with BM25 search ranking, OAuth 2.1/OIDC support, dynamic client registration, and [MCP Apps](docs/mcp-apps.md) UI rendering via `ui://` resources
 - **Prompt template library** — Load and manage prompt templates from organized directory structures with GitHub auto-download support
 - **File management abstraction** — Unified interface for local and AWS S3 storage with factory-based backend selection
 - **Token and cost management** — Token reduction for long conversations and usage metadata tracking via tiktoken

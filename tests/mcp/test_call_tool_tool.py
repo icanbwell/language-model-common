@@ -94,7 +94,9 @@ class TestCallToolTool:
         catalog = ToolCatalog()
         tool = _make_call_tool_tool(catalog=catalog)
         result = await tool._arun(name="nonexistent", arguments={})
-        assert "not found" in result
+        text, artifact = result
+        assert "not found" in text
+        assert artifact is None
 
     @pytest.mark.asyncio
     async def test_successful_call(self) -> None:
@@ -113,10 +115,13 @@ class TestCallToolTool:
                 content=[TextContent(type="text", text="tool output")]
             )
         )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
 
         tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         result = await tool._arun(name="my_tool", arguments={"key": "value"})
-        assert result == "tool output"
+        text, artifact = result
+        assert text == "tool output"
+        assert artifact is None
         mock_provider.execute_mcp_tool.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -137,8 +142,10 @@ class TestCallToolTool:
 
         tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         result = await tool._arun(name="failing_tool")
-        assert "RuntimeError" in result
-        assert "connection lost" in result
+        text, artifact = result
+        assert "RuntimeError" in text
+        assert "connection lost" in text
+        assert artifact is None
 
     def test_sync_run_raises(self) -> None:
         catalog = ToolCatalog()
@@ -162,6 +169,7 @@ class TestCallToolTool:
         mock_provider.execute_mcp_tool = AsyncMock(
             return_value=CallToolResult(content=[TextContent(type="text", text="ok")])
         )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
 
         tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         await tool._arun(name="my_tool", arguments=None)

@@ -25,7 +25,6 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
-from languagemodelcommon.mcp.mcp_client.ui_resource import McpAppEmbed
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
