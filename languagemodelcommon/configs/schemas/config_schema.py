@@ -336,7 +336,7 @@ class AgentConfig(AuthenticationConfig):
 
     mcp_server: str | None = Field(
         None,
-        description="Key into the .mcp.json mcpServers registry. When set, url, headers, auth, and oauth are resolved from the matching server entry at config-load time.",
+        description='Key into the .mcp.json mcpServers registry. When set, url, headers, auth, and oauth are resolved from the matching server entry at config-load time. Use "*" to include all servers defined in .mcp.json.',
     )
 
     parameters: List[AgentParameterConfig] | None = Field(

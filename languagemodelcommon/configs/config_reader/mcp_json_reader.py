@@ -101,6 +101,23 @@ def resolve_mcp_servers(
 
     for model in configs:
         agents: List[AgentConfig] = model.get_agents()
+
+        # Expand wildcard mcp_server="*" into one agent per .mcp.json entry
+        expanded: List[AgentConfig] = []
+        for agent in agents:
+            if agent.mcp_server == "*":
+                for server_key in servers:
+                    expanded.append(AgentConfig(name=server_key, mcp_server=server_key))
+            else:
+                expanded.append(agent)
+
+        # Replace agents list on model with expanded version
+        if model.agents:
+            model.agents = expanded
+        else:
+            model.tools = expanded
+        agents = expanded
+
         for agent in agents:
             if not agent.mcp_server:
                 continue

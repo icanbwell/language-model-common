@@ -633,3 +633,49 @@ class TestFileConfigReaderMcpJsonIntegration:
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.description == "New description from mcp.json"
+
+    def test_wildcard_mcp_server_expands_all_entries(self) -> None:
+        config = ChatModelConfig(
+            id="model-wildcard",
+            name="Wildcard Model",
+            tools=[AgentConfig(name="all_mcp_servers", mcp_server="*")],
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(url="https://mcp.example.com/drive/"),
+                "github": McpServerEntry(url="https://mcp.example.com/github/"),
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        assert len(config.tools) == 2
+        names = {t.name for t in config.tools}
+        assert names == {"google-drive", "github"}
+        assert config.tools[0].url == "https://mcp.example.com/drive/"
+        assert config.tools[1].url == "https://mcp.example.com/github/"
+
+    def test_wildcard_preserves_non_mcp_tools(self) -> None:
+        config = ChatModelConfig(
+            id="model-mixed",
+            name="Mixed Model",
+            tools=[
+                AgentConfig(name="custom_tool", description="A custom tool"),
+                AgentConfig(name="all_mcp", mcp_server="*"),
+            ],
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(url="https://mcp.example.com/drive/"),
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        assert len(config.tools) == 2
+        assert config.tools[0].name == "custom_tool"
+        assert config.tools[0].mcp_server is None
+        assert config.tools[1].name == "google-drive"
+        assert config.tools[1].url == "https://mcp.example.com/drive/"
