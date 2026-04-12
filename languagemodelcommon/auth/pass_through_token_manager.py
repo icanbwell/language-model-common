@@ -390,6 +390,8 @@ class PassThroughTokenManager:
                 tool_display_name
             )
         )
+
+        login_options: list[str] = []
         if authorization_url:
             oauth_display_name: str | None = (
                 authentication_config.oauth.display_name
@@ -401,8 +403,8 @@ class PassThroughTokenManager:
                 login_display_name = f"{tool_display_name} ({oauth_display_name})"
             else:
                 login_display_name = tool_display_name
-            error_message += (
-                f"\nClick here to [Login to {login_display_name}]({authorization_url})."
+            login_options.append(
+                f"[Login to {login_display_name}]({authorization_url})"
             )
         app_login_allowed: bool = (
             authentication_config.oauth.app_login_allowed
@@ -410,9 +412,17 @@ class PassThroughTokenManager:
             else False
         )
         if app_login_allowed and app_login_url_with_parameters:
-            error_message += f"\nClick here to [Login to b.well App]({app_login_url_with_parameters})."
-        if app_token_save_uri_with_parameters:
-            error_message += (
-                f"\nClick here to [Paste Token]({app_token_save_uri_with_parameters})."
+            login_options.append(
+                f"[Login to b.well App]({app_login_url_with_parameters})"
             )
+        if app_token_save_uri_with_parameters:
+            login_options.append(f"[Paste Token]({app_token_save_uri_with_parameters})")
+
+        if len(login_options) == 1:
+            error_message += f"\nClick here to {login_options[0]}."
+        elif len(login_options) > 1:
+            error_message += "\n\nChoose one of the following options to authenticate:"
+            for i, option in enumerate(login_options, 1):
+                error_message += f"\n{i}. {option}"
+
         return error_message
