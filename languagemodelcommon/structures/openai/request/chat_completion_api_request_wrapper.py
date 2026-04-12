@@ -270,6 +270,19 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         return total_usage_metadata
 
     @override
+    def create_mcp_app_sse_event(
+        self,
+        *,
+        html: str,
+        title: str | None = None,
+    ) -> str | None:
+        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
+        payload = {"html": html}
+        if title:
+            payload["title"] = title
+        return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
+
+    @override
     def create_final_sse_message(
         self, *, request_id: str, usage_metadata: UsageMetadata | None, source: str
     ) -> str:

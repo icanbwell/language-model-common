@@ -24,6 +24,8 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
+from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
+from languagemodelcommon.mcp.mcp_client.ui_resource import McpAppEmbed
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
@@ -75,24 +77,30 @@ class CallToolTool(BaseTool):
         "Use search_tools first to find the tool name and its required parameters."
     )
     args_schema: Type[BaseModel] = CallToolInput
-    response_format: Literal["content", "content_and_artifact"] = "content"
+    response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
 
     catalog: ToolCatalog
     mcp_tool_provider: MCPToolProvider
     auth_interceptor: AuthMcpCallInterceptor
+    session_pool: McpSessionPool | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _run(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, name: str, arguments: dict[str, Any] | None = None) -> str:
+    async def _arun(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> tuple[str, dict[str, Any] | None]:
         if arguments is None:
             arguments = {}
 
         entry = self.catalog.get_tool(name)
         if entry is None:
-            return f"Tool '{name}' not found. Use search_tools to find available tools."
+            return (
+                f"Tool '{name}' not found. Use search_tools to find available tools.",
+                None,
+            )
 
         try:
             result: CallToolResult = await self.mcp_tool_provider.execute_mcp_tool(
@@ -100,8 +108,25 @@ class CallToolTool(BaseTool):
                 arguments=arguments,
                 agent_config=entry.agent_config,
                 auth_interceptor=self.auth_interceptor,
+                session_pool=self.session_pool,
             )
-            return _call_tool_result_to_text(result)
+            text = _call_tool_result_to_text(result)
+
+            # Best-effort: fetch MCP app UI resource if the tool declares one
+            app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
+                tool=entry.tool,
+                tool_name=name,
+                tool_args=arguments,
+                tool_result_text=text,
+                agent_config=entry.agent_config,
+                session_pool=self.session_pool,
+            )
+
+            artifact: dict[str, Any] | None = None
+            if app_embed is not None:
+                artifact = {"mcp_app_embed": app_embed}
+
+            return text, artifact
         except AuthorizationNeededException:
             # Auth exceptions must propagate so the user sees login links
             raise
@@ -113,4 +138,4 @@ class CallToolTool(BaseTool):
                 entry.server_name,
                 error_detail,
             )
-            return f"Error calling tool '{name}': {error_detail}"
+            return f"Error calling tool '{name}': {error_detail}", None

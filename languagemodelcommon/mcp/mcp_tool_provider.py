@@ -56,6 +56,12 @@ from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     list_all_tools,
     list_all_tools_cached,
 )
+from languagemodelcommon.mcp.mcp_client.ui_resource import (
+    McpAppEmbed,
+    extract_ui_resource_uri,
+    fetch_ui_resource,
+    inject_tool_data_into_html,
+)
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -780,6 +786,92 @@ class MCPToolProvider:
             ],
             session_pool=session_pool,
         )
+
+    async def fetch_mcp_app_embed(
+        self,
+        *,
+        tool: MCPTool,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_result_text: str,
+        agent_config: AgentConfig,
+        session_pool: McpSessionPool | None = None,
+    ) -> McpAppEmbed | None:
+        """Fetch an MCP app UI resource for a tool, if one is declared.
+
+        Uses the session pool to reuse the existing connection.  Returns
+        ``None`` if the tool has no UI resource or the fetch fails.
+        This is best-effort — failures are logged but do not propagate.
+        """
+        ui_uri = extract_ui_resource_uri(tool)
+        if not ui_uri:
+            return None
+
+        config = self._build_connection_config(agent_config)
+        callbacks = Callbacks(
+            on_progress=self.on_mcp_tool_progress,
+            on_logging_message=self.on_mcp_tool_logging,
+        )
+        mcp_callbacks = callbacks.to_mcp_format(
+            context=CallbackContext(server_name=agent_config.name, tool_name=tool_name)
+        )
+
+        try:
+            if session_pool is not None:
+                session = await session_pool.get_session(
+                    config, mcp_callbacks=mcp_callbacks
+                )
+            else:
+                # One-shot session fallback — not ideal but functional
+                async with create_mcp_session(
+                    config, mcp_callbacks=mcp_callbacks
+                ) as session:
+                    await session.initialize()
+                    return await self._fetch_and_build_embed(
+                        session=session,
+                        ui_uri=ui_uri,
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        tool_result_text=tool_result_text,
+                    )
+
+            return await self._fetch_and_build_embed(
+                session=session,
+                ui_uri=ui_uri,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result_text=tool_result_text,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch MCP app embed for %s (uri=%s): %s",
+                tool_name,
+                ui_uri,
+                e,
+            )
+            return None
+
+    @staticmethod
+    async def _fetch_and_build_embed(
+        *,
+        session: ClientSession,
+        ui_uri: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        tool_result_text: str,
+    ) -> McpAppEmbed | None:
+        """Fetch the UI resource and inject tool data into the HTML."""
+        html = await fetch_ui_resource(session, ui_uri)
+        if not html:
+            return None
+
+        html = inject_tool_data_into_html(
+            html,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_result_text=tool_result_text,
+        )
+        return McpAppEmbed(html=html, tool_name=tool_name)
 
 
 class _BoundToolResolver:
