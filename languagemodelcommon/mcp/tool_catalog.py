@@ -393,6 +393,60 @@ class ToolCatalog:
             for idx, _score in ranked
         ]
 
+    def search_with_scores(
+        self,
+        query: str,
+        category: str | None = None,
+        max_results: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search with BM25 score and matched-term details in results.
+
+        Same as ``search`` but each result includes:
+        - ``score``: the BM25 relevance score
+        - ``matched_terms``: query terms that matched this tool's document
+        """
+        if not self._entries:
+            return []
+
+        query_tokens = _tokenize_with_stems(query)
+
+        if category:
+            filtered_entries = [
+                e
+                for e in self._entries
+                if (e.category and category.lower() in e.category.lower())
+                or category.lower() in e.server_name.lower()
+            ]
+            if not filtered_entries:
+                return []
+            corpus = [
+                _build_tool_document(e.tool, category=e.category)
+                for e in filtered_entries
+            ]
+            index = _BM25Index()
+            index.build(corpus)
+            ranked = index.search(query_tokens, top_k=max_results)
+            entries = filtered_entries
+        else:
+            index = self._ensure_index()
+            ranked = index.search(query_tokens, top_k=max_results)
+            entries = self._entries
+
+        results: list[dict[str, Any]] = []
+        for idx, score in ranked:
+            doc_tokens = set(corpus[idx] if category else index.corpus[idx])
+            matched = [t for t in query_tokens if t in doc_tokens]
+            results.append(
+                {
+                    **_format_tool_schema(entries[idx].tool),
+                    "server_name": entries[idx].server_name,
+                    "category": entries[idx].category,
+                    "score": round(score, 3),
+                    "matched_terms": sorted(set(matched)),
+                }
+            )
+        return results
+
     def get_tool(self, name: str) -> ToolCatalogEntry | None:
         """Look up a tool by exact name."""
         return self._entries_by_name.get(name)

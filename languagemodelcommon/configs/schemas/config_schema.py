@@ -320,7 +320,10 @@ class AgentConfig(AuthenticationConfig):
 
     description: str | None = Field(
         None,
-        description="Human-readable description of the category of tools available from this MCP server. Used in the system prompt to guide the LLM's tool discovery.",
+        description="Human-readable description of the category of tools available from this MCP server. "
+        "Used in the system prompt to guide the LLM's tool discovery. "
+        "DEPRECATED: Prefer setting 'description' in .mcp.json which takes precedence when present.",
+        deprecated=True,
     )
 
     display_name: str | None = Field(

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Literal, Type
+from typing import Literal, Tuple, Type
 
 from langchain_core.tools import BaseTool
 from oidcauthlib.auth.exceptions.authorization_needed_exception import (
@@ -30,9 +30,9 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
 class SearchToolsInput(BaseModel):
-    category: str | None = Field(
-        None,
-        description="Optional category to filter tools by. Use one of the category names from the system message.",
+    category: str = Field(
+        ...,
+        description="Category to search within. Use one of the category names from the system message.",
     )
     query: str = Field(
         ...,
@@ -55,7 +55,7 @@ class SearchToolsTool(BaseTool):
         "before calling them with call_tool."
     )
     args_schema: Type[BaseModel] = SearchToolsInput
-    response_format: Literal["content", "content_and_artifact"] = "content"
+    response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
 
     catalog: ToolCatalog
     resolver: ToolResolverProtocol | None = None
@@ -63,13 +63,13 @@ class SearchToolsTool(BaseTool):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def _run(self, query: str, category: str | None = None) -> str:
+    def _run(self, query: str, category: str) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
             "Use _arun instead."
         )
 
-    async def _arun(self, query: str, category: str | None = None) -> str:
+    async def _arun(self, query: str, category: str) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category
         resolution_errors: list[str] = []
         if self.resolver is not None:
@@ -78,7 +78,7 @@ class SearchToolsTool(BaseTool):
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
                 except AuthorizationNeededException:
-                    # Re-raise auth exceptions so the user sees login links
+                    # Re-raise so the user sees login links for this server
                     raise
                 except Exception as e:
                     server_url = (
@@ -106,25 +106,40 @@ class SearchToolsTool(BaseTool):
         except Exception as e:
             msg = ExceptionLogger.format_exception_message(e)
             logger.error("search_tools catalog search failed: %s", msg)
-            return f"Error searching tools: {msg}"
+            error_text = f"Error searching tools: {msg}"
+            return error_text, error_text
 
         if not results:
             # List all tools in the category so the LLM knows what's available
             all_tools = self.catalog.list_tools(category=category)
             if all_tools:
                 tool_names = [t["name"] for t in all_tools]
-                return (
+                no_match_text = (
                     f"No tools matched your search query, but the following "
                     f"tools are available in {category} category:\n"
                     f"{', '.join(tool_names)}. "
                     f"Try searching with different keywords."
                 )
+                return no_match_text, no_match_text
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
-                return (
+                error_text = (
                     f"No tools found in {category}. "
                     f"Tool discovery failed for the following servers:\n"
                     f"{errors_detail}"
                 )
-            return f"No tools found matching your query in {category}."
-        return json.dumps(results, indent=2)
+                return error_text, error_text
+            not_found_text = f"No tools found matching your query in {category}."
+            return not_found_text, not_found_text
+
+        # Content for the LLM (no scoring details)
+        content_json = json.dumps(results, indent=2)
+
+        # Artifact includes scores and matched terms for debugging/display
+        scored_results = self.catalog.search_with_scores(
+            query=query,
+            category=category,
+            max_results=self.max_results,
+        )
+        artifact_json = json.dumps({"results": scored_results}, indent=2)
+        return content_json, artifact_json
