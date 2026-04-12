@@ -125,25 +125,61 @@ def _tokenize(text: str) -> list[str]:
     return [t for t in _TOKENIZE_RE.split(text.lower()) if t]
 
 
-def _build_tool_document(tool: MCPTool) -> list[str]:
+_STEM_SUFFIXES = ("ing", "tion", "ment", "ness", "able", "ible", "ous", "ive")
+
+
+def _stem(token: str) -> str:
+    """Very lightweight suffix stripping (no external dependency).
+
+    Only strips common suffixes when the remaining stem is >= 3 chars.
+    This is intentionally conservative to avoid false conflation.
+    """
+    for suffix in _STEM_SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            return token[: -len(suffix)]
+    # Handle plural 's' and 'es'
+    if token.endswith("es") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and not token.endswith("ss") and len(token) > 3:
+        return token[:-1]
+    return token
+
+
+def _tokenize_with_stems(text: str) -> list[str]:
+    """Tokenize and include both raw tokens and their stems."""
+    raw_tokens = _tokenize(text)
+    result: list[str] = []
+    for t in raw_tokens:
+        result.append(t)
+        stemmed = _stem(t)
+        if stemmed != t:
+            result.append(stemmed)
+    return result
+
+
+def _build_tool_document(tool: MCPTool, category: str | None = None) -> list[str]:
     """Build a searchable token list from a tool's metadata."""
     parts: list[str] = []
 
+    # Server category/description (human-curated for discoverability)
+    if category:
+        parts.extend(_tokenize_with_stems(category))
+
     # Tool name (split on underscores for compound names)
-    parts.extend(_tokenize(tool.name))
+    parts.extend(_tokenize_with_stems(tool.name))
 
     # Description
     if tool.description:
-        parts.extend(_tokenize(tool.description))
+        parts.extend(_tokenize_with_stems(tool.description))
 
     # Parameter names and descriptions from inputSchema
     schema = tool.inputSchema
     if isinstance(schema, dict):
         properties: dict[str, Any] = schema.get("properties", {})
         for param_name, param_info in properties.items():
-            parts.extend(_tokenize(param_name))
+            parts.extend(_tokenize_with_stems(param_name))
             if isinstance(param_info, dict) and "description" in param_info:
-                parts.extend(_tokenize(str(param_info["description"])))
+                parts.extend(_tokenize_with_stems(str(param_info["description"])))
 
     return parts
 
@@ -288,7 +324,10 @@ class ToolCatalog:
     def _ensure_index(self) -> _BM25Index:
         """Lazily build or return the BM25 index."""
         if self._index is None:
-            corpus = [_build_tool_document(entry.tool) for entry in self._entries]
+            corpus = [
+                _build_tool_document(entry.tool, category=entry.category)
+                for entry in self._entries
+            ]
             self._index = _BM25Index()
             self._index.build(corpus)
             logger.info("Built BM25 index over %d tools", len(self._entries))
@@ -324,10 +363,13 @@ class ToolCatalog:
             if not filtered_entries:
                 return []
             # Build a temporary index for the filtered subset
-            corpus = [_build_tool_document(e.tool) for e in filtered_entries]
+            corpus = [
+                _build_tool_document(e.tool, category=e.category)
+                for e in filtered_entries
+            ]
             index = _BM25Index()
             index.build(corpus)
-            query_tokens = _tokenize(query)
+            query_tokens = _tokenize_with_stems(query)
             ranked = index.search(query_tokens, top_k=max_results)
             return [
                 {
@@ -340,7 +382,7 @@ class ToolCatalog:
 
         # Search across all tools
         index = self._ensure_index()
-        query_tokens = _tokenize(query)
+        query_tokens = _tokenize_with_stems(query)
         ranked = index.search(query_tokens, top_k=max_results)
         return [
             {
