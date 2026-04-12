@@ -276,6 +276,7 @@ class MCPToolProvider:
         tool_config: AgentConfig,
         headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
+        session_pool: McpSessionPool | None = None,
     ) -> List[BaseTool]:
         """
         Get tools by their MCP URL asynchronously.
@@ -362,6 +363,7 @@ class MCPToolProvider:
                         callbacks=callbacks,
                         tool_interceptors=tool_interceptors,
                         server_name=tool_config.name,
+                        session_pool=session_pool,
                     )
                     for mcp_tool in mcp_tools
                 ]
@@ -538,6 +540,7 @@ class MCPToolProvider:
         tools: list[AgentConfig],
         headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
+        session_pool: McpSessionPool | None = None,
     ) -> list[BaseTool]:
         """Fetch tools from all configured MCP servers concurrently."""
         url_tools = [t for t in tools if t.url is not None]
@@ -557,6 +560,7 @@ class MCPToolProvider:
                     tool_config=tool,
                     headers=headers,
                     auth_interceptor=auth_interceptor,
+                    session_pool=session_pool,
                 )
             except* AuthorizationMcpToolTokenInvalidException as auth_eg:
                 logger.warning(
