@@ -1,8 +1,38 @@
+import botocore
 import logging
 import os
 import re
 import traceback
 import uuid
+from botocore.exceptions import (
+    ConnectTimeoutError,
+    ReadTimeoutError,
+    TokenRetrievalError,
+)
+from fastapi import HTTPException
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
+from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
+    SkillLoaderProtocol,
+)
+from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AnyMessage,
+    UsageMetadata,
+)
+from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
+from langchain_core.tools import BaseTool, ToolException
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
+from openai.types import CompletionUsage
+from starlette.responses import StreamingResponse, JSONResponse
 from typing import (
     Any,
     List,
@@ -16,43 +46,10 @@ from typing import (
     cast,
 )
 
-import botocore
-from botocore.exceptions import (
-    ConnectTimeoutError,
-    ReadTimeoutError,
-    TokenRetrievalError,
-)
-from oidcauthlib.auth.exceptions.authorization_needed_exception import (
-    AuthorizationNeededException,
-)
-from fastapi import HTTPException
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
-
-from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
-
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog
-from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import (
-    AnyMessage,
-    UsageMetadata,
-)
-from langchain_core.runnables import RunnableConfig
-from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
-from langchain_core.tools import BaseTool, ToolException
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.base import BaseStore
-from openai.types import CompletionUsage
-from starlette.responses import StreamingResponse, JSONResponse
-from langgraph.graph import StateGraph
-
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.state.messages_state import MyMessagesState
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
@@ -60,14 +57,13 @@ from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
-from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
-
+from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -579,9 +575,12 @@ class LangGraphToOpenAIConverter:
             request_information=request_information,
             config=config,
         )
+        runtime_context = {"user_id": request_information.user_id}
         try:
             output: Dict[str, Any] = await compiled_state_graph.ainvoke(
-                input=input_, config=config
+                input=input_,
+                config=config,
+                context=runtime_context,  # type: ignore[call-overload]
             )
         except AttributeError:
             # Fallback if errorfactory is not available
@@ -630,6 +629,7 @@ class LangGraphToOpenAIConverter:
             request_information=request_information,
             config=config,
         )
+        runtime_context = {"user_id": request_information.user_id}
         try:
             event: StandardStreamEvent | CustomStreamEvent
             async for event in compiled_state_graph.astream_events(
@@ -640,6 +640,7 @@ class LangGraphToOpenAIConverter:
                 ),
                 version="v2",
                 config=config,
+                context=runtime_context,
             ):
                 yield event
         except ToolException as e:
@@ -916,6 +917,7 @@ class LangGraphToOpenAIConverter:
             model=llm,
             tools=tools,
             state_schema=MyMessagesState,
+            context_schema=dict,  # type: ignore[misc]
             store=store,
             checkpointer=checkpointer,
             system_prompt=system_prompt,
@@ -923,7 +925,10 @@ class LangGraphToOpenAIConverter:
         )
 
         # Build the workflow
-        workflow: StateGraph[MyMessagesState] = StateGraph(MyMessagesState)
+        workflow: StateGraph[MyMessagesState] = StateGraph(
+            MyMessagesState,
+            context_schema=dict,  # type: ignore[arg-type]
+        )
         workflow.add_node("react_agent", react_agent_runnable)
         workflow.set_entry_point("react_agent")
 

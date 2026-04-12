@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
@@ -580,3 +582,54 @@ class TestFileConfigReaderMcpJsonIntegration:
         assert len(configs) == 1
         assert configs[0].tools is not None
         assert configs[0].tools[0].url == "https://custom.example.com/"
+
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    def test_resolves_description_from_mcp_json(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    description="Google Drive file management - search, read, and download files",
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert (
+            tool.description
+            == "Google Drive file management - search, read, and download files"
+        )
+
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
+    def test_mcp_json_description_overrides_model_config_description(self) -> None:
+        """Description from .mcp.json takes precedence over model config."""
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            tools=[
+                AgentConfig(
+                    name="drive",
+                    mcp_server="google-drive",
+                    description="Old description from model config",
+                )
+            ],
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    description="New description from mcp.json",
+                )
+            }
+        )
+
+        resolve_mcp_servers([config], mcp)
+
+        tool = config.tools[0]  # type: ignore[index]
+        assert tool.description == "New description from mcp.json"

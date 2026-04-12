@@ -25,6 +25,12 @@ class McpServerEntry(BaseModel):
         "Used in login prompts and UI instead of the server key.",
     )
 
+    description: str | None = Field(
+        None,
+        description="Description of the category of tools available from this MCP server. "
+        "Used in the system prompt to guide the LLM's tool discovery and in BM25 search indexing.",
+    )
+
     command: str | None = Field(
         None,
         description="Command to launch a stdio-based MCP server.",

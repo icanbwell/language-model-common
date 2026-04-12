@@ -31,6 +31,7 @@ from languagemodelcommon.auth.models.token_cache_item import TokenCacheItem
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -384,18 +385,22 @@ class TokenExchangeManager:
                 logger.exception(e, stack_info=True)
                 raise
             except Exception as e:
+                first = ExceptionLogger.get_first_exception(e)
+                formatted = ExceptionLogger.format_exception_message(e)
                 logger.exception(
-                    f"{type(e).__name__} Error verifying token for tool {tool_config.name}: {e}"
+                    "Error verifying token for tool %s: %s",
+                    tool_config.name,
+                    formatted,
                 )
                 raise AuthorizationNeededException(
                     message="Invalid or expired token provided in Authorization header."
                     + (
-                        f"\n{type(e).__name__}: {e}\n{token}\n"
+                        f"\n{formatted}\n{token}\n"
                         if logger.isEnabledFor(logging.DEBUG)
                         else ""
                     )
                     + error_message,
-                ) from e
+                ) from first
 
     async def save_token_async(
         self, *, token_cache_item: TokenCacheItem, refreshed: bool

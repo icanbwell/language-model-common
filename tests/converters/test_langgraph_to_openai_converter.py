@@ -42,6 +42,7 @@ class _FakeCompiledStateGraph:
         input: Any,
         version: str,
         config: dict[str, Any],
+        **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
         self.last_stream_config = config
         if self.error is not None:
@@ -49,7 +50,9 @@ class _FakeCompiledStateGraph:
         for event in self.events:
             yield event
 
-    async def ainvoke(self, *, input: Any, config: dict[str, Any]) -> dict[str, Any]:
+    async def ainvoke(
+        self, *, input: Any, config: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
         self.last_ainvoke_config = config
         return {"messages": []}
 

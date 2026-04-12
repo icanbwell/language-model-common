@@ -11,6 +11,8 @@ from languagemodelcommon.mcp.tool_catalog import (
     ToolCatalog,
     _BM25Index,
     _tokenize,
+    _tokenize_with_stems,
+    _stem,
     _build_tool_document,
     _format_tool_schema,
 )
@@ -49,6 +51,44 @@ class TestTokenize:
         assert _tokenize("") == []
 
 
+class TestStem:
+    def test_strips_ing(self) -> None:
+        assert _stem("scraping") == "scrap"
+
+    def test_strips_tion(self) -> None:
+        assert _stem("extraction") == "extrac"
+
+    def test_strips_plural_s(self) -> None:
+        assert _stem("patients") == "patient"
+
+    def test_strips_plural_es(self) -> None:
+        assert _stem("pages") == "pag"
+
+    def test_does_not_strip_short_words(self) -> None:
+        assert _stem("is") == "is"
+        assert _stem("as") == "as"
+
+    def test_does_not_strip_ss(self) -> None:
+        assert _stem("pass") == "pass"
+
+    def test_preserves_short_stems(self) -> None:
+        # "wing" - stem "w" would be < 3 chars, so no strip
+        assert _stem("wing") == "wing"
+
+
+class TestTokenizeWithStems:
+    def test_includes_raw_and_stemmed(self) -> None:
+        tokens = _tokenize_with_stems("scraping pages")
+        assert "scraping" in tokens
+        assert "scrap" in tokens
+        assert "pages" in tokens
+        assert "pag" in tokens
+
+    def test_no_duplicate_when_no_stem(self) -> None:
+        tokens = _tokenize_with_stems("url")
+        assert tokens.count("url") == 1
+
+
 class TestBuildToolDocument:
     def test_includes_name_tokens(self) -> None:
         tool = _mcp_tool("search_patients")
@@ -75,6 +115,21 @@ class TestBuildToolDocument:
         tokens = _build_tool_document(tool)
         assert "patient" in tokens
         assert "identifier" in tokens
+
+    def test_includes_category_tokens(self) -> None:
+        tool = _mcp_tool("convert", description="Convert HTML to markdown")
+        tokens = _build_tool_document(
+            tool, category="Extract and convert web page content to markdown format"
+        )
+        assert "extract" in tokens
+        assert "web" in tokens
+        assert "content" in tokens
+
+    def test_includes_stemmed_tokens(self) -> None:
+        tool = _mcp_tool("scrape_url", description="Scraping webpages")
+        tokens = _build_tool_document(tool)
+        assert "scraping" in tokens
+        assert "scrap" in tokens
 
 
 class TestFormatToolSchema:
@@ -227,6 +282,62 @@ class TestToolCatalog:
             agent_config=_agent_config(),
         )
         assert catalog.tool_count == 2
+
+    def test_url_to_markdown_ranks_above_google_drive(self) -> None:
+        """Regression: query 'web scraping url content extract markdown' should
+        rank url_to_markdown above google_drive tools."""
+        catalog = ToolCatalog()
+        catalog.add_tools(
+            server_name="google_drive",
+            category="Google Drive file management - search, read, and download files from Google Drive",
+            tools=[
+                _mcp_tool(
+                    "search_drive",
+                    description="Search for files in Google Drive by name or content",
+                    properties={
+                        "query": {
+                            "type": "string",
+                            "description": "Search query to find files",
+                        }
+                    },
+                ),
+                _mcp_tool(
+                    "read_file",
+                    description="Read the content of a file from Google Drive",
+                    properties={
+                        "file_id": {
+                            "type": "string",
+                            "description": "The ID of the file to read",
+                        }
+                    },
+                ),
+            ],
+            agent_config=_agent_config("google_drive"),
+        )
+        catalog.add_tools(
+            server_name="url_to_markdown",
+            category="Extract and convert web page content to markdown format",
+            tools=[
+                _mcp_tool(
+                    "url_to_markdown",
+                    description=(
+                        "Fetches the content of a webpage from a given URL "
+                        "and converts it to Markdown format"
+                    ),
+                    properties={
+                        "url": {
+                            "type": "string",
+                            "description": "url of the webpage to scrape",
+                        }
+                    },
+                ),
+            ],
+            agent_config=_agent_config("url_to_markdown"),
+        )
+
+        results = catalog.search("web scraping url content extract markdown")
+        assert len(results) > 0
+        assert results[0]["name"] == "url_to_markdown"
 
     def test_index_invalidated_on_add(self) -> None:
         catalog = ToolCatalog()

@@ -41,7 +41,7 @@ from languagemodelcommon.utilities.chat_message_helpers import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
-logger.setLevel(SRC_LOG_LEVELS.LLM)
+logger.setLevel(SRC_LOG_LEVELS.SSE)
 
 
 class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
@@ -268,6 +268,19 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
             total_usage_metadata.completion_tokens += usage_metadata["output_tokens"]
             total_usage_metadata.total_tokens += usage_metadata["total_tokens"]
         return total_usage_metadata
+
+    @override
+    def create_mcp_app_sse_event(
+        self,
+        *,
+        html: str,
+        title: str | None = None,
+    ) -> str | None:
+        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
+        payload = {"html": html}
+        if title:
+            payload["title"] = title
+        return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override
     def create_final_sse_message(
