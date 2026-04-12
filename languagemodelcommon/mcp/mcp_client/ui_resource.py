@@ -13,6 +13,7 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.types import Tool as MCPTool
+from pydantic import AnyUrl
 
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -36,7 +37,7 @@ def _to_dict(obj: Any) -> dict[str, Any]:
     if isinstance(obj, dict):
         return obj
     if hasattr(obj, "model_dump"):
-        return obj.model_dump(mode="json")
+        return dict(obj.model_dump(mode="json"))
     return {}
 
 
@@ -79,7 +80,7 @@ async def fetch_ui_resource(
     the fetch fails.
     """
     try:
-        result = await session.read_resource(uri)
+        result = await session.read_resource(AnyUrl(uri))
     except Exception as e:
         logger.warning("Failed to fetch UI resource %s: %s", uri, e)
         return None
@@ -88,7 +89,7 @@ async def fetch_ui_resource(
         for item in result.contents:
             text = getattr(item, "text", None)
             if text:
-                return text
+                return str(text)
 
     return None
 

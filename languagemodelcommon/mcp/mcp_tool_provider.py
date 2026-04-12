@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import httpx
 from httpx import HTTPStatusError
 from langchain_core.tools import BaseTool
+from mcp import ClientSession
 from mcp.types import (
     CallToolResult,
     LoggingMessageNotificationParams,
