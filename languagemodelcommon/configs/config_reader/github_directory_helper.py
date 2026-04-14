@@ -8,7 +8,6 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 ``https://github.com/`` URLs are converted to ``github://`` before download.
 """
 
-import fcntl
 import logging
 import os
 import tempfile
@@ -121,9 +120,16 @@ def download_github_directory(github_uri: str) -> Path:
     The cache directory defaults to ``{tempdir}/github_config_cache`` and can
     be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
-    A file lock serialises concurrent Gunicorn workers so that only one
-    process downloads at a time.  Workers that acquire the lock after
-    the cache is already fresh will use the cached result.
+    Caching is checked at two levels:
+
+    1. **In-memory** (per-worker process) — avoids filesystem stat calls on
+       hot paths within the same Gunicorn worker.
+    2. **On-disk timestamp file** — checked by ``GithubDirectoryDownloader``
+       after acquiring its per-URI lock, allowing workers that lost the lock
+       race to skip redundant downloads.
+
+    The downloader itself handles locking, atomic swap, and retry so this
+    function no longer needs its own file lock.
     """
     from langchain_ai_skills_framework.loaders.github_directory_downloader import (
         GithubDirectoryDownloader,
@@ -143,38 +149,18 @@ def download_github_directory(github_uri: str) -> Path:
             return cached_path
 
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = _CACHE_DIR / ".github_directory_helper.lock"
-    lock_fd = open(lock_path, "w")
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-        # Re-check the in-process cache after acquiring the lock — another
-        # thread in the same worker may have populated it while we waited.
-        now = time.monotonic()
-        cached = _cache.get(github_uri)
-        if cached is not None:
-            cached_path, cached_time = cached
-            if (now - cached_time) < _CACHE_TTL_SECONDS and cached_path.is_dir():
-                logger.debug(
-                    "Using cached GitHub download for %s (age: %.0fs, populated while waiting for lock)",
-                    github_uri,
-                    now - cached_time,
-                )
-                return cached_path
-
-        github_token = os.environ.get("GITHUB_TOKEN")
-        downloader = GithubDirectoryDownloader()
-        result: Path = downloader.download(
-            source_uri=github_uri,
-            github_token=github_token,
-            cache_path=_CACHE_DIR,
-        )
-        _cache[github_uri] = (result, now)
-        logger.info("Downloaded and cached GitHub content from %s", github_uri)
-        return result
-    finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        lock_fd.close()
+    github_token = os.environ.get("GITHUB_TOKEN")
+    downloader = GithubDirectoryDownloader()
+    result: Path = downloader.download(
+        source_uri=github_uri,
+        github_token=github_token,
+        cache_path=_CACHE_DIR,
+        cache_ttl_seconds=_CACHE_TTL_SECONDS,
+    )
+    _cache[github_uri] = (result, time.monotonic())
+    logger.info("Downloaded and cached GitHub content from %s", github_uri)
+    return result
 
 
 def join_github_uri_path(base_uri: str, suffix: str) -> str:

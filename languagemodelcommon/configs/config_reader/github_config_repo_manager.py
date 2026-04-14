@@ -10,12 +10,12 @@ point at local subdirectories within the cache folder.
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import io
 import logging
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -98,82 +98,81 @@ class GithubConfigRepoManager:
         ``{owner}-{repo}-{sha}``.  We flatten it so that the cache
         directory structure is stable across refreshes (no SHA in path).
 
-        A file lock serialises concurrent workers (Gunicorn forks) so
-        that only one process performs the download+extract at a time.
-        Late arrivals that acquire the lock after the cache directory
-        already exists will skip the work entirely (on first boot) or
-        proceed normally (on background refresh).
+        Multiple Gunicorn workers may call this concurrently on startup.
+        The on-disk timestamp check avoids most redundant downloads, and
+        the atomic swap ensures readers never see a partial directory.
+        A few redundant downloads on cold start are harmless.
         """
         if not self._repo_url:
             raise RuntimeError("Cannot download: GITHUB_CONFIG_REPO_URL is not set")
 
         parent = self._cache_dir.parent
         parent.mkdir(parents=True, exist_ok=True)
-        lock_path = parent / (self._cache_dir.name + ".lock")
 
-        lock_fd = open(lock_path, "w")
-        try:
-            # Block until we are the sole writer.  In Kubernetes each pod
-            # has its own filesystem, so this serialises only the workers
-            # inside the same pod — which is exactly the race we need to
-            # prevent.
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        # If another worker already populated a fresh cache, skip.
+        if self._is_initial_download and self._is_cache_fresh():
+            logger.info(
+                "Cache directory %s already fresh — skipping download",
+                self._cache_dir,
             )
-
-            # If another worker already populated the cache while we
-            # waited for the lock during initial startup, skip the work.
-            if self._is_initial_download and self._cache_dir.exists():
-                logger.info(
-                    "Cache directory %s already populated by another worker — skipping download",
-                    self._cache_dir,
-                )
-                return
-
-            zip_bytes = await self._download_zipball(self._repo_url)
-
-            # Place temporary directories *inside* the cache dir's parent to
-            # stay on the same filesystem.  In Kubernetes the cache dir is
-            # often a mounted volume; sibling paths created with `with_name()`
-            # may land on the container overlay FS, causing EXDEV (errno 18)
-            # on rename.  Using shutil.move handles the cross-device case
-            # gracefully by falling back to copy+delete.
-            extract_dir = parent / (self._cache_dir.name + ".extract")
-            staging_dir = parent / (self._cache_dir.name + ".new")
-            old_dir = parent / (self._cache_dir.name + ".old")
-
-            # Extract into a temporary directory
-            if extract_dir.exists():
-                shutil.rmtree(extract_dir)
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            repo_root = self._extract_zip(zip_bytes, extract_dir)
-
-            # Flatten: move the single top-level {owner-repo-sha}/ directory
-            # up so that paths are stable across refreshes
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir)
-            if repo_root != extract_dir:
-                shutil.move(str(repo_root), str(staging_dir))
-                shutil.rmtree(extract_dir, ignore_errors=True)
-            else:
-                shutil.move(str(extract_dir), str(staging_dir))
-
-            # Atomic swap: staging → current, current → old
-            if old_dir.exists():
-                shutil.rmtree(old_dir)
-            if self._cache_dir.exists():
-                shutil.move(str(self._cache_dir), str(old_dir))
-            shutil.move(str(staging_dir), str(self._cache_dir))
-
-            # Clean up old directory (best-effort)
-            if old_dir.exists():
-                shutil.rmtree(old_dir, ignore_errors=True)
-
             self._is_initial_download = False
-            logger.info("Config repo extracted to %s", self._cache_dir)
-        finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            lock_fd.close()
+            return
+
+        zip_bytes = await self._download_zipball(self._repo_url)
+
+        # Place temporary directories *inside* the cache dir's parent to
+        # stay on the same filesystem.  In Kubernetes the cache dir is
+        # often a mounted volume; sibling paths created with `with_name()`
+        # may land on the container overlay FS, causing EXDEV (errno 18)
+        # on rename.  Using shutil.move handles the cross-device case
+        # gracefully by falling back to copy+delete.
+        extract_dir = parent / (self._cache_dir.name + ".extract")
+        staging_dir = parent / (self._cache_dir.name + ".new")
+        old_dir = parent / (self._cache_dir.name + ".old")
+
+        # Extract into a temporary directory
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        repo_root = self._extract_zip(zip_bytes, extract_dir)
+
+        # Flatten: move the single top-level {owner-repo-sha}/ directory
+        # up so that paths are stable across refreshes
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        if repo_root != extract_dir:
+            shutil.move(str(repo_root), str(staging_dir))
+            shutil.rmtree(extract_dir, ignore_errors=True)
+        else:
+            shutil.move(str(extract_dir), str(staging_dir))
+
+        # Atomic swap: staging → current, current → old
+        if old_dir.exists():
+            shutil.rmtree(old_dir)
+        if self._cache_dir.exists():
+            shutil.move(str(self._cache_dir), str(old_dir))
+        shutil.move(str(staging_dir), str(self._cache_dir))
+
+        # Clean up old directory (best-effort)
+        if old_dir.exists():
+            shutil.rmtree(old_dir, ignore_errors=True)
+
+        self._mark_cache_fresh()
+        self._is_initial_download = False
+        logger.info("Config repo extracted to %s", self._cache_dir)
+
+    def _is_cache_fresh(self) -> bool:
+        """Return True if the cache directory exists and was refreshed recently."""
+        ts_file = self._cache_dir.parent / (self._cache_dir.name + ".ts")
+        if not ts_file.exists() or not self._cache_dir.is_dir():
+            return False
+        age = time.time() - ts_file.stat().st_mtime
+        return age < self._refresh_seconds
+
+    def _mark_cache_fresh(self) -> None:
+        """Write a timestamp marker so other workers know the cache is fresh."""
+        ts_file = self._cache_dir.parent / (self._cache_dir.name + ".ts")
+        ts_file.write_text(str(time.time()))
 
     async def _download_zipball(self, url: str) -> bytes:
         """Download a zipball from the GitHub API."""
