@@ -135,10 +135,19 @@ class ConfigReader:
                         models.extend(models_testing)
             except Exception as e:
                 logger.exception(
-                    "Using config backup since got error reading model configurations: %s",
+                    "Error reading model configurations: %s",
                     e,
                 )
                 models = []
+
+            if not models:
+                logger.warning(
+                    "ConfigReader with id: %s read 0 model configurations "
+                    "from %s — not caching empty result",
+                    self._identifier,
+                    default_config_path,
+                )
+                return models
 
             await self._cache.set(models)
             return models
