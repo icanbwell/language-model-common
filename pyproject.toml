@@ -54,7 +54,7 @@ Homepage = "https://github.com/icanbwell/language-model-common"
 
 [dependency-groups]
 dev = [
-    "setuptools>=60.9.3",
+    "setuptools>=68.0",
     "wheel>=0.43.0",
     "twine>=4.0.2",
     "pre-commit>=3.6.1",
