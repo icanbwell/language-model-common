@@ -13,7 +13,7 @@ COPY pyproject.toml uv.lock* ./
 
 # Install dependencies using uv (locked versions, skip building project itself)
 RUN --mount=type=cache,target=/root/.cache/uv,id=uv-cache \
-    uv sync --frozen --all-extras --no-install-project --verbose
+    uv sync --frozen --all-extras --group dev --no-install-project --verbose
 
 # Set the working directory
 WORKDIR /sourcecode
