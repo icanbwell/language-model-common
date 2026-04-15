@@ -2,17 +2,17 @@ LANG=en_US.utf-8
 
 export LANG
 
-.PHONY: Pipfile.lock
-Pipfile.lock:
-	docker compose --progress=plain build --no-cache --build-arg RUN_PIPENV_LOCK=true dev && \
-	docker compose --progress=plain run --rm dev sh -c "cp -f /tmp/Pipfile.lock /usr/src/languagemodelcommon/Pipfile.lock"
+.PHONY: uv.lock
+uv.lock: ## Locks dependencies and updates uv.lock on the local file system
+	docker compose --progress=plain build --no-cache --build-arg RUN_UV_LOCK=true dev && \
+	docker compose --progress=plain run --rm dev sh -c "cp -f /tmp/uv.lock /usr/src/languagemodelcommon/uv.lock"
 
 .PHONY:devdocker
 devdocker: ## Builds the docker for dev
 	docker compose build
 
 .PHONY:init
-init: Pipfile.lock devdocker up setup-pre-commit  ## Initializes the local developer environment
+init: uv.lock devdocker up setup-pre-commit  ## Initializes the local developer environment
 
 .PHONY: up
 up:
@@ -36,9 +36,8 @@ run-pre-commit: setup-pre-commit
 	./.git/hooks/pre-commit
 
 .PHONY:update
-update: down Pipfile.lock setup-pre-commit  ## Updates all the packages using Pipfile
-	make devdocker && \
-	make pipenv-setup
+update: down uv.lock setup-pre-commit  ## Updates all the packages using pyproject.toml
+	make devdocker
 
 .PHONY:tests
 tests: up
@@ -49,9 +48,9 @@ shell:devdocker ## Brings up the bash shell in dev docker
 	docker compose run --rm --name languagemodelcommon dev sh
 
 .PHONY:build
-build:
+build: ## Builds the package
 	docker compose run --rm --name languagemodelcommon dev rm -rf dist/
-	docker compose run --rm --name languagemodelcommon dev python3 setup.py sdist bdist_wheel
+	docker compose run --rm --name languagemodelcommon dev python3 -m build
 
 .PHONY:testpackage
 testpackage:build
@@ -68,8 +67,3 @@ package:build
 help: ## Show this help.
 	# from https://marmelab.com/blog/2016/02/29/auto-documented-makefile.html
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
-
-.PHONY:pipenv-setup
-pipenv-setup:devdocker ## Run pipenv-setup to update setup.py with latest dependencies
-	docker compose run --rm dev sh -c "pipenv run pipenv install --skip-lock --categories \"pipenvsetup\" && pipenv run pipenv-setup sync --pipfile" && \
-	make run-pre-commit

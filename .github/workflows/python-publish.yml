@@ -28,11 +28,11 @@ jobs:
       - name: Set release tag in VERSION
         run: echo "${{ github.event.release.tag_name }}" > VERSION
 
-      - name: Install dependencies
-        run: pip install -U pip setuptools wheel build
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
 
       - name: Build package
-        run: python -m build
+        run: uv build
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
