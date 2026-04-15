@@ -1425,7 +1425,7 @@ wheels = [
 
 [[package]]
 name = "langchain-ai-skills-framework"
-version = "1.0.42"
+version = "1.0.43"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1445,9 +1445,9 @@ dependencies = [
     { name = "skills-ref" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/20/b3eeab0fdd019a567e700032291c58cb8cc2b9532cbd6202dc0f53900b54/langchain_ai_skills_framework-1.0.42.tar.gz", hash = "sha256:e38d85509792685721582978d91d0fd7446a95b7c9416e17a74e0f7100c675ca", size = 66867, upload-time = "2026-04-14T20:09:12.411Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/b4/425a795eaa14120fc6466dbe5a5e47fc2c100c39ef9cbe3d5da317fd3421/langchain_ai_skills_framework-1.0.43.tar.gz", hash = "sha256:3c58e49943b3ee2dc6c2019b1ceec95a9a06219cce748b41bb87e43e47a89a50", size = 44598, upload-time = "2026-04-15T13:19:27.156Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/57/cedae348cb7178d6de13cea2dac7358f37f2593b30be2b7bfff2492aa7fc/langchain_ai_skills_framework-1.0.42-py3-none-any.whl", hash = "sha256:5b429059d067493df576480d4eebe1d2401762257946ec053ed3958328188c25", size = 99556, upload-time = "2026-04-14T20:09:11.255Z" },
+    { url = "https://files.pythonhosted.org/packages/66/e5/c871d1450a654103bc7e6ae210974cdd5dc569c8f572b4c8274ef2205108/langchain_ai_skills_framework-1.0.43-py3-none-any.whl", hash = "sha256:aaecd06e5b6bd14cfc034edcf518bca14be69977a463f78dc90e17220502df42", size = 67213, upload-time = "2026-04-15T13:19:25.736Z" },
 ]
 
 [[package]]
@@ -1796,7 +1796,7 @@ requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.27.2" },
     { name = "httpx-sse", specifier = ">=0.4.0" },
     { name = "langchain", specifier = ">=1.0.0" },
-    { name = "langchain-ai-skills-framework", specifier = ">=1.0.42" },
+    { name = "langchain-ai-skills-framework", specifier = ">=1.0.43" },
     { name = "langchain-aws", specifier = ">=1.2.0" },
     { name = "langchain-community", specifier = ">=0.4" },
     { name = "langchain-core", specifier = ">=1.2.5" },
