@@ -129,6 +129,7 @@ class GraphBuilder:
             model=llm,
             tools=tools,
             state_schema=MyMessagesState,
+            context_schema=dict,
             store=store,
             checkpointer=None,  # Workflow handles checkpointing
             system_prompt=system_prompt,
@@ -223,7 +224,10 @@ class GraphBuilder:
         Returns:
             Configured workflow graph
         """
-        workflow: StateGraph[MyMessagesState] = StateGraph(MyMessagesState)
+        workflow: StateGraph[MyMessagesState] = StateGraph(
+            MyMessagesState,
+            context_schema=dict,  # type: ignore[arg-type]
+        )
 
         # Add smart history selection node
         workflow.add_node(

@@ -138,6 +138,7 @@ async def test_get_tools_async_loads_other_tools_before_auth_failure() -> None:
         tool_config: AgentConfig,
         headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
+        session_pool: Any = None,
     ) -> List[BaseTool]:
         if tool_config.name == "working_tool":
             return [mock_tool]

@@ -16,10 +16,12 @@ from mcp.types import (
 )
 from pydantic import AnyUrl
 
-from languagemodelcommon.mcp.mcp_client import (
-    build_interceptor_chain,
+from languagemodelcommon.mcp.mcp_client.content_conversion import (
     convert_call_tool_result,
     convert_mcp_content_to_lc_block,
+)
+from languagemodelcommon.mcp.mcp_client.tool_invocation import (
+    build_interceptor_chain,
 )
 from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,

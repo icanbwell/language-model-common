@@ -118,6 +118,19 @@ When debug mode is enabled (prefix your message with `DEBUG:`), reasoning conten
 
 No action required. This is additive and does not change existing behavior for requests that do not use extended thinking.
 
+### 6. MCP Apps — interactive HTML UIs from MCP tools
+
+MCP tools that declare a `ui://` resource URI in their metadata now have their HTML fetched and streamed to the client as a custom `event: mcp_app` SSE event. The client renders the HTML in a sandboxed iframe.
+
+Key components:
+- `mcp_client/ui_resource.py` — Detection, fetching, and JavaScript injection helpers
+- `MCPToolProvider.fetch_mcp_app_embed()` — Orchestrates UI resource fetch with session pool reuse
+- `CallToolTool` — Returns `(text, artifact)` tuples via `content_and_artifact` response format
+- `LangGraphStreamingManager._handle_on_tool_end()` — Emits `event: mcp_app` SSE when artifact contains an embed
+- `ChatRequestWrapper.create_mcp_app_sse_event()` — Formats the custom SSE frame
+
+No action required for existing tools. MCP Apps are automatically detected when tools declare `meta.ui.resourceUri`. See [docs/mcp-apps.md](mcp-apps.md) for full details.
+
 ---
 
 ## Bug Fixes

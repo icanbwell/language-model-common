@@ -467,6 +467,19 @@ class LangGraphStreamingManager:
                 artifact,
             )
 
+            # Emit MCP app embed as a custom SSE event if present in artifact
+            if isinstance(artifact, dict) and "mcp_app_embed" in artifact:
+                mcp_app_embed = artifact["mcp_app_embed"]
+                embed_html = getattr(mcp_app_embed, "html", None)
+                embed_title = getattr(mcp_app_embed, "title", None)
+                if embed_html:
+                    mcp_app_event = chat_request_wrapper.create_mcp_app_sse_event(
+                        html=embed_html,
+                        title=embed_title,
+                    )
+                    if mcp_app_event:
+                        yield mcp_app_event
+
             if self.environment_variables.write_tool_output_to_file and (
                 chat_request_wrapper.enable_debug_logging or artifact is not None
             ):

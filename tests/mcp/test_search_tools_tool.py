@@ -54,38 +54,44 @@ class TestSearchToolsTool:
         catalog = _build_catalog()
         tool = SearchToolsTool(catalog=catalog)
         with pytest.raises(NotImplementedError):
-            tool._run(query="patient")
+            tool._run(query="patient", category="Healthcare")
 
     @pytest.mark.asyncio
     async def test_search_returns_json(self) -> None:
         catalog = _build_catalog()
         tool = SearchToolsTool(catalog=catalog)
-        result = await tool._arun(query="patient")
-        parsed = json.loads(result)
+        content, artifact = await tool._arun(query="patient", category="Healthcare")
+        parsed = json.loads(content)
         assert len(parsed) > 0
         assert "name" in parsed[0]
+        # Artifact includes additional scoring info
+        artifact_parsed = json.loads(artifact)
+        assert len(artifact_parsed["results"]) > 0
+        assert "score" in artifact_parsed["results"][0]
+        assert "matched_terms" in artifact_parsed["results"][0]
 
     @pytest.mark.asyncio
     async def test_no_results_message(self) -> None:
         catalog = ToolCatalog()
         tool = SearchToolsTool(catalog=catalog)
-        result = await tool._arun(query="anything")
-        assert "No tools found" in result
+        content, artifact = await tool._arun(query="anything", category="Nonexistent")
+        assert "No tools found" in content
+        assert "No tools found" in artifact
 
     @pytest.mark.asyncio
     async def test_category_filter(self) -> None:
         catalog = _build_catalog()
         tool = SearchToolsTool(catalog=catalog)
-        result = await tool._arun(query="search", category="Healthcare")
-        parsed = json.loads(result)
+        content, _artifact = await tool._arun(query="search", category="Healthcare")
+        parsed = json.loads(content)
         assert all(r["server_name"] == "fhir" for r in parsed)
 
     @pytest.mark.asyncio
     async def test_max_results_respected(self) -> None:
         catalog = _build_catalog()
         tool = SearchToolsTool(catalog=catalog, max_results=1)
-        result = await tool._arun(query="patient")
-        parsed = json.loads(result)
+        content, _artifact = await tool._arun(query="patient", category="Healthcare")
+        parsed = json.loads(content)
         assert len(parsed) <= 1
 
     @pytest.mark.asyncio
@@ -112,8 +118,8 @@ class TestSearchToolsTool:
         )
 
         tool = SearchToolsTool(catalog=catalog, resolver=resolver)
-        result = await tool._arun(query="patient", category="Healthcare")
-        parsed = json.loads(result)
+        content, _artifact = await tool._arun(query="patient", category="Healthcare")
+        parsed = json.loads(content)
         assert len(parsed) > 0
         assert parsed[0]["name"] == "search_patients"
         resolver.resolve_tools.assert_awaited_once_with(agent_config=config)
@@ -129,8 +135,8 @@ class TestSearchToolsTool:
         )
 
         tool = SearchToolsTool(catalog=catalog)
-        result = await tool._arun(query="patient", category="Healthcare")
-        assert "No tools found" in result
+        content, _artifact = await tool._arun(query="patient", category="Healthcare")
+        assert "No tools found" in content
 
     @pytest.mark.asyncio
     async def test_resolver_failure_does_not_crash(self) -> None:
@@ -146,5 +152,29 @@ class TestSearchToolsTool:
         resolver.resolve_tools = AsyncMock(side_effect=ConnectionError("unreachable"))
 
         tool = SearchToolsTool(catalog=catalog, resolver=resolver)
-        result = await tool._arun(query="patient", category="Healthcare")
-        assert "No tools found" in result
+        content, _artifact = await tool._arun(query="patient", category="Healthcare")
+        assert "No tools found" in content
+
+    @pytest.mark.asyncio
+    async def test_auth_required_server_raises(self) -> None:
+        """Auth exceptions propagate so user sees login links."""
+        from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+            AuthorizationNeededException,
+        )
+
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="google_drive",
+            category="Google Drive",
+            agent_config=_agent_config("google_drive"),
+        )
+
+        async def _resolve(agent_config: AgentConfig) -> list[MCPTool]:
+            raise AuthorizationNeededException(message="Login required")
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(side_effect=_resolve)
+
+        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
+        with pytest.raises(AuthorizationNeededException):
+            await tool._arun(query="files", category="Google Drive")

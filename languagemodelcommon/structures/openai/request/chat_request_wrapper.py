@@ -226,6 +226,19 @@ class ChatRequestWrapper(abc.ABC):
         effective = getattr(self, "_effective_parallel_tool_calls", None)
         return effective if effective is not None else self.parallel_tool_calls
 
+    def create_mcp_app_sse_event(
+        self,
+        *,
+        html: str,
+        title: str | None = None,
+    ) -> str | None:
+        """Emit a custom ``event: mcp_app`` SSE frame carrying an MCP app HTML embed.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event so the downstream pipe can render it in an iframe.
+        """
+        return None
+
     def create_tool_start_sse_event(
         self,
         *,

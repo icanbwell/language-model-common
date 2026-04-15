@@ -119,6 +119,17 @@ def download_github_directory(github_uri: str) -> Path:
     Results are cached for ``CONFIG_CACHE_TIMEOUT_SECONDS`` (default 120 s).
     The cache directory defaults to ``{tempdir}/github_config_cache`` and can
     be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
+
+    Caching is checked at two levels:
+
+    1. **In-memory** (per-worker process) — avoids filesystem stat calls on
+       hot paths within the same Gunicorn worker.
+    2. **On-disk timestamp file** — checked by ``GithubDirectoryDownloader``
+       after acquiring its per-URI lock, allowing workers that lost the lock
+       race to skip redundant downloads.
+
+    The downloader itself handles locking, atomic swap, and retry so this
+    function no longer needs its own file lock.
     """
     from langchain_ai_skills_framework.loaders.github_directory_downloader import (
         GithubDirectoryDownloader,
@@ -137,14 +148,17 @@ def download_github_directory(github_uri: str) -> Path:
             )
             return cached_path
 
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
     github_token = os.environ.get("GITHUB_TOKEN")
     downloader = GithubDirectoryDownloader()
     result: Path = downloader.download(
         source_uri=github_uri,
         github_token=github_token,
         cache_path=_CACHE_DIR,
+        cache_ttl_seconds=_CACHE_TTL_SECONDS,
     )
-    _cache[github_uri] = (result, now)
+    _cache[github_uri] = (result, time.monotonic())
     logger.info("Downloaded and cached GitHub content from %s", github_uri)
     return result
 

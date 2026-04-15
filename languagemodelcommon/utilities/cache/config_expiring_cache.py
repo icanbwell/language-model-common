@@ -78,6 +78,16 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
             return self._cache
         return None
 
+    async def get_stale(self) -> Optional[List[ChatModelConfig]]:
+        """Return the last cached value even if the TTL has expired.
+
+        This is used as a fallback when a fresh read returns no results
+        (e.g. the config directory is momentarily unavailable during an
+        atomic swap).  Returning stale data is preferable to returning
+        nothing.
+        """
+        return self._cache
+
     @override
     async def set(self, value: List[ChatModelConfig]) -> None:
         """

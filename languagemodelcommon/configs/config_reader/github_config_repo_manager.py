@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -52,6 +53,7 @@ class GithubConfigRepoManager:
         )
         self._github_token: str | None = os.environ.get("GITHUB_TOKEN")
         self._background_task: asyncio.Task[None] | None = None
+        self._is_initial_download: bool = True
 
     @property
     def is_enabled(self) -> bool:
@@ -95,9 +97,26 @@ class GithubConfigRepoManager:
         GitHub zipballs contain a top-level directory named
         ``{owner}-{repo}-{sha}``.  We flatten it so that the cache
         directory structure is stable across refreshes (no SHA in path).
+
+        Multiple Gunicorn workers may call this concurrently on startup.
+        The on-disk timestamp check avoids most redundant downloads, and
+        the atomic swap ensures readers never see a partial directory.
+        A few redundant downloads on cold start are harmless.
         """
         if not self._repo_url:
             raise RuntimeError("Cannot download: GITHUB_CONFIG_REPO_URL is not set")
+
+        parent = self._cache_dir.parent
+        parent.mkdir(parents=True, exist_ok=True)
+
+        # If another worker already populated a fresh cache, skip.
+        if self._is_initial_download and self._is_cache_fresh():
+            logger.info(
+                "Cache directory %s already fresh — skipping download",
+                self._cache_dir,
+            )
+            self._is_initial_download = False
+            return
 
         zip_bytes = await self._download_zipball(self._repo_url)
 
@@ -107,7 +126,6 @@ class GithubConfigRepoManager:
         # may land on the container overlay FS, causing EXDEV (errno 18)
         # on rename.  Using shutil.move handles the cross-device case
         # gracefully by falling back to copy+delete.
-        parent = self._cache_dir.parent
         extract_dir = parent / (self._cache_dir.name + ".extract")
         staging_dir = parent / (self._cache_dir.name + ".new")
         old_dir = parent / (self._cache_dir.name + ".old")
@@ -139,7 +157,22 @@ class GithubConfigRepoManager:
         if old_dir.exists():
             shutil.rmtree(old_dir, ignore_errors=True)
 
+        self._mark_cache_fresh()
+        self._is_initial_download = False
         logger.info("Config repo extracted to %s", self._cache_dir)
+
+    def _is_cache_fresh(self) -> bool:
+        """Return True if the cache directory exists and was refreshed recently."""
+        ts_file = self._cache_dir.parent / (self._cache_dir.name + ".ts")
+        if not ts_file.exists() or not self._cache_dir.is_dir():
+            return False
+        age = time.time() - ts_file.stat().st_mtime
+        return age < self._refresh_seconds
+
+    def _mark_cache_fresh(self) -> None:
+        """Write a timestamp marker so other workers know the cache is fresh."""
+        ts_file = self._cache_dir.parent / (self._cache_dir.name + ".ts")
+        ts_file.write_text(str(time.time()))
 
     async def _download_zipball(self, url: str) -> bytes:
         """Download a zipball from the GitHub API."""

@@ -66,6 +66,7 @@ class _SourceLogLevels:
     EVALUATOR: str
     RESPONSES: str
     TOOLS: str
+    SSE: str
 
 
 LOG_SOURCES = tuple(_SourceLogLevels.__annotations__.keys())

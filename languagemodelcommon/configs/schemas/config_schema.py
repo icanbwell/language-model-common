@@ -320,7 +320,10 @@ class AgentConfig(AuthenticationConfig):
 
     description: str | None = Field(
         None,
-        description="Human-readable description of the category of tools available from this MCP server. Used in the system prompt to guide the LLM's tool discovery.",
+        description="Human-readable description of the category of tools available from this MCP server. "
+        "Used in the system prompt to guide the LLM's tool discovery. "
+        "DEPRECATED: Prefer setting 'description' in .mcp.json which takes precedence when present.",
+        deprecated=True,
     )
 
     display_name: str | None = Field(
@@ -333,7 +336,7 @@ class AgentConfig(AuthenticationConfig):
 
     mcp_server: str | None = Field(
         None,
-        description="Key into the .mcp.json mcpServers registry. When set, url, headers, auth, and oauth are resolved from the matching server entry at config-load time.",
+        description='Key into the .mcp.json mcpServers registry. When set, url, headers, auth, and oauth are resolved from the matching server entry at config-load time. Use "*" to include all servers defined in .mcp.json.',
     )
 
     parameters: List[AgentParameterConfig] | None = Field(

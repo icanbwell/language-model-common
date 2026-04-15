@@ -3,12 +3,6 @@ url = "https://pypi.python.org/simple"
 verify_ssl = true
 name = "pypi"
 
-[[source]]
-name = "alpine-wheels"
-# https://github.com/imranq2/alpine-wheels/
-url = "https://imranq2.github.io/alpine-wheels/docs/"
-verify_ssl = true
-
 [packages]
 # boto3 is a Python library for interacting with AWS services
 boto3 = ">=1.40.21"
@@ -48,7 +42,9 @@ langgraph-store-mongodb = ">=0.1.0"
 # tiktoken 0.8.0 is missing wheel for tiktoken-0.7.0-cp312-cp312-musllinux_1_2_aarch64.whl: https://pypi.org/simple/tiktoken/
 tiktoken = ">=0.12.0"
 # langchain-ai-skills-framework is a Python library for building AI skills in LangChain
-langchain-ai-skills-framework = ">=1.0.23"
+langchain-ai-skills-framework = ">=1.0.42"
+# motor is needed by langchain-ai-skills-framework for MongoDB user skill storage
+motor = ">=3.7.1"
 # simple-container is a Python library for working with containers
 simple-container = ">=1.0.2"
 # pypdf is a Python library for working with PDFs

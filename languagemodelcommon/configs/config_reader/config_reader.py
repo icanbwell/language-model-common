@@ -111,8 +111,54 @@ class ConfigReader:
                 default_config_path,
             )
 
+            models = await self._read_configs_with_retry(
+                config_path=config_path,
+                default_config_path=default_config_path,
+                models_testing_path=models_testing_path,
+            )
+
+            if not models:
+                stale = await self._cache.get_stale()
+                if stale:
+                    logger.warning(
+                        "ConfigReader with id: %s read 0 model configurations "
+                        "from %s — returning %d stale cached configs",
+                        self._identifier,
+                        default_config_path,
+                        len(stale),
+                    )
+                    return stale
+                logger.warning(
+                    "ConfigReader with id: %s read 0 model configurations "
+                    "from %s and no stale cache available",
+                    self._identifier,
+                    default_config_path,
+                )
+                return models
+
+            await self._cache.set(models)
+            return models
+
+    async def _read_configs_with_retry(
+        self,
+        *,
+        config_path: str,
+        default_config_path: str,
+        models_testing_path: Optional[str],
+        max_retries: int = 3,
+        retry_delay: float = 2.0,
+    ) -> List[ChatModelConfig]:
+        """Read configs from the filesystem, retrying on empty results.
+
+        At startup the config directory may not exist yet (the GitHub
+        config repo extraction may still be in progress or another
+        Gunicorn worker may be mid-swap).  A short retry loop avoids
+        permanently returning 0 configs when the directory appears
+        moments later.
+        """
+        base_exclude_dirs = {"clients", "env"}
+        for attempt in range(max_retries + 1):
             try:
-                base_exclude_dirs = {"clients", "env"}
                 models = await self.read_models_from_path_async(
                     default_config_path, exclude_dirs=base_exclude_dirs
                 )
@@ -134,14 +180,30 @@ class ConfigReader:
                         )
                         models.extend(models_testing)
             except Exception as e:
-                logger.exception(
-                    "Using config backup since got error reading model configurations: %s",
+                logger.warning(
+                    "Error reading model configurations (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries + 1,
                     e,
                 )
                 models = []
 
-            await self._cache.set(models)
-            return models
+            if models:
+                return models
+
+            if attempt < max_retries:
+                logger.warning(
+                    "ConfigReader with id: %s read 0 configs from %s, "
+                    "retrying in %.1fs (attempt %d/%d)",
+                    self._identifier,
+                    default_config_path,
+                    retry_delay,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                await asyncio.sleep(retry_delay)
+
+        return []
 
     async def _read_override_models_async(
         self,
