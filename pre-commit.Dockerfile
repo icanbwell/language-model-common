@@ -3,7 +3,7 @@ FROM public.ecr.aws/docker/library/python:3.12-alpine3.20
 
 # Install git, build-essential, and uv
 RUN apk add --no-cache git build-base
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="/opt/venv/bin:$PATH"

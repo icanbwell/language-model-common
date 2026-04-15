@@ -12,7 +12,7 @@ ARG RUN_UV_LOCK=false
 RUN apk add --no-cache git
 
 # Install uv from the official image (fast, single binary)
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
 
 # Use a venv outside the project dir so docker-compose volume mounts don't hide it
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -54,7 +54,7 @@ ENV COLUMNS=300
 RUN apk add --no-cache git
 
 # Install uv for runtime use
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
 
 # Set environment variables for project configuration
 ENV PROJECT_DIR=/usr/src/languagemodelcommon
@@ -71,8 +71,8 @@ WORKDIR ${PROJECT_DIR}
 # Copy the venv with all installed packages from the build stage
 COPY --from=python_packages /opt/venv /opt/venv
 
-# Copy pyproject.toml and uv.lock into the runtime image
-COPY pyproject.toml uv.lock* ${PROJECT_DIR}/
+# Copy pyproject.toml into the runtime image (uv.lock comes from Stage 1 below)
+COPY pyproject.toml ${PROJECT_DIR}/
 
 # Copy the application code into the runtime image
 COPY ./languagemodelcommon ${PROJECT_DIR}
