@@ -132,14 +132,14 @@ class GithubConfigRepoManager:
 
         # Extract into a temporary directory
         if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+            shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True, exist_ok=True)
         repo_root = self._extract_zip(zip_bytes, extract_dir)
 
         # Flatten: move the single top-level {owner-repo-sha}/ directory
         # up so that paths are stable across refreshes
         if staging_dir.exists():
-            shutil.rmtree(staging_dir)
+            shutil.rmtree(staging_dir, ignore_errors=True)
         if repo_root != extract_dir:
             shutil.move(str(repo_root), str(staging_dir))
             shutil.rmtree(extract_dir, ignore_errors=True)
@@ -148,7 +148,7 @@ class GithubConfigRepoManager:
 
         # Atomic swap: staging → current, current → old
         if old_dir.exists():
-            shutil.rmtree(old_dir)
+            shutil.rmtree(old_dir, ignore_errors=True)
         if self._cache_dir.exists():
             shutil.move(str(self._cache_dir), str(old_dir))
         shutil.move(str(staging_dir), str(self._cache_dir))
