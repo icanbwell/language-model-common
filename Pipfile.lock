@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "acf0701bf961e2a007647914d2b68f130c81d86fe596a414b49fb52e57ef5f3e"
+            "sha256": "67d8b9a678d8462bb5ba15476fb4d3a651bee2c8f90a460c7b35345edc9b2e65"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -2322,12 +2322,12 @@
         },
         "pypdf": {
             "hashes": [
-                "sha256:62e6ca7f65aaa28b3d192addb44f97296e4be1748f57ed0f4efb2d4915841880",
-                "sha256:6331940d3bfe75b7e6601d35db7adabab5fc1d716efaeb384e3c0c3957d033de"
+                "sha256:7d09ce108eff6bf67465d461b6ef352dcb8d84f7a91befc02f904455c6eea11d",
+                "sha256:aa53be9826655b51c96741e5d7983ca224d898ac0a77896e64636810517624aa"
             ],
             "index": "pypi",
             "markers": "python_version >= '3.9'",
-            "version": "==6.10.1"
+            "version": "==6.10.2"
         },
         "python-dateutil": {
             "hashes": [
@@ -5129,5 +5129,6 @@
             "markers": "python_version >= '3.9'",
             "version": "==1.0.4"
         }
-    }
+    },
+    "pipenvsetup": {}
 }
