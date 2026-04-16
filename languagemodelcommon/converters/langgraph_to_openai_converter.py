@@ -15,7 +15,6 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
-from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
@@ -907,9 +906,7 @@ class LangGraphToOpenAIConverter:
             "provided" if skill_loader else "none",
         )
         # Create the react agent with optional system prompt
-        middleware: list[AgentMiddleware] = [
-            SkillMiddleware(skill_loader=skill_loader),
-        ]
+        middleware: list[AgentMiddleware] = []
         if tool_catalog is not None:
             middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
 
