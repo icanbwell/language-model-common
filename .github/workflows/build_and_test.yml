@@ -1,12 +1,17 @@
 name: Build and Test
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the main branch
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
+  id-token: write
+  checks: write
+  pull-requests: write
+  statuses: write
 
 # Prevent duplicate runs on the same ref and cancel in-progress on PR updates to save CI minutes
 concurrency:
@@ -14,30 +19,112 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build_and_test:
-    # The type of runner that the job will run on
+  pre_commit:
+    name: Pre-commit
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
     steps:
-      # Checks-out your repository
       - uses: actions/checkout@v6
+
+      - name: AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate JFrog credentials
+        env:
+          JFROG_READ_USER: ${{ secrets.JFROG_READ_USER }}
+          JFROG_READ_TOKEN: ${{ secrets.JFROG_READ_TOKEN }}
+        run: |
+          if [ -z "$JFROG_READ_USER" ] || [ -z "$JFROG_READ_TOKEN" ]; then
+            echo "ERROR: JFROG_READ_USER and JFROG_READ_TOKEN secrets are required but not set."
+            exit 1
+          fi
+
+      - name: Build pre-commit image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./pre-commit.Dockerfile
+          push: false
+          load: true
+          tags: pre-commit-languagemodelcommon
+          cache-from: type=gha,scope=precommit-v2
+          cache-to: type=gha,mode=max,scope=precommit-v2
+          secrets: |
+            jfrog_user=${{ secrets.JFROG_READ_USER }}
+            jfrog_token=${{ secrets.JFROG_READ_TOKEN }}
+
+      - name: Create pre-commit cache volume
+        run: docker volume create pre-commit-cache || true
+
+      - name: Run pre-commit
+        run: |
+          docker run --rm \
+            -v pre-commit-cache:/.cache/pre-commit \
+            -v "${{ github.workspace }}":/sourcecode \
+            pre-commit-languagemodelcommon
+
+  build_and_test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Pull docker images
-        run: docker compose pull
+      - name: AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          aws-region: us-east-1
 
-      - name: pre-commit
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate JFrog credentials
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make run-pre-commit && make clean-pre-commit
+          JFROG_READ_USER: ${{ secrets.JFROG_READ_USER }}
+          JFROG_READ_TOKEN: ${{ secrets.JFROG_READ_TOKEN }}
+        run: |
+          if [ -z "$JFROG_READ_USER" ] || [ -z "$JFROG_READ_TOKEN" ]; then
+            echo "ERROR: JFROG_READ_USER and JFROG_READ_TOKEN secrets are required but not set."
+            exit 1
+          fi
 
-      # setup and install everything and run tests
+      - name: Build dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: languagemodelcommon:local
+          cache-from: type=gha,scope=languagemodelcommon-image-v2
+          cache-to: type=gha,mode=max,scope=languagemodelcommon-image-v2
+          secrets: |
+            jfrog_user=${{ secrets.JFROG_READ_USER }}
+            jfrog_token=${{ secrets.JFROG_READ_TOKEN }}
+
+      - name: touch docker.env
+        run: touch docker.env
+
       - name: up
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: make up
+          JFROG_READ_USER: ${{ secrets.JFROG_READ_USER }}
+          JFROG_READ_TOKEN: ${{ secrets.JFROG_READ_TOKEN }}
+        run: docker compose up -d --remove-orphans
 
       - name: Set correct permissions for tests
         run: |
@@ -57,34 +144,20 @@ jobs:
         with:
           name: pytest-results
           path: ${{ github.workspace }}/reports/**/*.xml
-        # Use always() to always run this step to publish test results when there are test failures
         if: ${{ always() }}
 
       - name: Verify reports are generated
         if: ${{ always() }}
         run: ls -halt ${{ github.workspace }}/reports/
 
-      # Publish all test results in the GitHub UI
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@v0.8.0 # https://github.com/pmeier/pytest-results-action
+        uses: pmeier/pytest-results-action@main
         with:
-          # A list of JUnit XML files, directories containing the former, and wildcard
-          # patterns to process.
-          # See @actions/glob for supported patterns.
           path: ${{ github.workspace }}/reports/*.xml
-
-          # (Optional) Add a summary of the results at the top of the report
           summary: true
-
-          # (Optional) Select which results should be included in the report.
-          # Follows the same syntax as `pytest -r`
           display-options: fEX
-
-          # (Optional) Fail the workflow if no JUnit XML was found.
           fail-on-empty: true
-
-          # (Optional) Title of the test results section in the workflow summary
           title: Test results
 
       - name: Cleanup

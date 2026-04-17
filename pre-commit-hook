@@ -1,5 +1,25 @@
 #!/bin/bash
 
+[ -f ~/.zshrc ] && source ~/.zshrc
+
+if [ -n "$1" ] && [ "$1" = "pre_commit_all_files" ] ; then
+  PRE_COMMIT_ALL_FILES=true
+  echo "PRE_COMMIT_ALL_FILES is set"
+else
+  PRE_COMMIT_ALL_FILES=false
+  echo "PRE_COMMIT_ALL_FILES is NOT set"
+fi
+
 GIT_PROJECT_ROOT=$(git rev-parse --show-toplevel)
-cd "$($GIT_PROJECT_ROOT "$0")"
-docker build -f ./pre-commit.Dockerfile -t pre-commit-spf . && docker run --rm --name pre-commit-spf-run -v $(pwd)/:/sourcecode pre-commit-spf
+cd "$GIT_PROJECT_ROOT" || exit
+# Validate JFrog credentials are set
+if [ -z "$JFROG_READ_USER" ] || [ -z "$JFROG_READ_TOKEN" ]; then
+  echo "ERROR: JFROG_READ_USER and JFROG_READ_TOKEN must be set in the environment." >&2
+  exit 1
+fi
+export DOCKER_BUILDKIT=1 && \
+docker build \
+  --secret id=jfrog_user,env=JFROG_READ_USER \
+  --secret id=jfrog_token,env=JFROG_READ_TOKEN \
+  -f ./pre-commit.Dockerfile -t pre-commit-languagemodelcommon . && \
+docker run --rm --name pre-commit-run-languagemodelcommon -e PRE_COMMIT_ALL_FILES=$PRE_COMMIT_ALL_FILES -v pre-commit:/.cache/pre-commit:delegated -v "$(pwd)"/:/sourcecode pre-commit-languagemodelcommon

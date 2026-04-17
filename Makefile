@@ -3,13 +3,31 @@ LANG=en_US.utf-8
 export LANG
 
 .PHONY: Pipfile.lock
-Pipfile.lock:
-	docker compose --progress=plain build --no-cache --build-arg RUN_PIPENV_LOCK=true dev && \
-	docker compose --progress=plain run --rm dev sh -c "cp -f /tmp/Pipfile.lock /usr/src/languagemodelcommon/Pipfile.lock"
+Pipfile.lock: ## Locks Pipfile and updates the Pipfile.lock on the local file system
+	/bin/sh -c '\
+		if [ -z "$$JFROG_READ_USER" ] || [ -z "$$JFROG_READ_TOKEN" ]; then \
+			echo "ERROR: JFROG_READ_USER and JFROG_READ_TOKEN must be set."; \
+			exit 1; \
+		fi; \
+		export DOCKER_BUILDKIT=1; \
+		docker build --no-cache --build-arg RUN_PIPENV_LOCK=true \
+			--secret id=jfrog_user,env=JFROG_READ_USER \
+			--secret id=jfrog_token,env=JFROG_READ_TOKEN \
+			-t languagemodelcommon:local . && \
+		CONTAINER_ID=$$(docker create languagemodelcommon:local); \
+		docker cp $$CONTAINER_ID:/tmp/Pipfile.lock Pipfile.lock && \
+		docker rm $$CONTAINER_ID \
+	'
 
 .PHONY:devdocker
 devdocker: ## Builds the docker for dev
-	docker compose build
+	/bin/sh -c '\
+		if [ -z "$$JFROG_READ_USER" ] || [ -z "$$JFROG_READ_TOKEN" ]; then \
+			echo "ERROR: JFROG_READ_USER and JFROG_READ_TOKEN must be set."; \
+			exit 1; \
+		fi; \
+		docker compose build \
+	'
 
 .PHONY:init
 init: Pipfile.lock devdocker up setup-pre-commit  ## Initializes the local developer environment
@@ -33,7 +51,7 @@ setup-pre-commit:
 
 .PHONY:run-pre-commit
 run-pre-commit: setup-pre-commit
-	./.git/hooks/pre-commit
+	./.git/hooks/pre-commit pre_commit_all_files
 
 .PHONY:update
 update: down Pipfile.lock setup-pre-commit  ## Updates all the packages using Pipfile

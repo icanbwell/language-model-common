@@ -1,21 +1,17 @@
-# This workflow will upload a Python Package to PyPI when a release is created
-# For more information see: https://packaging.python.org/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/
+# This workflow builds release artifacts, attaches them to the GitHub Release,
+# and publishes them to JFrog Artifactory.
 
-name: Upload Python Package
+name: Build and Publish Release Artifacts
 
 on:
   release:
-    types: [created]
+    types: [published]
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-    # Specifying a GitHub environment is optional, but strongly encouraged
-    environment: pypi
     permissions:
-      # IMPORTANT: this permission is mandatory for Trusted Publishing
-      id-token: write
-      contents: read
+      contents: write
 
     steps:
       - uses: actions/checkout@v6
@@ -32,10 +28,12 @@ jobs:
         run: pip install -U pip setuptools wheel build
 
       - name: Build package
-        run: python -m build
+        run: python -m build --outdir dist/
 
-      - name: Publish package to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Attach release artifacts to GitHub Release
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List files in dist
         run: ls -haltR dist
@@ -46,3 +44,13 @@ jobs:
           name: wheel_${{ github.event.release.tag_name }}
           path: dist/*.whl
           if-no-files-found: error
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish wheel to Jfrog Artifactory PyPI
+        run: |
+          python -m pip install --upgrade twine
+          twine upload --repository-url ${{ vars.JF_URL }}/artifactory/api/pypi/bwell-pypi dist/*
+        env:
+          TWINE_USERNAME: cloud_infrastructure@icanbwell.com
+          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_TOKEN }}
