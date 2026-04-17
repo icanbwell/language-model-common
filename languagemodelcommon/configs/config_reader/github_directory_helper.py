@@ -11,15 +11,20 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-    LanguageModelCommonEnvironmentVariables,
-)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
+
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -158,17 +163,15 @@ class GitHubDirectoryHelper:
             GithubDirectoryDownloader,
         )
 
-        import os
-        import tempfile
-
+        env = self._environment_variables
         cache_ttl = (
-            self._environment_variables.config_cache_timeout_seconds
-            if self._environment_variables
+            env.config_cache_timeout_seconds
+            if env
             else int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "3600"))
         )
         cache_dir = Path(
-            self._environment_variables.github_config_cache_dir
-            if self._environment_variables
+            env.github_config_cache_dir
+            if env
             else os.environ.get(
                 "GITHUB_CONFIG_CACHE_DIR",
                 str(Path(tempfile.gettempdir()) / "github_config_cache"),
@@ -190,11 +193,7 @@ class GitHubDirectoryHelper:
 
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        github_token = (
-            self._environment_variables.github_token
-            if self._environment_variables
-            else os.environ.get("GITHUB_TOKEN")
-        )
+        github_token = env.github_token if env else os.environ.get("GITHUB_TOKEN")
         downloader = GithubDirectoryDownloader()
         result: Path = downloader.download(
             source_uri=github_uri,
