@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from typing import override, Any, Dict, cast
@@ -120,8 +121,15 @@ class TokenStorageAuthManager(FastAPIAuthManager):
             redirect_uri=redirect_uri, state=state
         )
         logger.debug(f"Authorization URL created: {rv}")
-        # request is only needed if we are using the session to store the state
-        await client.save_authorize_data(request=None, redirect_uri=redirect_uri, **rv)
+        # Save OAuth state data to our cache rather than relying on
+        # authlib's save_authorize_data which requires SessionMiddleware.
+        state_data: Dict[str, Any] = {"redirect_uri": redirect_uri}
+        if "code_verifier" in rv:
+            state_data["code_verifier"] = rv["code_verifier"]
+        if "nonce" in rv:
+            state_data["nonce"] = rv["nonce"]
+        cache_key = f"_state_{auth_provider}_{state}"
+        await self.cache.set(cache_key, json.dumps({"data": state_data}))
         return cast(str, rv["url"])
 
     @override

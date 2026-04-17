@@ -4,12 +4,15 @@ When an McpOAuthConfig has neither client_id nor registration_url,
 OAuthProviderRegistrar should attempt RFC 8414 / OIDC Discovery
 from the server URL to discover the registration endpoint before
 calling DcrManager.
+
+Also tests the eager well-known metadata resolution that populates
+authorization_url and token_url from an OIDC discovery document.
 """
 
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from unittest.mock import AsyncMock, MagicMock
-
+import httpx
 import pytest
 
 from languagemodelcommon.auth.oauth_provider_registrar import OAuthProviderRegistrar
@@ -270,3 +273,137 @@ async def test_discovery_does_not_overwrite_explicit_fields() -> None:
     assert oauth.token_url == "https://explicit.example.com/token"
     assert oauth.issuer == "https://explicit.example.com"
     assert oauth.scopes == ["explicit-scope"]
+
+
+# ------------------------------------------------------------------
+# Tests for _resolve_well_known_endpoints
+# ------------------------------------------------------------------
+
+
+def _make_registrar() -> OAuthProviderRegistrar:
+    """Create an OAuthProviderRegistrar with mocked dependencies."""
+    return OAuthProviderRegistrar(
+        dcr_manager=MagicMock(spec=DcrManager),
+        auth_config_reader=MagicMock(spec=AuthConfigReader),
+        auth_server_metadata_discovery=None,
+    )
+
+
+OKTA_METADATA = {
+    "issuer": "https://example.okta.com",
+    "authorization_endpoint": "https://example.okta.com/oauth2/v1/authorize",
+    "token_endpoint": "https://example.okta.com/oauth2/v1/token",
+}
+
+
+@pytest.mark.asyncio
+async def test_resolve_well_known_populates_missing_endpoints() -> None:
+    """Well-known fetch fills in authorization_url and token_url."""
+    registrar = _make_registrar()
+    oauth = McpOAuthConfig.model_validate(
+        {
+            "authServerMetadataUrl": "https://example.okta.com/.well-known/openid-configuration",
+            "clientId": "test-client",
+        }
+    )
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.json.return_value = OKTA_METADATA
+    mock_response.raise_for_status = MagicMock()
+
+    with patch(
+        "languagemodelcommon.auth.oauth_provider_registrar.httpx.AsyncClient"
+    ) as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await registrar._resolve_well_known_endpoints(auth_provider="test", oauth=oauth)
+
+    assert oauth.authorization_url == "https://example.okta.com/oauth2/v1/authorize"
+    assert oauth.token_url == "https://example.okta.com/oauth2/v1/token"
+    assert oauth.issuer == "https://example.okta.com"
+
+
+@pytest.mark.asyncio
+async def test_resolve_well_known_does_not_overwrite_existing() -> None:
+    """Well-known fetch does not overwrite already-set endpoints."""
+    registrar = _make_registrar()
+    oauth = McpOAuthConfig.model_validate(
+        {
+            "authServerMetadataUrl": "https://example.okta.com/.well-known/openid-configuration",
+            "clientId": "test-client",
+            "authorizationUrl": "https://explicit.example.com/authorize",
+            "issuer": "https://explicit.example.com",
+        }
+    )
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.json.return_value = OKTA_METADATA
+    mock_response.raise_for_status = MagicMock()
+
+    with patch(
+        "languagemodelcommon.auth.oauth_provider_registrar.httpx.AsyncClient"
+    ) as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        await registrar._resolve_well_known_endpoints(auth_provider="test", oauth=oauth)
+
+    # Explicit fields preserved
+    assert oauth.authorization_url == "https://explicit.example.com/authorize"
+    assert oauth.issuer == "https://explicit.example.com"
+    # Missing field populated
+    assert oauth.token_url == "https://example.okta.com/oauth2/v1/token"
+
+
+@pytest.mark.asyncio
+async def test_resolve_well_known_handles_fetch_failure() -> None:
+    """Well-known fetch failure is logged and does not raise."""
+    registrar = _make_registrar()
+    oauth = McpOAuthConfig.model_validate(
+        {
+            "authServerMetadataUrl": "https://example.okta.com/.well-known/openid-configuration",
+            "clientId": "test-client",
+        }
+    )
+
+    with patch(
+        "languagemodelcommon.auth.oauth_provider_registrar.httpx.AsyncClient"
+    ) as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectTimeout("timeout"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        # Should not raise
+        await registrar._resolve_well_known_endpoints(auth_provider="test", oauth=oauth)
+
+    # Fields remain None
+    assert oauth.authorization_url is None
+    assert oauth.token_url is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_well_known_skipped_when_no_metadata_url() -> None:
+    """No fetch is attempted when auth_server_metadata_url is not set."""
+    registrar = _make_registrar()
+    oauth = McpOAuthConfig.model_validate(
+        {
+            "clientId": "test-client",
+            "authorizationUrl": "https://explicit.example.com/authorize",
+            "tokenUrl": "https://explicit.example.com/token",
+        }
+    )
+
+    with patch(
+        "languagemodelcommon.auth.oauth_provider_registrar.httpx.AsyncClient"
+    ) as mock_client_cls:
+        await registrar._resolve_well_known_endpoints(auth_provider="test", oauth=oauth)
+        mock_client_cls.assert_not_called()
