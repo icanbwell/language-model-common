@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
-    read_mcp_json,
+    McpJsonReader,
     resolve_mcp_servers,
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
@@ -20,15 +20,27 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class FileConfigReader:
+    def __init__(
+        self,
+        *,
+        mcp_json_reader: McpJsonReader | None = None,
+    ) -> None:
+        self._mcp_json_reader = mcp_json_reader or McpJsonReader()
+
     # noinspection PyMethodMayBeStatic
     def read_model_configs(
-        self, *, config_path: str, exclude_dirs: set[str] | None = None
+        self,
+        *,
+        config_path: str,
+        exclude_dirs: set[str] | None = None,
     ) -> List[ChatModelConfig]:
         return self._read_model_configs(config_path, exclude_dirs)
 
     # noinspection PyMethodMayBeStatic
     def _read_model_configs(
-        self, config_path: str, exclude_dirs: set[str] | None = None
+        self,
+        config_path: str,
+        exclude_dirs: set[str] | None = None,
     ) -> List[ChatModelConfig]:
         logger.info("Reading model configurations from %s", config_path)
         config_folder: Path = Path(config_path)
@@ -48,7 +60,7 @@ class FileConfigReader:
                 data = substitute_env_vars(json.load(file))
                 configs.append(ChatModelConfig(**data))
         # Resolve mcp_server references from .mcp.json
-        mcp_config = read_mcp_json(config_dir=config_path)
+        mcp_config = self._mcp_json_reader.read_mcp_json(config_dir=config_path)
         if mcp_config:
             resolve_mcp_servers(configs, mcp_config)
 

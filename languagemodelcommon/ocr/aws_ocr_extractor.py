@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import io
 import logging
 import os
-from typing import Optional, List, override
+from typing import Optional, List, override, TYPE_CHECKING
 from uuid import uuid4
 
 from pypdf import PdfReader, PdfWriter
@@ -16,6 +18,11 @@ from languagemodelcommon.ocr.ocr_extractor import OCRExtractor
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_PROCESSING)
 
@@ -26,7 +33,9 @@ class AwsOCRExtractor(OCRExtractor):
         *,
         aws_client_factory: AwsClientFactory,
         file_manager_factory: FileManagerFactory,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
     ) -> None:
+        self._environment_variables = environment_variables
         self.aws_client_factory: AwsClientFactory = aws_client_factory
         if self.aws_client_factory is None:
             raise ValueError("aws_client_factory must not be None")
@@ -118,7 +127,11 @@ class AwsOCRExtractor(OCRExtractor):
         try:
             # first save the file to s3
             # Save the file to S3
-            image_generation_path_ = os.environ["IMAGE_GENERATION_PATH"]
+            image_generation_path_: str | None = (
+                self._environment_variables.image_generation_path
+                if self._environment_variables
+                else os.environ.get("IMAGE_GENERATION_PATH")
+            )
             if not image_generation_path_:
                 raise ValueError(
                     "IMAGE_GENERATION_PATH environment variable is not set"

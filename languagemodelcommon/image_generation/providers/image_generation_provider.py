@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import base64
 import logging
 import os
 import time
-from typing import Dict, List, Literal, Optional, Union, override
+from typing import Dict, List, Literal, Optional, Union, override, TYPE_CHECKING
 from uuid import uuid4
 
 from openai import NotGiven
@@ -28,6 +30,11 @@ from languagemodelcommon.schema.openai.image_generation import (
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
 
@@ -38,7 +45,9 @@ class ImageGenerationProvider(BaseImageGenerationProvider):
         *,
         image_generator_factory: ImageGeneratorFactory,
         file_manager_factory: FileManagerFactory,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
     ) -> None:
+        self._environment_variables = environment_variables
         self.image_generator_factory: ImageGeneratorFactory = image_generator_factory
         if self.image_generator_factory is None:
             raise ValueError("image_generator_factory must not be None")
@@ -73,7 +82,10 @@ class ImageGenerationProvider(BaseImageGenerationProvider):
             image_generation_request.get("response_format")
         )
 
-        if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+        if (
+            self._environment_variables
+            and self._environment_variables.log_input_and_output
+        ):
             logger.info(f"image_generation_request: {image_generation_request}")
 
         model: Union[str, ImageModel, None] | NotGiven = image_generation_request.get(
@@ -102,7 +114,11 @@ class ImageGenerationProvider(BaseImageGenerationProvider):
             # logger.info(f"image_b64_json: {image_b64_json}")
             response_data = [Image(b64_json=image_b64_json)]
         else:
-            image_generation_path_ = os.environ["IMAGE_GENERATION_PATH"]
+            image_generation_path_ = (
+                self._environment_variables.image_generation_path
+                if self._environment_variables
+                else os.environ.get("IMAGE_GENERATION_PATH")
+            )
             if not image_generation_path_:
                 raise ValueError(
                     "IMAGE_GENERATION_PATH environment variable is not set"

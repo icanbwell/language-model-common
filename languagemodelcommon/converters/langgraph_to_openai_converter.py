@@ -1,6 +1,5 @@
 import botocore
 import logging
-import os
 import re
 import traceback
 import uuid
@@ -370,7 +369,7 @@ class LangGraphToOpenAIConverter:
                         json_output_requested=json_output_requested,
                     )
                 )
-                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_json:
+                if self.environment_variables.log_input_and_output and content_json:
                     logger.info("Returning content: %s", content_json)
 
                 return JSONResponse(content=content_json)

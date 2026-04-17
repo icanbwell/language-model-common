@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
-import os
 import shutil
 import tempfile
 import time
@@ -21,6 +20,9 @@ from pathlib import Path
 
 import httpx
 
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -40,18 +42,20 @@ class GithubConfigRepoManager:
     the previous extraction are not disrupted mid-request.
     """
 
-    def __init__(self) -> None:
-        self._repo_url: str | None = os.environ.get("GITHUB_CONFIG_REPO_URL")
+    def __init__(
+        self,
+        *,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+    ) -> None:
+        _env = environment_variables or LanguageModelCommonEnvironmentVariables()
+        self._repo_url: str | None = _env.github_config_repo_url
+        cache_folder = _env.github_cache_folder
         self._cache_dir = Path(
-            os.environ.get(
-                "GITHUB_CACHE_FOLDER",
-                str(Path(tempfile.gettempdir()) / "github_config_cache"),
-            )
+            cache_folder or str(Path(tempfile.gettempdir()) / "github_config_cache")
         )
-        self._refresh_seconds = int(
-            os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "120")
-        )
-        self._github_token: str | None = os.environ.get("GITHUB_TOKEN")
+        self._refresh_seconds = _env.config_cache_timeout_seconds
+        self._github_token: str | None = _env.github_token
+        self._github_timeout: int = _env.github_timeout
         self._background_task: asyncio.Task[None] | None = None
         self._is_initial_download: bool = True
 
@@ -184,7 +188,7 @@ class GithubConfigRepoManager:
             headers["Authorization"] = f"Bearer {self._github_token}"
 
         timeout = httpx.Timeout(
-            timeout=float(os.environ.get("GITHUB_TIMEOUT", "300")),
+            timeout=float(self._github_timeout),
         )
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)

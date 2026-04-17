@@ -1,5 +1,3 @@
-import os
-
 from langchain_ai_skills_framework.container.container_factory import (
     LangchainAISkillsFrameworkContainerFactory,
 )
@@ -11,6 +9,10 @@ from simple_container.container.simple_container import SimpleContainer
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.configs.config_reader.github_directory_helper import (
+    GitHubDirectoryHelper,
+)
+from languagemodelcommon.configs.config_reader.mcp_json_reader import McpJsonReader
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -57,21 +59,39 @@ class LanguageModelCommonContainerFactory:
             LanguageModelCommonEnvironmentVariables,
             lambda c: LanguageModelCommonEnvironmentVariables(),
         )
+        container.singleton(
+            GitHubDirectoryHelper,
+            lambda c: GitHubDirectoryHelper(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+            ),
+        )
         # we want only one instance of the cache so we use singleton
         container.singleton(
             ConfigExpiringCache,
             lambda c: ConfigExpiringCache(
-                ttl_seconds=(
-                    int(os.environ["CONFIG_CACHE_TIMEOUT_SECONDS"])
-                    if os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS")
-                    else 60 * 60
-                )
+                ttl_seconds=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).config_cache_timeout_seconds,
             ),
         )
         container.singleton(
             PromptLibraryManager,
             lambda c: PromptLibraryManager(
-                environment_variables=c.resolve(LanguageModelCommonEnvironmentVariables)
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                github_directory_helper=c.resolve(GitHubDirectoryHelper),
+            ),
+        )
+        container.singleton(
+            McpJsonReader,
+            lambda c: McpJsonReader(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                github_directory_helper=c.resolve(GitHubDirectoryHelper),
             ),
         )
         container.singleton(
@@ -79,6 +99,11 @@ class LanguageModelCommonContainerFactory:
             lambda c: ConfigReader(
                 cache=c.resolve(ConfigExpiringCache),
                 prompt_library_manager=c.resolve(PromptLibraryManager),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                mcp_json_reader=c.resolve(McpJsonReader),
+                github_directory_helper=c.resolve(GitHubDirectoryHelper),
             ),
         )
         container.singleton(
@@ -95,7 +120,9 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             TokenReducer,
             lambda c: TokenReducer(
-                model=os.environ.get("DEFAULT_LLM_MODEL", "gpt-3.5-turbo"),
+                model=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).default_llm_model,
             ),
         )
 
@@ -114,6 +141,9 @@ class LanguageModelCommonContainerFactory:
             FileWriter,
             lambda c: FileWriter(
                 file_manager_factory=c.resolve(FileManagerFactory),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
             ),
         )
         container.singleton(
@@ -125,13 +155,20 @@ class LanguageModelCommonContainerFactory:
 
         container.singleton(
             AwsClientFactory,
-            lambda c: AwsClientFactory(),
+            lambda c: AwsClientFactory(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+            ),
         )
 
         container.singleton(
             ImageGeneratorFactory,
             lambda c: ImageGeneratorFactory(
-                aws_client_factory=c.resolve(AwsClientFactory)
+                aws_client_factory=c.resolve(AwsClientFactory),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
             ),
         )
 
@@ -140,6 +177,9 @@ class LanguageModelCommonContainerFactory:
             lambda c: ImageGenerationProvider(
                 image_generator_factory=c.resolve(ImageGeneratorFactory),
                 file_manager_factory=c.resolve(FileManagerFactory),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
             ),
         )
         container.singleton(

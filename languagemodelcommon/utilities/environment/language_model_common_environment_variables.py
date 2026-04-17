@@ -1,5 +1,7 @@
 import os
 import logging
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from langchain_ai_skills_framework.environment.environment_variables import (
@@ -32,6 +34,25 @@ class LanguageModelCommonEnvironmentVariables(
     OidcEnvironmentVariables,
 ):
     @property
+    def github_cache_folder(self) -> Optional[str]:
+        return self._resolve_path(os.environ.get("GITHUB_CACHE_FOLDER"))
+
+    @property
+    def models_official_path(self) -> str:
+        value = self._resolve_path(os.environ.get("MODELS_OFFICIAL_PATH", ""))
+        if not value:
+            raise ValueError("MODELS_OFFICIAL_PATH environment variable is not set")
+        return value
+
+    @property
+    def models_testing_path(self) -> Optional[str]:
+        return self._resolve_path(os.environ.get("MODELS_TESTING_PATH"))
+
+    @property
+    def mcp_json_path(self) -> Optional[str]:
+        return self._resolve_path(os.environ.get("MCP_JSON_PATH"))
+
+    @property
     def streaming_buffer_flush_interval_seconds(self) -> float:
         """Interval in seconds for flushing the streaming buffer when processing LLM responses."""
         return float(
@@ -63,7 +84,7 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def prompt_library_path(self) -> Optional[str]:
-        configured = os.environ.get("PROMPT_LIBRARY_PATH")
+        configured = self._resolve_path(os.environ.get("PROMPT_LIBRARY_PATH"))
         if configured and configured.strip():
             return configured
         return None
@@ -170,3 +191,79 @@ class LanguageModelCommonEnvironmentVariables(
     def app_token_save_uri(self) -> str:
         value = os.environ.get("APP_TOKEN_SAVE_URI")
         return value if value else "/app/token"
+
+    @property
+    def log_input_and_output(self) -> bool:
+        return os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1"
+
+    @property
+    def image_generation_path(self) -> Optional[str]:
+        return os.environ.get("IMAGE_GENERATION_PATH")
+
+    @property
+    def image_generation_url(self) -> Optional[str]:
+        return os.environ.get("IMAGE_GENERATION_URL")
+
+    @property
+    def aws_bedrock_retry_mode(self) -> str:
+        return os.environ.get("AWS_BEDROCK_RETRY_MODE", "adaptive")
+
+    @property
+    def aws_credentials_profile(self) -> Optional[str]:
+        return os.environ.get("AWS_CREDENTIALS_PROFILE")
+
+    @property
+    def aws_region(self) -> str:
+        return os.environ.get("AWS_REGION", "us-east-1")
+
+    @property
+    def default_model_provider(self) -> str:
+        return os.environ.get("DEFAULT_MODEL_PROVIDER", "bedrock")
+
+    @property
+    def default_model_name(self) -> str:
+        return os.environ.get(
+            "DEFAULT_MODEL_NAME",
+            "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        )
+
+    @property
+    def default_llm_model(self) -> str:
+        return os.environ.get("DEFAULT_LLM_MODEL", "gpt-3.5-turbo")
+
+    @property
+    def google_credentials_json(self) -> Optional[str]:
+        return os.environ.get("GOOGLE_CREDENTIALS_JSON")
+
+    @property
+    def openai_api_key(self) -> Optional[str]:
+        return os.environ.get("OPENAI_API_KEY")
+
+    @property
+    def config_cache_timeout_seconds(self) -> int:
+        try:
+            return int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "3600"))
+        except (ValueError, TypeError):
+            return 3600
+
+    @property
+    def github_config_cache_dir(self) -> str:
+        return os.environ.get(
+            "GITHUB_CONFIG_CACHE_DIR",
+            str(Path(tempfile.gettempdir()) / "github_config_cache"),
+        )
+
+    @property
+    def github_config_repo_url(self) -> Optional[str]:
+        return os.environ.get("GITHUB_CONFIG_REPO_URL")
+
+    @property
+    def github_timeout(self) -> int:
+        try:
+            return int(os.environ.get("GITHUB_TIMEOUT", "300"))
+        except (ValueError, TypeError):
+            return 300
+
+    @property
+    def github_token(self) -> Optional[str]:
+        return os.environ.get("GITHUB_TOKEN")

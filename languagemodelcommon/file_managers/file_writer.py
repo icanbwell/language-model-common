@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import os
 import re
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 from languagemodelcommon.utilities.url_parser import UrlParser
+
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
 
 
 @dataclass(frozen=True)
@@ -17,7 +24,13 @@ class DebugFileWriteResult:
 
 
 class FileWriter:
-    def __init__(self, *, file_manager_factory: FileManagerFactory) -> None:
+    def __init__(
+        self,
+        *,
+        file_manager_factory: FileManagerFactory,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+    ) -> None:
+        self._environment_variables = environment_variables
         self.file_manager_factory = file_manager_factory
         if self.file_manager_factory is None:
             raise ValueError("file_manager_factory must not be None")
@@ -94,7 +107,7 @@ class FileWriter:
                 file_url=file_url,
                 url_error_message=None,
             )
-        except KeyError:
+        except (KeyError, ValueError):
             return DebugFileWriteResult(
                 file_path=file_path,
                 file_url=None,
@@ -107,7 +120,11 @@ class FileWriter:
     async def write_to_file_async(
         self, *, file_name: str | None, user_id: str | None, content: str
     ) -> DebugFileWriteResult | None:
-        output_folder = os.environ.get("IMAGE_GENERATION_PATH")
+        output_folder = (
+            self._environment_variables.image_generation_path
+            if self._environment_variables
+            else os.environ.get("IMAGE_GENERATION_PATH")
+        )
         if output_folder:
             # Use secure filename with user isolation and random token
             # to prevent enumeration attacks and cross-user data access

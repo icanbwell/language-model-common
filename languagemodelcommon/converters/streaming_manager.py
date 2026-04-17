@@ -22,7 +22,6 @@ See Also:
 import copy  # For deepcopy
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from oidcauthlib.auth.exceptions.authorization_needed_exception import (
@@ -262,7 +261,7 @@ class LangGraphStreamingManager:
                         f"content_text must be str, got {type(content_text)}"
                     )
                 # content_text = "<<" + content_text + ">>"
-                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1" and content_text:
+                if self.environment_variables.log_input_and_output and content_text:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
                     self._append_streamed_text_fragment(
@@ -483,7 +482,7 @@ class LangGraphStreamingManager:
             if self.environment_variables.write_tool_output_to_file and (
                 chat_request_wrapper.enable_debug_logging or artifact is not None
             ):
-                if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+                if self.environment_variables.log_input_and_output:
                     logger.debug(
                         f"Returning artifact: {artifact if artifact else tool_message_content}"
                     )

@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import os
-from typing import cast, Literal, Any
+from typing import cast, Literal, Any, TYPE_CHECKING
 
 import boto3
 from boto3 import Session
@@ -9,8 +11,20 @@ from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 from types_boto3_s3.client import S3Client
 from types_boto3_textract.client import TextractClient
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 
 class AwsClientFactory:
+    def __init__(
+        self,
+        *,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+    ) -> None:
+        self._environment_variables = environment_variables
+
     @staticmethod
     def _get_float_env(*, name: str, default: float) -> float:
         value = os.environ.get(name)
@@ -38,11 +52,16 @@ class AwsClientFactory:
             name="AWS_BEDROCK_MAX_ATTEMPTS",
             default=self._get_int_env(name="AWS_BEDROCK_MAX_RETRIES", default=1),
         )
+        retry_mode = (
+            self._environment_variables.aws_bedrock_retry_mode
+            if self._environment_variables
+            else os.getenv("AWS_BEDROCK_RETRY_MODE", "adaptive")
+        )
         retries: dict[str, Any] = {
             "max_attempts": max_attempts,
             "mode": cast(
                 Literal["legacy", "standard", "adaptive"],
-                os.getenv("AWS_BEDROCK_RETRY_MODE", "adaptive"),
+                retry_mode,
             ),
         }
         # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/config.html
@@ -58,8 +77,16 @@ class AwsClientFactory:
             retries=retries,  # type: ignore[arg-type]
             tcp_keepalive=True,
         )
-        aws_credentials_profile = os.environ.get("AWS_CREDENTIALS_PROFILE")
-        aws_region_name = os.environ.get("AWS_REGION", "us-east-1")
+        aws_credentials_profile = (
+            self._environment_variables.aws_credentials_profile
+            if self._environment_variables
+            else os.environ.get("AWS_CREDENTIALS_PROFILE")
+        )
+        aws_region_name = (
+            self._environment_variables.aws_region
+            if self._environment_variables
+            else os.environ.get("AWS_REGION", "us-east-1")
+        )
         session: Session = boto3.Session(profile_name=aws_credentials_profile)
         bedrock_client: BedrockRuntimeClient = session.client(
             service_name="bedrock-runtime",
@@ -70,9 +97,12 @@ class AwsClientFactory:
 
     # noinspection PyMethodMayBeStatic
     def create_s3_client(self) -> S3Client:
-        session: Session = boto3.Session(
-            profile_name=os.environ.get("AWS_CREDENTIALS_PROFILE")
+        aws_credentials_profile = (
+            self._environment_variables.aws_credentials_profile
+            if self._environment_variables
+            else os.environ.get("AWS_CREDENTIALS_PROFILE")
         )
+        session: Session = boto3.Session(profile_name=aws_credentials_profile)
         s3_client: S3Client = session.client(
             service_name="s3",
             region_name="us-east-1",
@@ -81,9 +111,12 @@ class AwsClientFactory:
 
     # noinspection PyMethodMayBeStatic
     def create_textract_client(self) -> TextractClient:
-        session: Session = boto3.Session(
-            profile_name=os.environ.get("AWS_CREDENTIALS_PROFILE")
+        aws_credentials_profile = (
+            self._environment_variables.aws_credentials_profile
+            if self._environment_variables
+            else os.environ.get("AWS_CREDENTIALS_PROFILE")
         )
+        session: Session = boto3.Session(profile_name=aws_credentials_profile)
         textract_client: TextractClient = session.client(
             service_name="textract",
             region_name="us-east-1",

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import base64
 import logging
 import os
-from typing import override, Literal, Optional
+from typing import override, Literal, Optional, TYPE_CHECKING
 
 from openai import AsyncOpenAI
 from openai.types import ImagesResponse
@@ -11,21 +13,37 @@ from languagemodelcommon.image_generation.image_generator import (
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
 
 
 class OpenAIImageGenerator(ImageGenerator):
-    @staticmethod
+    def __init__(
+        self,
+        *,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+    ) -> None:
+        self._environment_variables = environment_variables
+
     async def _invoke_model_async(
+        self,
         prompt: str,
         image_size: Literal[
             "256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"
         ],
     ) -> bytes:
-        """Synchronous OpenAI image generation"""
+        """Asynchronous OpenAI image generation"""
 
-        openai_api_key: Optional[str] = os.environ.get("OPENAI_API_KEY")
+        openai_api_key: Optional[str] = (
+            self._environment_variables.openai_api_key
+            if self._environment_variables
+            else os.environ.get("OPENAI_API_KEY")
+        )
         if openai_api_key is None:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
 
@@ -60,7 +78,10 @@ class OpenAIImageGenerator(ImageGenerator):
         ] = "1024x1024",
     ) -> bytes:
         """Generate an image using OpenAI DALL-E"""
-        if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+        if (
+            self._environment_variables
+            and self._environment_variables.log_input_and_output
+        ):
             logger.info(f"Generating image for prompt: {prompt}")
 
         try:
@@ -69,7 +90,10 @@ class OpenAIImageGenerator(ImageGenerator):
                 prompt=prompt, image_size=image_size
             )
 
-            if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+            if (
+                self._environment_variables
+                and self._environment_variables.log_input_and_output
+            ):
                 logger.info(f"Image generated successfully for prompt: {prompt}")
 
             return image_data

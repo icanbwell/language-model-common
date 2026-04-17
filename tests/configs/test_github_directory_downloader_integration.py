@@ -1,16 +1,13 @@
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    github_url_to_uri,
-    is_github_path,
-    join_github_uri_path,
-    resolve_github_path,
+    GitHubDirectoryHelper,
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
@@ -71,7 +68,7 @@ def _make_prompt_library_manager(tmp_path: Path) -> PromptLibraryManager:
     ],
 )
 def test_github_url_to_uri(url: str, expected: str) -> None:
-    assert github_url_to_uri(url) == expected
+    assert GitHubDirectoryHelper.github_url_to_uri(url) == expected
 
 
 @pytest.mark.parametrize(
@@ -84,7 +81,7 @@ def test_github_url_to_uri(url: str, expected: str) -> None:
 )
 def test_github_url_to_uri_invalid(url: str) -> None:
     with pytest.raises(ValueError):
-        github_url_to_uri(url)
+        GitHubDirectoryHelper.github_url_to_uri(url)
 
 
 # --- is_github_path tests ---
@@ -104,34 +101,41 @@ def test_github_url_to_uri_invalid(url: str) -> None:
     ],
 )
 def test_is_github_path(path: str, expected: bool) -> None:
-    assert is_github_path(path) == expected
+    assert GitHubDirectoryHelper.is_github_path(path) == expected
 
 
 # --- resolve_github_path tests ---
 
 
 def test_resolve_github_path_local(tmp_path: Path) -> None:
-    result = resolve_github_path(str(tmp_path))
+    helper = GitHubDirectoryHelper()
+    result = helper.resolve_github_path(str(tmp_path))
     assert result == tmp_path
 
 
 def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
+    helper = GitHubDirectoryHelper()
+    with patch.object(
+        helper,
+        "download_github_directory",
         return_value=tmp_path,
     ) as mock_download:
-        result = resolve_github_path("github://org/repo/configs?ref=main")
+        result = helper.resolve_github_path("github://org/repo/configs?ref=main")
 
     assert result == tmp_path
     mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
 
 
 def test_resolve_github_path_https_url(tmp_path: Path) -> None:
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
+    helper = GitHubDirectoryHelper()
+    with patch.object(
+        helper,
+        "download_github_directory",
         return_value=tmp_path,
     ) as mock_download:
-        result = resolve_github_path("https://github.com/owner/repo/tree/main/configs")
+        result = helper.resolve_github_path(
+            "https://github.com/owner/repo/tree/main/configs"
+        )
 
     assert result == tmp_path
     mock_download.assert_called_once_with("github://owner/repo/configs?ref=main")
@@ -153,21 +157,26 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     monkeypatch.setenv("MODELS_OFFICIAL_PATH", "github://org/repo/configs?ref=main")
     monkeypatch.delenv("MODELS_ZIP_PATH", raising=False)
 
+    mock_helper = MagicMock(spec=GitHubDirectoryHelper)
+    mock_helper.resolve_github_path.return_value = local_dir
+
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
-    reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
+    reader = ConfigReader(
+        cache=cache,
+        prompt_library_manager=prompt_mgr,
+        github_directory_helper=mock_helper,
+    )
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
-        return_value=local_dir,
-    ) as mock_download:
-        models = await reader.read_models_from_path_async(
-            "github://org/repo/configs?ref=main"
-        )
+    models = await reader.read_models_from_path_async(
+        "github://org/repo/configs?ref=main"
+    )
 
     assert len(models) == 1
     assert models[0].name == "Model One"
-    mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
+    mock_helper.resolve_github_path.assert_called_once_with(
+        "github://org/repo/configs?ref=main"
+    )
 
 
 @pytest.mark.asyncio
@@ -182,21 +191,26 @@ async def test_read_models_from_https_github_url(
         {"id": "m1", "name": "Model One"},
     )
 
+    mock_helper = MagicMock(spec=GitHubDirectoryHelper)
+    mock_helper.resolve_github_path.return_value = local_dir
+
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
-    reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
+    reader = ConfigReader(
+        cache=cache,
+        prompt_library_manager=prompt_mgr,
+        github_directory_helper=mock_helper,
+    )
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
-        return_value=local_dir,
-    ) as mock_download:
-        models = await reader.read_models_from_path_async(
-            "https://github.com/owner/repo/tree/main/configs"
-        )
+    models = await reader.read_models_from_path_async(
+        "https://github.com/owner/repo/tree/main/configs"
+    )
 
     assert len(models) == 1
     assert models[0].name == "Model One"
-    mock_download.assert_called_once_with("github://owner/repo/configs?ref=main")
+    mock_helper.resolve_github_path.assert_called_once_with(
+        "https://github.com/owner/repo/tree/main/configs"
+    )
 
 
 @pytest.mark.asyncio
@@ -217,17 +231,20 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
         {"mcpServers": {"google-drive": {"url": "https://mcp.example.com/drive/"}}},
     )
 
+    mock_helper = MagicMock(spec=GitHubDirectoryHelper)
+    mock_helper.resolve_github_path.return_value = local_dir
+
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
-    reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
+    reader = ConfigReader(
+        cache=cache,
+        prompt_library_manager=prompt_mgr,
+        github_directory_helper=mock_helper,
+    )
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
-        return_value=local_dir,
-    ):
-        models = await reader.read_models_from_path_async(
-            "github://org/repo/configs?ref=main"
-        )
+    models = await reader.read_models_from_path_async(
+        "github://org/repo/configs?ref=main"
+    )
 
     assert len(models) == 1
     assert models[0].tools is not None
@@ -249,15 +266,18 @@ async def test_read_model_configs_async_with_github_uri(
     monkeypatch.setenv("MODELS_OFFICIAL_PATH", "github://org/repo/configs?ref=main")
     monkeypatch.delenv("MODELS_ZIP_PATH", raising=False)
 
+    mock_helper = MagicMock(spec=GitHubDirectoryHelper)
+    mock_helper.resolve_github_path.return_value = local_dir
+
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
-    reader = ConfigReader(cache=cache, prompt_library_manager=prompt_mgr)
+    reader = ConfigReader(
+        cache=cache,
+        prompt_library_manager=prompt_mgr,
+        github_directory_helper=mock_helper,
+    )
 
-    with patch(
-        "languagemodelcommon.configs.config_reader.github_directory_helper.download_github_directory",
-        return_value=local_dir,
-    ):
-        models = await reader.read_model_configs_async()
+    models = await reader.read_model_configs_async()
 
     assert len(models) == 1
     assert models[0].name == "Model One"
@@ -280,12 +300,14 @@ def test_override_config_path_with_https_github_url() -> None:
 
 
 def test_join_path_preserves_github_query_params() -> None:
-    result = join_github_uri_path(
+    result = GitHubDirectoryHelper.join_github_uri_path(
         "github://org/repo/configs?ref=main", "clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123?ref=main"
 
 
 def test_join_path_works_without_query_params() -> None:
-    result = join_github_uri_path("github://org/repo/configs", "clients/client-123")
+    result = GitHubDirectoryHelper.join_github_uri_path(
+        "github://org/repo/configs", "clients/client-123"
+    )
     assert result == "github://org/repo/configs/clients/client-123"

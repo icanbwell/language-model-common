@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 
 from pathlib import Path
 from typing import Any, List, Optional, cast
@@ -10,10 +9,7 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
     FileConfigReader,
 )
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    is_github_path,
-    join_github_uri_path,
-    resolve_github_path,
-    to_github_uri,
+    GitHubDirectoryHelper,
 )
 from languagemodelcommon.configs.config_reader.s3_config_reader import S3ConfigReader
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -26,7 +22,11 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.configs.config_reader.mcp_json_reader import McpJsonReader
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -41,29 +41,36 @@ class ConfigReader:
         *,
         cache: ConfigExpiringCache,
         prompt_library_manager: PromptLibraryManager,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        mcp_json_reader: McpJsonReader | None = None,
+        github_directory_helper: GitHubDirectoryHelper | None = None,
     ) -> None:
-        """
-        Initialize the async config reader
-        Args:
-            cache: Expiring cache for model configurations
-        """
         if cache is None:
             raise ValueError("cache must not be None")
         self._cache: ConfigExpiringCache = cache
         if self._cache is None:
             raise ValueError("self._cache must not be None")
         self._prompt_library_manager = prompt_library_manager
+        self._environment_variables = (
+            environment_variables or LanguageModelCommonEnvironmentVariables()
+        )
+        self._github_directory_helper = (
+            github_directory_helper
+            or GitHubDirectoryHelper(environment_variables=self._environment_variables)
+        )
+        self._mcp_json_reader = mcp_json_reader or McpJsonReader(
+            environment_variables=self._environment_variables
+        )
 
     async def read_model_configs_async(
         self, *, client_id: str | None = None
     ) -> List[ChatModelConfig]:
-        config_path: str = os.environ.get("MODELS_OFFICIAL_PATH", "")
-        if config_path is None or config_path == "":
-            raise ValueError("MODELS_OFFICIAL_PATH environment variable is not set")
+        config_path = self._environment_variables.models_official_path
+        models_testing_path = self._environment_variables.models_testing_path
 
         base_models = await self._read_base_models_async(
             config_path=config_path,
-            models_testing_path=os.environ.get("MODELS_TESTING_PATH"),
+            models_testing_path=models_testing_path,
         )
 
         if client_id:
@@ -235,10 +242,13 @@ class ConfigReader:
                 self._identifier,
                 len(models),
             )
-        elif is_github_path(config_path):
-            local_path = resolve_github_path(config_path)
-            models = FileConfigReader().read_model_configs(
-                config_path=str(local_path), exclude_dirs=exclude_dirs
+        elif GitHubDirectoryHelper.is_github_path(config_path):
+            local_path = self._github_directory_helper.resolve_github_path(config_path)
+            models = FileConfigReader(
+                mcp_json_reader=self._mcp_json_reader
+            ).read_model_configs(
+                config_path=str(local_path),
+                exclude_dirs=exclude_dirs,
             )
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from GitHub",
@@ -246,8 +256,11 @@ class ConfigReader:
                 len(models),
             )
         else:
-            models = FileConfigReader().read_model_configs(
-                config_path=config_path, exclude_dirs=exclude_dirs
+            models = FileConfigReader(
+                mcp_json_reader=self._mcp_json_reader
+            ).read_model_configs(
+                config_path=config_path,
+                exclude_dirs=exclude_dirs,
             )
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from file system",
@@ -270,9 +283,9 @@ class ConfigReader:
         if not ConfigReader._is_valid_client_id(client_id):
             logger.warning("Invalid client_id format: %s", client_id)
             return None
-        if is_github_path(config_path):
-            return join_github_uri_path(
-                to_github_uri(config_path), f"clients/{client_id}"
+        if GitHubDirectoryHelper.is_github_path(config_path):
+            return GitHubDirectoryHelper.join_github_uri_path(
+                GitHubDirectoryHelper.to_github_uri(config_path), f"clients/{client_id}"
             )
         if config_path.startswith("s3"):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
@@ -418,16 +431,18 @@ class ConfigReader:
 
     def _discover_prompts_path(self, config_path: str) -> str | None:
         """Discover the prompts folder from config_path, supporting GitHub paths."""
-        if is_github_path(config_path):
+        if GitHubDirectoryHelper.is_github_path(config_path):
             from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
                 PROMPTS_FOLDER_NAME,
             )
 
-            prompts_uri = join_github_uri_path(
-                to_github_uri(config_path), PROMPTS_FOLDER_NAME
+            prompts_uri = GitHubDirectoryHelper.join_github_uri_path(
+                GitHubDirectoryHelper.to_github_uri(config_path), PROMPTS_FOLDER_NAME
             )
             try:
-                local_path = resolve_github_path(prompts_uri)
+                local_path = self._github_directory_helper.resolve_github_path(
+                    prompts_uri
+                )
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
                 return str(local_path)
             except Exception as e:
