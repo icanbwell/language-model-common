@@ -33,9 +33,6 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class ConfigReader:
-    _identifier: UUID = uuid4()
-    _lock: asyncio.Lock = asyncio.Lock()
-
     def __init__(
         self,
         *,
@@ -45,6 +42,8 @@ class ConfigReader:
         mcp_json_reader: McpJsonReader | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
     ) -> None:
+        self._identifier: UUID = uuid4()
+        self._lock: asyncio.Lock = asyncio.Lock()
         if cache is None:
             raise ValueError("cache must not be None")
         self._cache: ConfigExpiringCache = cache
