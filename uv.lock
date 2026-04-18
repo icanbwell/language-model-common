@@ -1426,7 +1426,7 @@ wheels = [
 
 [[package]]
 name = "langchain-ai-skills-framework"
-version = "1.0.49"
+version = "1.0.50"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1446,9 +1446,8 @@ dependencies = [
     { name = "skills-ref" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/f0/4e75a53aa1db4e51a2be40a6e3d4a463199d008b486b98fdf74172b18383/langchain_ai_skills_framework-1.0.49.tar.gz", hash = "sha256:ab0738844fa86c5d42aad78c4ec20f21879a4f35e542dc7d4d5649d07efb0c1e", size = 46096, upload-time = "2026-04-17T19:10:04.484Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/94/0b84901dc11edea4461f756cf111f2238e499fadf7e9abdf021f8cde6712/langchain_ai_skills_framework-1.0.49-py3-none-any.whl", hash = "sha256:e950135d1ace9ff2affd4b08d46816a4f2d9be8a7770d18be0053acd01a0d5c7", size = 74995, upload-time = "2026-04-17T19:10:02.966Z" },
+    { url = "https://files.pythonhosted.org/packages/48/35/62868bbf13e90431948858f99a01948472ce6164b8c47a438219707b76b2/langchain_ai_skills_framework-1.0.50-py3-none-any.whl", hash = "sha256:879fa3be1ac909e67f8d71b5d3e81281d3a6a906b360bd9dcb1f1beadcc80586", size = 74996, upload-time = "2026-04-18T22:42:41.318Z" },
 ]
 
 [[package]]
@@ -1797,7 +1796,7 @@ requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.27.2" },
     { name = "httpx-sse", specifier = ">=0.4.0" },
     { name = "langchain", specifier = ">=1.0.0" },
-    { name = "langchain-ai-skills-framework", specifier = ">=1.0.48" },
+    { name = "langchain-ai-skills-framework", specifier = ">=1.0.50" },
     { name = "langchain-aws", specifier = ">=1.2.0" },
     { name = "langchain-community", specifier = ">=0.4" },
     { name = "langchain-core", specifier = ">=1.2.5" },
