@@ -68,9 +68,9 @@ jobs:
           tags: pre-commit-languagemodelcommon
           cache-from: type=gha,scope=precommit-v2
           cache-to: type=gha,mode=max,scope=precommit-v2
-          secrets: |
-            jfrog_user=${{ secrets.JFROG_READ_USER }}
-            jfrog_token=${{ secrets.JFROG_READ_TOKEN }}
+          secrets: | # pragma: allowlist secret
+            jfrog_user=${{ secrets.JFROG_READ_USER }} # pragma: allowlist secret
+            jfrog_token=${{ secrets.JFROG_READ_TOKEN }} # pragma: allowlist secret
 
       - name: Create pre-commit cache volume
         run: docker volume create pre-commit-cache || true
@@ -135,9 +135,9 @@ jobs:
           tags: languagemodelcommon:local
           cache-from: type=gha,scope=languagemodelcommon-image-v2
           cache-to: type=gha,mode=max,scope=languagemodelcommon-image-v2
-          secrets: |
-            jfrog_user=${{ secrets.JFROG_READ_USER }}
-            jfrog_token=${{ secrets.JFROG_READ_TOKEN }}
+          secrets: | # pragma: allowlist secret
+            jfrog_user=${{ secrets.JFROG_READ_USER }} # pragma: allowlist secret
+            jfrog_token=${{ secrets.JFROG_READ_TOKEN }} # pragma: allowlist secret
 
       - name: touch docker.env
         run: touch docker.env

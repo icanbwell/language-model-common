@@ -1,6 +1,9 @@
 #!/bin/bash
 
-[ -f ~/.zshrc ] && source ~/.zshrc
+# Source zsh config in a zsh subshell to get env vars, then export them to this bash shell
+if [ -f ~/.zshrc ]; then
+  eval "$(zsh -c 'source ~/.zshrc 2>/dev/null; printf "export JFROG_READ_USER=%s JFROG_READ_TOKEN=%s\n" "$JFROG_READ_USER" "$JFROG_READ_TOKEN"')"
+fi
 
 if [ -n "$1" ] && [ "$1" = "pre_commit_all_files" ] ; then
   PRE_COMMIT_ALL_FILES=true
