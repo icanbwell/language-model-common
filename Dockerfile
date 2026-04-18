@@ -12,7 +12,7 @@ ARG RUN_UV_LOCK=false
 RUN apk add --no-cache git
 
 # Install uv from the official image (fast, single binary)
-COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6@sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754 /uv /uvx /usr/local/bin/
 
 # Use a venv outside the project dir so docker-compose volume mounts don't hide it
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -54,7 +54,7 @@ ENV COLUMNS=300
 RUN apk add --no-cache git
 
 # Install uv for runtime use
-COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.6@sha256:b1e699368d24c57cda93c338a57a8c5a119009ba809305cc8e86986d4a006754 /uv /uvx /usr/local/bin/
 
 # Set environment variables for project configuration
 ENV PROJECT_DIR=/usr/src/languagemodelcommon
