@@ -30,15 +30,21 @@ class UrlParser:
         )
 
     @staticmethod
-    def get_url_for_file_name(file_name: str) -> str:
-        """
-        Get the URL for a given image file name
+    def get_url_for_file_name(
+        file_name: str,
+        *,
+        image_generation_url: Optional[str] = None,
+    ) -> str:
+        """Get the URL for a given image file name.
 
-        :return:
+        :param file_name: The image file name.
+        :param image_generation_url: Base URL. Falls back to
+            ``IMAGE_GENERATION_URL`` env var when not provided.
         """
-
-        # get just the image file name
-        image_generation_url = os.environ["IMAGE_GENERATION_URL"]
+        if not image_generation_url:
+            image_generation_url = os.environ.get("IMAGE_GENERATION_URL")
+        if not image_generation_url:
+            raise ValueError("IMAGE_GENERATION_URL is not configured")
         url = f"{image_generation_url}/{file_name}"
         return url
 

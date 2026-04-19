@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
-from typing import List, Any, Dict
+from typing import List, Any, Dict, TYPE_CHECKING
 
 from google.oauth2 import service_account
 from google.oauth2.service_account import Credentials
@@ -19,11 +21,27 @@ from languagemodelcommon.configs.schemas.config_schema import (
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
 class ModelFactory:
+    def __init__(
+        self,
+        *,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        aws_client_factory: AwsClientFactory | None = None,
+    ) -> None:
+        self._environment_variables = environment_variables
+        self._aws_client_factory = aws_client_factory or AwsClientFactory(
+            environment_variables=environment_variables
+        )
+
     # noinspection PyMethodMayBeStatic
     def get_model(self, chat_model_config: ChatModelConfig) -> BaseChatModel:
         if chat_model_config is None:
@@ -35,11 +53,18 @@ class ModelFactory:
         model_config: ModelConfig | None = chat_model_config.model
         if model_config is None:
             # if no model configuration is provided, use the default model
-            default_model_provider: str = os.environ.get(
-                "DEFAULT_MODEL_PROVIDER", "bedrock"
+            default_model_provider: str = (
+                self._environment_variables.default_model_provider
+                if self._environment_variables
+                else os.environ.get("DEFAULT_MODEL_PROVIDER", "bedrock")
             )
-            default_model_name: str = os.environ.get(
-                "DEFAULT_MODEL_NAME", "us.anthropic.claude-3-5-haiku-20241022-v1:0"
+            default_model_name: str = (
+                self._environment_variables.default_model_name
+                if self._environment_variables
+                else os.environ.get(
+                    "DEFAULT_MODEL_NAME",
+                    "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+                )
             )
             model_config = ModelConfig(
                 provider=default_model_provider, model=default_model_name
@@ -73,11 +98,19 @@ class ModelFactory:
             model_parameters_dict["credentials"] = scoped_credentials
             llm = ChatGoogleGenerativeAI(**model_parameters_dict)
         elif model_config.provider == "bedrock":
-            aws_credentials_profile = os.environ.get("AWS_CREDENTIALS_PROFILE")
-            aws_region_name = os.environ.get("AWS_REGION", "us-east-1")
+            aws_credentials_profile = (
+                self._environment_variables.aws_credentials_profile
+                if self._environment_variables
+                else os.environ.get("AWS_CREDENTIALS_PROFILE")
+            )
+            aws_region_name = (
+                self._environment_variables.aws_region
+                if self._environment_variables
+                else os.environ.get("AWS_REGION", "us-east-1")
+            )
 
             bedrock_client: BedrockRuntimeClient = (
-                AwsClientFactory().create_bedrock_client()
+                self._aws_client_factory.create_bedrock_client()
             )
 
             # Extract thinking config if present — it must be passed via
@@ -119,9 +152,12 @@ class ModelFactory:
 
         return llm
 
-    @staticmethod
-    def get_google_credentials() -> Credentials:
-        service_account_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    def get_google_credentials(self) -> Credentials:
+        service_account_json = (
+            self._environment_variables.google_credentials_json
+            if self._environment_variables
+            else os.getenv("GOOGLE_CREDENTIALS_JSON")
+        )
         if not service_account_json:
             raise RuntimeError(
                 "GOOGLE_CREDENTIALS_JSON env var not set. Please set the environment variable with your service account JSON."

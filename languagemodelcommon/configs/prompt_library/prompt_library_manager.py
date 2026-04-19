@@ -3,11 +3,17 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+if TYPE_CHECKING:
+    from languagemodelcommon.configs.config_reader.github_directory_helper import (
+        GitHubDirectoryHelper,
+    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -24,6 +30,7 @@ class PromptLibraryManager:
         self,
         *,
         environment_variables: PromptLibraryEnvironmentVariables,
+        github_directory_helper: "GitHubDirectoryHelper | None" = None,
     ) -> None:
         if not isinstance(environment_variables, PromptLibraryEnvironmentVariables):
             raise TypeError(
@@ -31,6 +38,7 @@ class PromptLibraryManager:
             )
 
         self._base_path = environment_variables.prompt_library_path
+        self._github_directory_helper = github_directory_helper
         self._resolved_path: str | None = None
         self._github_resolved: bool = False
 
@@ -43,7 +51,6 @@ class PromptLibraryManager:
     def resolved_path(self, value: str | None) -> None:
         self._resolved_path = value
         self._github_resolved = False
-        self._github_resolved = False
 
     def _ensure_local_path(self) -> Path:
         """Return a local filesystem Path, downloading from GitHub if needed."""
@@ -53,12 +60,17 @@ class PromptLibraryManager:
 
         if not self._github_resolved:
             from languagemodelcommon.configs.config_reader.github_directory_helper import (
-                is_github_path,
-                resolve_github_path,
+                GitHubDirectoryHelper,
             )
 
-            if is_github_path(effective_path):
-                local_path = resolve_github_path(effective_path)
+            if GitHubDirectoryHelper.is_github_path(effective_path):
+                if self._github_directory_helper is None:
+                    raise RuntimeError(
+                        "GitHubDirectoryHelper is required to resolve GitHub paths"
+                    )
+                local_path = self._github_directory_helper.resolve_github_path(
+                    effective_path
+                )
                 self._resolved_path = str(local_path)
                 effective_path = self._resolved_path
             self._github_resolved = True

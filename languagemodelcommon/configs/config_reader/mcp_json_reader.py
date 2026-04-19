@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import List
 
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    is_github_path,
-    resolve_github_path,
+    GitHubDirectoryHelper,
 )
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -16,6 +15,9 @@ from languagemodelcommon.configs.schemas.config_schema import (
 )
 from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
+)
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -29,45 +31,86 @@ MCP_JSON_PATH_ENV = (
 MCP_JSON_FILENAME = ".mcp.json"
 
 
-def read_mcp_json(config_dir: str | None = None) -> McpJsonConfig | None:
-    """Read and parse ``.mcp.json``.
+class McpJsonReader:
+    """Reads and parses ``.mcp.json``, resolving the path via environment variables."""
 
-    Resolution order for the file path:
-    1. ``MCP_JSON_PATH`` environment variable (path to a directory containing
-       ``.mcp.json``).  Supports local paths, ``github://`` URIs, and
-       ``https://github.com/`` URLs.
-    2. ``.mcp.json`` in *config_dir* (the model-configs directory).
+    def __init__(
+        self,
+        *,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        github_directory_helper: GitHubDirectoryHelper | None = None,
+    ) -> None:
+        self._environment_variables = environment_variables
+        self._github_directory_helper = github_directory_helper or (
+            GitHubDirectoryHelper(environment_variables=environment_variables)
+            if environment_variables
+            else None
+        )
 
-    Returns ``None`` when no ``.mcp.json`` is found.
-    """
-    env_path = os.environ.get(MCP_JSON_PATH_ENV)
+    def read_mcp_json(
+        self,
+        config_dir: str | None = None,
+    ) -> McpJsonConfig | None:
+        """Read and parse ``.mcp.json``.
 
-    if env_path:
-        if is_github_path(env_path):
-            resolved_dir = resolve_github_path(env_path)
+        Resolution order for the file path:
+        1. ``mcp_json_path`` from *environment_variables* (supports ``{pid}``
+           substitution for per-worker isolation).
+        2. ``MCP_JSON_PATH`` environment variable (fallback when no
+           environment_variables is provided).
+        3. ``.mcp.json`` in *config_dir* (the model-configs directory).
+
+        Returns ``None`` when no ``.mcp.json`` is found.
+        """
+        if self._environment_variables is not None:
+            env_path: str | None = self._environment_variables.mcp_json_path
         else:
-            resolved_dir = Path(env_path).resolve()
-        mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
-    elif config_dir:
-        resolved_dir = Path(config_dir).resolve()
-        mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
-        if not mcp_json_path.parent == resolved_dir:
-            logger.warning(
-                ".mcp.json path resolved outside config directory: %s",
-                mcp_json_path,
-            )
+            env_path = os.environ.get(MCP_JSON_PATH_ENV)
+
+        if env_path:
+            if GitHubDirectoryHelper.is_github_path(env_path):
+                if self._github_directory_helper is None:
+                    raise RuntimeError(
+                        "GitHubDirectoryHelper is required to resolve GitHub paths"
+                    )
+                resolved_dir = self._github_directory_helper.resolve_github_path(
+                    env_path
+                )
+            else:
+                resolved_dir = Path(env_path).resolve()
+            mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
+        elif config_dir:
+            resolved_dir = Path(config_dir).resolve()
+            mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
+            if not mcp_json_path.parent == resolved_dir:
+                logger.warning(
+                    ".mcp.json path resolved outside config directory: %s",
+                    mcp_json_path,
+                )
+                return None
+        else:
             return None
-    else:
-        return None
 
-    if not mcp_json_path.is_file():
-        logger.debug(".mcp.json not found at %s", mcp_json_path)
-        return None
+        if not mcp_json_path.is_file():
+            logger.debug(".mcp.json not found at %s", mcp_json_path)
+            return None
 
-    logger.info("Loading MCP server registry from %s", mcp_json_path)
-    with open(mcp_json_path, "r", encoding="utf-8") as f:
-        data = substitute_env_vars(json.load(f))
-    return McpJsonConfig(**data)
+        logger.info("Loading MCP server registry from %s", mcp_json_path)
+        with open(mcp_json_path, "r", encoding="utf-8") as f:
+            data = substitute_env_vars(json.load(f))
+        return McpJsonConfig(**data)
+
+
+# Keep module-level function for backward compatibility with existing callers
+def read_mcp_json(
+    config_dir: str | None = None,
+) -> McpJsonConfig | None:
+    """Backward-compatible wrapper around :class:`McpJsonReader`.
+
+    Prefer injecting ``McpJsonReader`` via the container instead of
+    calling this function directly.
+    """
+    return McpJsonReader().read_mcp_json(config_dir=config_dir)
 
 
 def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:

@@ -8,7 +8,6 @@ from typing import Any, List, Sequence
 from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
     SkillLoaderProtocol,
 )
-from langchain_ai_skills_framework.middleware.skills_middleware import SkillMiddleware
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableLambda
@@ -119,9 +118,7 @@ class GraphBuilder:
         )
 
         # Create react agent
-        middleware: list[AgentMiddleware] = [
-            SkillMiddleware(skill_loader=resolved_skill_loader),
-        ]
+        middleware: list[AgentMiddleware] = []
         if tool_catalog is not None:
             middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
 

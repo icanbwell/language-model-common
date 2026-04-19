@@ -1,10 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
 import logging
-import os
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import override, Dict, Any, Literal
+from typing import override, Dict, Any, Literal, TYPE_CHECKING
 
 from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 from types_boto3_bedrock_runtime.type_defs import InvokeModelResponseTypeDef
@@ -15,12 +16,22 @@ from languagemodelcommon.image_generation.image_generator import (
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
 
 
 class AwsImageGenerator(ImageGenerator):
-    def __init__(self, *, aws_client_factory: AwsClientFactory) -> None:
+    def __init__(
+        self,
+        *,
+        aws_client_factory: AwsClientFactory,
+        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+    ) -> None:
         self.executor: ThreadPoolExecutor = ThreadPoolExecutor()
         self.aws_client_factory: AwsClientFactory = aws_client_factory
         if self.aws_client_factory is None:
@@ -29,6 +40,7 @@ class AwsImageGenerator(ImageGenerator):
             raise TypeError(
                 "aws_client_factory must be an instance of AwsClientFactory"
             )
+        self._environment_variables = environment_variables
 
     def _invoke_model(self, request_body: Dict[str, Any]) -> InvokeModelResponseTypeDef:
         """Synchronous model invocation"""
@@ -51,7 +63,10 @@ class AwsImageGenerator(ImageGenerator):
         ] = "1024x1024",
     ) -> bytes:
         """Generate an image using Titan Image Generator"""
-        if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+        if (
+            self._environment_variables
+            and self._environment_variables.log_input_and_output
+        ):
             logger.info(f"Generating image for prompt: {prompt}")
 
         request_body = {
@@ -85,7 +100,10 @@ class AwsImageGenerator(ImageGenerator):
             # Convert base64 to bytes
             image_data = base64.b64decode(base64_image)
 
-            if os.environ.get("LOG_INPUT_AND_OUTPUT", "0") == "1":
+            if (
+                self._environment_variables
+                and self._environment_variables.log_input_and_output
+            ):
                 logger.info(f"Image generated successfully for prompt: {prompt}")
             return image_data
 

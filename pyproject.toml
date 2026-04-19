@@ -1,0 +1,119 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "language-model-common"
+dynamic = ["version"]
+description = "Provides the underlying framework to enhance langchain and add loading configurations"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Imran Qureshi", email = "imran.qureshi@bwell.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "boto3>=1.40.21",
+    "fastapi>=0.115.8",
+    "httpx[http2]>=0.27.2",
+    "httpx-sse>=0.4.0",
+    "langchain>=1.0.0",
+    "langchain-aws>=1.2.0",
+    "langchain-community>=0.4",
+    "openai>=2.5.0",
+    "langchain-openai>=1.1.6",
+    "langchain-core>=1.2.5",
+    "langgraph>=1.0.0",
+    "pydantic>=2.0,<3.0.0",
+    "mcp>=1.11.0",
+    "langmem>=0.0.30",
+    "langgraph-checkpoint>=3.0.0",
+    "langgraph-checkpoint-mongodb>=0.3.1",
+    "langgraph-store-mongodb>=0.1.0",
+    "tiktoken>=0.12.0",
+    "langchain-ai-skills-framework>=1.0.50",
+    "motor>=3.7.1",
+    "simple-container>=1.0.2",
+    "pypdf>=6.6.0",
+    "markdownify>=0.14.1",
+    "beautifulsoup4>=4.12.3",
+    "oidcauthlib>=3.0.8",
+    "fsspec>=2026.2.0",
+    "authlib>=1.6.5",
+    "langchain-google-genai>=4.1.3",
+    "pymongo[snappy]>=4.15.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/icanbwell/language-model-common"
+
+[dependency-groups]
+dev = [
+    "setuptools>=68.0",
+    "wheel>=0.43.0",
+    "twine>=4.0.2",
+    "pre-commit>=3.6.1",
+    "autoflake>=2.2.0",
+    "mypy>=1.8.0",
+    "pytest>=8.1.1",
+    "pytest-asyncio>=0.23.6",
+    "black>=24.2.0",
+    "bandit>=1.8.3",
+    "ruff>=0.11.5",
+    "pytest-cov>=6.1.1",
+    "pytest-httpx>=0.35.0",
+    "types-requests>=2.32.4",
+    "types-botocore>=1.0.2",
+    "types-boto3>=1.40.0",
+    "types-boto3-bedrock>=1.40.0",
+    "types-boto3-s3>=1.40.0",
+    "types-boto3-textract>=1.40.0",
+    "types-boto3-bedrock-runtime>=1.40.0",
+    "types-authlib>=1.6.5",
+    "moto[s3]>=5.1.11",
+    "respx>=0.22.0",
+    "types-beautifulsoup4>=4.12.0",
+    "build>=1.0.0",
+]
+
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
+
+[tool.setuptools.packages.find]
+include = ["languagemodelcommon*"]
+
+[tool.setuptools.package-data]
+languagemodelcommon = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "--capture=fd"
+log_cli = true
+log_cli_level = "INFO"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+
+[[tool.mypy.overrides]]
+module = ["setuptools.*"]
+ignore_missing_imports = true
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "alpine-wheels"
+url = "https://imranq2.github.io/alpine-wheels/docs/"

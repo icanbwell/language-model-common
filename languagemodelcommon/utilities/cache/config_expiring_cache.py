@@ -22,13 +22,6 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
     expire after the specified TTL in seconds.
     """
 
-    _cache: Optional[List[ChatModelConfig]] = None
-    """ Cache for model configurations, stored as a list of ChatModelConfig objects. """
-    _cache_timestamp: Optional[float] = None
-    """ Timestamp when the cache was last updated, used to determine cache validity. """
-    _lock: asyncio.Lock = asyncio.Lock()
-    """ Asynchronous lock to ensure thread-safe access to the cache. """
-
     def __init__(
         self, *, ttl_seconds: float, init_value: Optional[List[ChatModelConfig]] = None
     ) -> None:
@@ -40,6 +33,12 @@ class ConfigExpiringCache(ExpiringCache[List[ChatModelConfig]]):
             init_value (Optional[List[ChatModelConfig]]): Optional initial value to populate the cache.
                                                           If not provided, the cache starts empty.
         """
+        self._cache: Optional[List[ChatModelConfig]] = None
+        """ Cache for model configurations, stored as a list of ChatModelConfig objects. """
+        self._cache_timestamp: Optional[float] = None
+        """ Timestamp when the cache was last updated, used to determine cache validity. """
+        self._lock: asyncio.Lock = asyncio.Lock()
+        """ Asynchronous lock to ensure thread-safe access to the cache. """
         self._ttl: float = ttl_seconds
         self._identifier: UUID = uuid4()
         if init_value is not None:

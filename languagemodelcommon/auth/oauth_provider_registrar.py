@@ -9,6 +9,7 @@ import asyncio
 import logging
 from typing import Dict
 
+import httpx
 from oidcauthlib.auth.auth_manager import AuthManager
 from oidcauthlib.auth.config.auth_config import AuthConfig
 from oidcauthlib.auth.config.auth_config_reader import AuthConfigReader
@@ -115,6 +116,20 @@ class OAuthProviderRegistrar:
                     f"Could not resolve client_id for auth_provider '{auth_provider}'"
                 )
 
+            # --- Eagerly resolve endpoints from well-known metadata ---
+            # When authorization_url or token_url are missing but
+            # auth_server_metadata_url is set, fetch the OIDC discovery
+            # document now so the AuthConfig has explicit endpoints.
+            # This avoids a fragile lazy fetch inside authlib's
+            # create_authorization_url which, if it fails, silently
+            # drops the login link.
+            if oauth.auth_server_metadata_url and (
+                not oauth.authorization_url or not oauth.token_url
+            ):
+                await self._resolve_well_known_endpoints(
+                    auth_provider=auth_provider, oauth=oauth
+                )
+
             # --- Build and register ---
             auth_config = AuthConfig(
                 auth_provider=auth_provider,
@@ -203,6 +218,54 @@ class OAuthProviderRegistrar:
             oauth.registration_url,
             oauth.authorization_url,
             oauth.token_url,
+        )
+
+    async def _resolve_well_known_endpoints(
+        self,
+        *,
+        auth_provider: str,
+        oauth: McpOAuthConfig,
+    ) -> None:
+        """Fetch OIDC discovery metadata and populate missing endpoints.
+
+        Populates ``authorization_url``, ``token_url``, and ``issuer`` on
+        *oauth* in-place so the ``AuthConfig`` built afterwards has explicit
+        endpoints.  This prevents authlib from needing to do a lazy metadata
+        fetch inside ``create_authorization_url``, which can silently fail
+        and cause the login link to be omitted.
+        """
+        url = oauth.auth_server_metadata_url
+        if not url:
+            return
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                metadata = resp.json()
+        except Exception:
+            logger.warning(
+                "Failed to fetch well-known metadata for '%s' from %s "
+                "— login link may be unavailable",
+                auth_provider,
+                url,
+                exc_info=True,
+            )
+            return
+
+        if not oauth.authorization_url and metadata.get("authorization_endpoint"):
+            oauth.authorization_url = metadata["authorization_endpoint"]
+        if not oauth.token_url and metadata.get("token_endpoint"):
+            oauth.token_url = metadata["token_endpoint"]
+        if not oauth.issuer and metadata.get("issuer"):
+            oauth.issuer = metadata["issuer"]
+
+        logger.info(
+            "Well-known metadata resolved for '%s': "
+            "authorization_url=%s, token_url=%s, issuer=%s",
+            auth_provider,
+            oauth.authorization_url,
+            oauth.token_url,
+            oauth.issuer,
         )
 
     async def _resolve_credentials(
