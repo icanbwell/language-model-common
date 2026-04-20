@@ -137,6 +137,14 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
 
     @property
+    def enable_snapshot_cache(self) -> bool:
+        return self.str2bool(os.environ.get("ENABLE_SNAPSHOT_CACHE", "false"))
+
+    @property
+    def snapshot_cache_collection_name(self) -> str:
+        return os.environ.get("SNAPSHOT_CACHE_COLLECTION_NAME", "snapshot_cache")
+
+    @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
 

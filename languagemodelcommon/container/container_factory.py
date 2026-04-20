@@ -36,6 +36,9 @@ from languagemodelcommon.persistence.persistence_factory import PersistenceFacto
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
+from languagemodelcommon.utilities.cache.snapshot_cache_store import (
+    SnapshotCacheStore,
+)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -95,6 +98,32 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
+            SnapshotCacheStore,
+            lambda c: SnapshotCacheStore(
+                enabled=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).enable_snapshot_cache,
+                mongo_url=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_uri,
+                mongo_db_name=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_name or "language_model_gateway",
+                mongo_username=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_username,
+                mongo_password=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_password,
+                collection=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).snapshot_cache_collection_name,
+                ttl_seconds=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).config_cache_timeout_seconds,
+            ),
+        )
+        container.singleton(
             ConfigReader,
             lambda c: ConfigReader(
                 cache=c.resolve(ConfigExpiringCache),
@@ -104,6 +133,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 mcp_json_reader=c.resolve(McpJsonReader),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
+                snapshot_cache_store=c.resolve(SnapshotCacheStore),
             ),
         )
         container.singleton(
