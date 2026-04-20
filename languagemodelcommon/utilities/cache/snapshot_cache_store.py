@@ -11,9 +11,7 @@ All returned stores support ``async with store:`` / ``await store.get(...)``
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from key_value.aio.stores.base import BaseContextManagerStore
 from key_value.aio.stores.memory import MemoryStore
 from key_value.aio.stores.mongodb import MongoDBStore
 

@@ -110,7 +110,8 @@ class LanguageModelCommonContainerFactory:
                 ).mongo_llm_storage_uri,
                 mongo_db_name=c.resolve(
                     LanguageModelCommonEnvironmentVariables
-                ).mongo_llm_storage_db_name or "language_model_gateway",
+                ).mongo_llm_storage_db_name
+                or "language_model_gateway",
                 mongo_username=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mongo_llm_storage_db_username,
