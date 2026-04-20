@@ -33,11 +33,13 @@ from languagemodelcommon.image_generation.providers.image_generation_provider im
 )
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
+from key_value.aio.stores.base import BaseStore
+
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
 from languagemodelcommon.utilities.cache.snapshot_cache_store import (
-    SnapshotCacheStore,
+    create_cache_store,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -98,8 +100,8 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            SnapshotCacheStore,
-            lambda c: SnapshotCacheStore(
+            BaseStore,
+            lambda c: create_cache_store(
                 enabled=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).enable_snapshot_cache,
@@ -118,9 +120,6 @@ class LanguageModelCommonContainerFactory:
                 collection=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).snapshot_cache_collection_name,
-                ttl_seconds=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).config_cache_timeout_seconds,
             ),
         )
         container.singleton(
@@ -133,7 +132,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 mcp_json_reader=c.resolve(McpJsonReader),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
-                snapshot_cache_store=c.resolve(SnapshotCacheStore),
+                snapshot_cache_store=c.resolve(BaseStore),
             ),
         )
         container.singleton(

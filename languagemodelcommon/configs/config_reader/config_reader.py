@@ -19,11 +19,10 @@ from languagemodelcommon.configs.schemas.config_schema import (
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
+from key_value.aio.stores.base import BaseStore
+
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
-)
-from languagemodelcommon.utilities.cache.snapshot_cache_store import (
-    SnapshotCacheStore,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -44,7 +43,7 @@ class ConfigReader:
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
         mcp_json_reader: McpJsonReader | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
-        snapshot_cache_store: SnapshotCacheStore | None = None,
+        snapshot_cache_store: BaseStore | None = None,
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -188,7 +187,8 @@ class ConfigReader:
         if not self._snapshot_cache_store:
             return
         data = {"models": [m.model_dump() for m in models]}
-        await self._snapshot_cache_store.put(self._SNAPSHOT_CACHE_KEY, data)
+        ttl = self._environment_variables.config_cache_timeout_seconds
+        await self._snapshot_cache_store.put(self._SNAPSHOT_CACHE_KEY, data, ttl=ttl)
         logger.debug(
             "ConfigReader with id: %s wrote %d configs to snapshot cache",
             self._identifier,
