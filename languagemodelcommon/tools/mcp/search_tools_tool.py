@@ -105,29 +105,21 @@ class SearchToolsTool(BaseTool):
     async def _arun(self, query: str, category: str) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category
         resolution_errors: list[str] = []
+        # Track auth exceptions for query-matching servers so we can
+        # re-raise them when no tools are found, letting the gateway
+        # render clickable login links directly to the user.
+        auth_exceptions: list[AuthorizationNeededException] = []
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
                 except AuthorizationNeededException as e:
-                    # Don't abort the entire search — the auth prompt
-                    # will surface naturally if call_tool targets it
-                    # later.  Only show login links when the query is
-                    # relevant to this server so unrelated servers
-                    # don't clutter the response.
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
                     )
                     if self._query_matches_server(query, server):
-                        if e.message:
-                            resolution_errors.append(e.message)
-                        else:
-                            error_msg = (
-                                f"{server.server_name} requires authentication "
-                                f"(url: {server_url})"
-                            )
-                            resolution_errors.append(error_msg)
+                        auth_exceptions.append(e)
                     logger.info(
                         "Server %s at %s requires auth during search, skipping: %s",
                         server.server_name,
@@ -175,6 +167,13 @@ class SearchToolsTool(BaseTool):
                     f"Try searching with different keywords."
                 )
                 return no_match_text, no_match_text
+            # When a query-matching server needs authentication and we
+            # have no tools to show, re-raise the exception so the
+            # gateway renders clickable login links directly to the
+            # user instead of passing them through the LLM (which
+            # strips the URLs).
+            if auth_exceptions:
+                raise auth_exceptions[0]
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
                 error_text = (

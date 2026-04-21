@@ -156,68 +156,10 @@ class TestSearchToolsTool:
         assert "No tools found" in content
 
     @pytest.mark.asyncio
-    async def test_auth_required_server_skipped_gracefully(self) -> None:
-        """Auth exceptions during resolution are skipped so the search
-        can still return results from other servers.  The auth prompt
-        surfaces later when call_tool targets the protected server."""
-        from oidcauthlib.auth.exceptions.authorization_needed_exception import (
-            AuthorizationNeededException,
-        )
-
-        catalog = ToolCatalog()
-        catalog.register_server(
-            server_name="google_drive",
-            category="Google Drive",
-            agent_config=_agent_config("google_drive"),
-        )
-
-        async def _resolve(agent_config: AgentConfig) -> list[MCPTool]:
-            raise AuthorizationNeededException(message="Login required")
-
-        resolver = AsyncMock()
-        resolver.resolve_tools = AsyncMock(side_effect=_resolve)
-
-        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
-        content, _artifact = await tool._arun(query="files", category="Google Drive")
-        assert "requires authentication" in content or "No tools found" in content
-
-    @pytest.mark.asyncio
-    async def test_auth_login_link_surfaced_when_query_matches(self) -> None:
-        """When the search query matches an MCP server that requires auth,
-        the login link from the exception message is included in the
-        search results so the user can authenticate."""
-        from oidcauthlib.auth.exceptions.authorization_needed_exception import (
-            AuthorizationNeededException,
-        )
-
-        catalog = ToolCatalog()
-        catalog.register_server(
-            server_name="google_drive",
-            category="Google Drive",
-            agent_config=_agent_config("google_drive"),
-        )
-
-        login_url = "https://accounts.google.com/o/oauth2/auth?client_id=123"
-        login_message = f"[Login to Google Drive]({login_url})"
-
-        async def _resolve(agent_config: AgentConfig) -> list[MCPTool]:
-            raise AuthorizationNeededException(message=login_message)
-
-        resolver = AsyncMock()
-        resolver.resolve_tools = AsyncMock(side_effect=_resolve)
-
-        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
-        # "google" in query matches server_name "google_drive"
-        content, _artifact = await tool._arun(
-            query="read google document content", category="Google Drive"
-        )
-        assert login_url in content
-        assert "Login to Google Drive" in content
-
-    @pytest.mark.asyncio
-    async def test_auth_login_link_hidden_when_query_does_not_match(self) -> None:
-        """When the search query does NOT match an MCP server that
-        requires auth, the login link should NOT be shown."""
+    async def test_auth_required_server_skipped_when_query_does_not_match(self) -> None:
+        """Auth exceptions during resolution are skipped when the query
+        does not match the server.  The auth prompt surfaces later when
+        call_tool targets the protected server."""
         from oidcauthlib.auth.exceptions.authorization_needed_exception import (
             AuthorizationNeededException,
         )
@@ -245,3 +187,38 @@ class TestSearchToolsTool:
         )
         assert login_url not in content
         assert "No tools found" in content
+
+    @pytest.mark.asyncio
+    async def test_auth_exception_re_raised_when_query_matches(self) -> None:
+        """When the search query matches an MCP server that requires auth
+        and no tools are found, the AuthorizationNeededException is
+        re-raised so the gateway can render clickable login links
+        directly to the user (bypassing the LLM)."""
+        from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+            AuthorizationNeededException,
+        )
+
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="google_drive",
+            category="Google Drive",
+            agent_config=_agent_config("google_drive"),
+        )
+
+        login_url = "https://accounts.google.com/o/oauth2/auth?client_id=123"
+        login_message = f"[Login to Google Drive]({login_url})"
+
+        async def _resolve(agent_config: AgentConfig) -> list[MCPTool]:
+            raise AuthorizationNeededException(message=login_message)
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(side_effect=_resolve)
+
+        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
+        # "google" in query matches server_name "google_drive"
+        with pytest.raises(AuthorizationNeededException) as exc_info:
+            await tool._arun(
+                query="read google document content", category="Google Drive"
+            )
+        assert login_url in exc_info.value.message
+        assert "Login to Google Drive" in exc_info.value.message
