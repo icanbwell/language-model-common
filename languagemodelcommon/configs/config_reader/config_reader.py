@@ -194,7 +194,7 @@ class ConfigReader:
         if not self._snapshot_cache_store:
             return
         data = {"models": [m.model_dump() for m in models]}
-        ttl = self._environment_variables.config_cache_timeout_seconds
+        ttl = self._environment_variables.snapshot_cache_ttl_seconds
         await self._snapshot_cache_store.put(
             self._SNAPSHOT_CACHE_KEY,
             data,
@@ -526,4 +526,12 @@ class ConfigReader:
 
     async def clear_cache(self) -> None:
         await self._cache.clear()
-        logger.info("ConfigReader with id: %s cleared cache", self._identifier)
+        if self._snapshot_cache_store:
+            await self._snapshot_cache_store.delete(
+                self._SNAPSHOT_CACHE_KEY,
+                collection=self._snapshot_cache_collection,
+            )
+        logger.info(
+            "ConfigReader with id: %s cleared in-memory and snapshot caches",
+            self._identifier,
+        )

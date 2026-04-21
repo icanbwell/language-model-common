@@ -448,3 +448,41 @@ async def test_snapshot_cache_none_store_skips_entirely(
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "DiskModel"
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_deletes_snapshot_entry(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+) -> None:
+    """clear_cache() should delete both in-memory and snapshot cache entries."""
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.delete = AsyncMock(return_value=True)
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+    await reader.clear_cache()
+
+    cache_mock.clear.assert_awaited_once()
+    snapshot_store.delete.assert_awaited_once_with(
+        "model_configs",
+        collection=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_cache_without_snapshot_store(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+) -> None:
+    """clear_cache() with no snapshot store should only clear in-memory cache."""
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=None,
+    )
+    await reader.clear_cache()
+    cache_mock.clear.assert_awaited_once()
