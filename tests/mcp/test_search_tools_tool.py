@@ -156,8 +156,10 @@ class TestSearchToolsTool:
         assert "No tools found" in content
 
     @pytest.mark.asyncio
-    async def test_auth_required_server_raises(self) -> None:
-        """Auth exceptions propagate so user sees login links."""
+    async def test_auth_required_server_skipped_gracefully(self) -> None:
+        """Auth exceptions during resolution are skipped so the search
+        can still return results from other servers.  The auth prompt
+        surfaces later when call_tool targets the protected server."""
         from oidcauthlib.auth.exceptions.authorization_needed_exception import (
             AuthorizationNeededException,
         )
@@ -176,5 +178,5 @@ class TestSearchToolsTool:
         resolver.resolve_tools = AsyncMock(side_effect=_resolve)
 
         tool = SearchToolsTool(catalog=catalog, resolver=resolver)
-        with pytest.raises(AuthorizationNeededException):
-            await tool._arun(query="files", category="Google Drive")
+        content, _artifact = await tool._arun(query="files", category="Google Drive")
+        assert "requires authentication" in content or "No tools found" in content

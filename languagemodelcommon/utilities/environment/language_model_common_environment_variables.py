@@ -156,6 +156,15 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("SNAPSHOT_CACHE_COLLECTION_NAME", "snapshot_cache")
 
     @property
+    def snapshot_cache_model_configs_collection(self) -> str | None:
+        """Optional separate collection for model config snapshots.
+
+        When set, ConfigReader stores its snapshot in this collection
+        instead of the store's default collection.
+        """
+        return os.environ.get("SNAPSHOT_CACHE_MODEL_CONFIGS_COLLECTION") or None
+
+    @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
 

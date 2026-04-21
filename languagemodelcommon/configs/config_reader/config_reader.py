@@ -64,6 +64,9 @@ class ConfigReader:
             environment_variables=self._environment_variables
         )
         self._snapshot_cache_store = snapshot_cache_store
+        self._snapshot_cache_collection = (
+            self._environment_variables.snapshot_cache_model_configs_collection
+        )
 
     async def read_model_configs_async(
         self, *, client_id: str | None = None
@@ -167,7 +170,10 @@ class ConfigReader:
         if not self._snapshot_cache_store:
             return None
         try:
-            data = await self._snapshot_cache_store.get(self._SNAPSHOT_CACHE_KEY)
+            data = await self._snapshot_cache_store.get(
+                self._SNAPSHOT_CACHE_KEY,
+                collection=self._snapshot_cache_collection,
+            )
             if data is None:
                 return None
             models_data: list[dict[str, Any]] = data.get("models", [])
@@ -198,7 +204,10 @@ class ConfigReader:
             data = {"models": [m.model_dump() for m in models]}
             ttl = self._environment_variables.config_cache_timeout_seconds
             await self._snapshot_cache_store.put(
-                self._SNAPSHOT_CACHE_KEY, data, ttl=ttl
+                self._SNAPSHOT_CACHE_KEY,
+                data,
+                ttl=ttl,
+                collection=self._snapshot_cache_collection,
             )
             logger.debug(
                 "ConfigReader with id: %s wrote %d configs to snapshot cache",
