@@ -2,7 +2,9 @@
 
 The ``SNAPSHOT_CACHE_TYPE`` env var selects the backend:
 
-- ``mongo``  — ``MongoDBStore``, fails if MongoDB is unreachable
+- ``mongo``  — ``ValidatingMongoDBStore`` (wraps ``MongoDBStore``), pings
+               MongoDB on open and raises ``ConnectionError`` immediately
+               if the server is unreachable.  Fail-fast, not fail-safe.
 - ``memory`` — in-process ``MemoryStore``, no persistence across restarts
 - ``file``   — JSON file-backed store, persists locally without MongoDB
 
@@ -117,6 +119,31 @@ class FileStore(MemoryStoreWithContextManager):
             )
 
 
+class ValidatingMongoDBStore(MongoDBStore):
+    """MongoDBStore that validates connectivity on open.
+
+    Pings MongoDB during ``__aenter__`` so that a misconfigured
+    snapshot cache fails fast at startup rather than silently
+    swallowing errors at runtime.
+    """
+
+    async def _setup(self) -> None:
+        await super()._setup()
+        try:
+            await self._db.command("ping")
+        except Exception as e:
+            raise ConnectionError(
+                f"Snapshot cache failed to connect to MongoDB "
+                f"(database: {self._db.name}). "
+                f"Verify MONGO_LLM_STORAGE_URI / MONGO_URL, credentials, "
+                f"and network access. Error: {e}"
+            ) from e
+        logger.info(
+            "Snapshot cache MongoDB connection validated (db=%s)",
+            self._db.name,
+        )
+
+
 def create_cache_store(
     *,
     cache_type: str = "memory",
@@ -155,7 +182,7 @@ def create_cache_store(
             mongo_db_name,
             collection,
         )
-        return MongoDBStore(
+        return ValidatingMongoDBStore(
             url=connection_url,
             db_name=mongo_db_name,
             default_collection=collection,

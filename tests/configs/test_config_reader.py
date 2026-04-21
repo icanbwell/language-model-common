@@ -349,12 +349,12 @@ async def test_snapshot_cache_returns_none_falls_through(
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_get_error_falls_through(
+async def test_snapshot_cache_get_error_propagates(
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If the snapshot store .get() raises, config loading still succeeds."""
+    """If the snapshot store .get() raises, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -370,17 +370,17 @@ async def test_snapshot_cache_get_error_falls_through(
         prompt_library_manager=prompt_library_manager,
         snapshot_cache_store=snapshot_store,
     )
-    result = await reader.read_model_configs_async()
-    assert result[0].name == "DiskModel"
+    with pytest.raises(ConnectionError, match="MongoDB unavailable"):
+        await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_deserialization_error_falls_through(
+async def test_snapshot_cache_deserialization_error_propagates(
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If stored data is corrupt, config loading still succeeds from disk."""
+    """If stored data is corrupt, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -396,17 +396,17 @@ async def test_snapshot_cache_deserialization_error_falls_through(
         prompt_library_manager=prompt_library_manager,
         snapshot_cache_store=snapshot_store,
     )
-    result = await reader.read_model_configs_async()
-    assert result[0].name == "DiskModel"
+    with pytest.raises(Exception):
+        await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_put_error_does_not_break_config_read(
+async def test_snapshot_cache_put_error_propagates(
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If snapshot .put() raises, configs are still returned to the caller."""
+    """If snapshot .put() raises, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -423,10 +423,8 @@ async def test_snapshot_cache_put_error_does_not_break_config_read(
         prompt_library_manager=prompt_library_manager,
         snapshot_cache_store=snapshot_store,
     )
-    result = await reader.read_model_configs_async()
-    assert result[0].name == "DiskModel"
-    # put was attempted and failed silently
-    snapshot_store.put.assert_called_once()
+    with pytest.raises(TimeoutError, match="MongoDB write timeout"):
+        await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio

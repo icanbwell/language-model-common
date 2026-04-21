@@ -162,64 +162,50 @@ class ConfigReader:
     _SNAPSHOT_CACHE_KEY = "model_configs"
 
     async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
-        """Try to load model configs from the MongoDB snapshot cache.
+        """Load model configs from the snapshot cache.
 
-        This is best-effort: any store or deserialization error is logged
-        and returns None so the caller falls through to disk/GitHub.
+        Returns ``None`` when the cache has no entry for the key.
+        Raises on store or deserialization errors so that a misconfigured
+        cache backend surfaces immediately (fail-fast).
         """
         if not self._snapshot_cache_store:
             return None
-        try:
-            data = await self._snapshot_cache_store.get(
-                self._SNAPSHOT_CACHE_KEY,
-                collection=self._snapshot_cache_collection,
-            )
-            if data is None:
-                return None
-            models_data: list[dict[str, Any]] = data.get("models", [])
-            models = [ChatModelConfig.model_validate(d) for d in models_data]
-            logger.info(
-                "ConfigReader with id: %s loaded %d configs from snapshot cache",
-                self._identifier,
-                len(models),
-            )
-            return models if models else None
-        except Exception:
-            logger.debug(
-                "ConfigReader with id: %s snapshot cache read failed",
-                self._identifier,
-                exc_info=True,
-            )
+        data = await self._snapshot_cache_store.get(
+            self._SNAPSHOT_CACHE_KEY,
+            collection=self._snapshot_cache_collection,
+        )
+        if data is None:
             return None
+        models_data: list[dict[str, Any]] = data.get("models", [])
+        models = [ChatModelConfig.model_validate(d) for d in models_data]
+        logger.info(
+            "ConfigReader with id: %s loaded %d configs from snapshot cache",
+            self._identifier,
+            len(models),
+        )
+        return models if models else None
 
     async def _write_to_snapshot_cache(self, models: List[ChatModelConfig]) -> None:
-        """Store parsed model configs in the MongoDB snapshot cache.
+        """Store parsed model configs in the snapshot cache.
 
-        Best-effort: a write failure is logged but must not prevent the
-        caller from returning the configs it already loaded successfully.
+        Raises on write errors so that a misconfigured cache backend
+        surfaces immediately (fail-fast).
         """
         if not self._snapshot_cache_store:
             return
-        try:
-            data = {"models": [m.model_dump() for m in models]}
-            ttl = self._environment_variables.config_cache_timeout_seconds
-            await self._snapshot_cache_store.put(
-                self._SNAPSHOT_CACHE_KEY,
-                data,
-                ttl=ttl,
-                collection=self._snapshot_cache_collection,
-            )
-            logger.debug(
-                "ConfigReader with id: %s wrote %d configs to snapshot cache",
-                self._identifier,
-                len(models),
-            )
-        except Exception:
-            logger.debug(
-                "ConfigReader with id: %s snapshot cache write failed",
-                self._identifier,
-                exc_info=True,
-            )
+        data = {"models": [m.model_dump() for m in models]}
+        ttl = self._environment_variables.config_cache_timeout_seconds
+        await self._snapshot_cache_store.put(
+            self._SNAPSHOT_CACHE_KEY,
+            data,
+            ttl=ttl,
+            collection=self._snapshot_cache_collection,
+        )
+        logger.info(
+            "ConfigReader with id: %s wrote %d configs to snapshot cache",
+            self._identifier,
+            len(models),
+        )
 
     async def _read_configs_with_retry(
         self,

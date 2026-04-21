@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from key_value.aio.errors.store import StoreSetupError
 from key_value.aio.stores.mongodb import MongoDBStore
 
 from languagemodelcommon.utilities.cache.snapshot_cache_store import (
     FileStore,
     MemoryStoreWithContextManager,
+    ValidatingMongoDBStore,
     create_cache_store,
 )
 
@@ -33,15 +35,16 @@ class TestCreateCacheStoreMemory:
 
 
 class TestCreateCacheStoreMongo:
-    """cache_type='mongo' returns MongoDBStore."""
+    """cache_type='mongo' returns ValidatingMongoDBStore."""
 
-    def test_returns_mongodb_store(self) -> None:
+    def test_returns_validating_mongodb_store(self) -> None:
         store = create_cache_store(
             cache_type="mongo",
             mongo_url="mongodb://localhost:27017",
             mongo_db_name="test_db",
             collection="test_cache",
         )
+        assert isinstance(store, ValidatingMongoDBStore)
         assert isinstance(store, MongoDBStore)
 
     def test_custom_collection(self) -> None:
@@ -50,12 +53,25 @@ class TestCreateCacheStoreMongo:
             mongo_url="mongodb://localhost:27017",
             collection="custom_collection",
         )
-        assert isinstance(store, MongoDBStore)
+        assert isinstance(store, ValidatingMongoDBStore)
         assert store.default_collection == "custom_collection"
 
     def test_raises_without_url(self) -> None:
         with pytest.raises(ValueError, match="no MongoDB URL"):
             create_cache_store(cache_type="mongo", mongo_url=None)
+
+    @pytest.mark.asyncio
+    async def test_aenter_raises_on_unreachable_mongo(self) -> None:
+        """ValidatingMongoDBStore raises when MongoDB is unreachable,
+        instead of silently falling back."""
+        store = create_cache_store(
+            cache_type="mongo",
+            mongo_url="mongodb://unreachable-host:27017",
+            mongo_db_name="test_db",
+            collection="test_cache",
+        )
+        with pytest.raises(StoreSetupError, match="Snapshot cache failed to connect"):
+            await store.__aenter__()
 
 
 class TestCreateCacheStoreFile:
