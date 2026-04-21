@@ -102,9 +102,9 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             BaseStore,
             lambda c: create_cache_store(
-                enabled=c.resolve(
+                cache_type=c.resolve(
                     LanguageModelCommonEnvironmentVariables
-                ).enable_snapshot_cache,
+                ).snapshot_cache_type,
                 mongo_url=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mongo_llm_storage_uri,

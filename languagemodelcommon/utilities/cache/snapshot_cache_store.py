@@ -1,21 +1,22 @@
 """Factory for creating async key-value cache stores for parsed snapshots.
 
-Provides a ``ResilientCacheStore`` that wraps a primary store (MongoDB) with
-automatic fallback to in-memory storage.  If the primary fails to connect or
-any operation throws, the store silently degrades — consumers never see errors
-from the cache layer.
+The ``SNAPSHOT_CACHE_TYPE`` env var selects the backend:
 
-All returned stores support ``async with store:`` / ``await store.get(...)``
-/ ``await store.put(...)`` uniformly regardless of the underlying backend.
+- ``mongo``  — ``MongoDBStore``, fails if MongoDB is unreachable
+- ``memory`` — in-process ``MemoryStore``, no persistence across restarts
+- ``file``   — JSON file-backed store, persists locally without MongoDB
+
+Both ``MongoDBStore`` and ``MemoryStore`` are from ``py-key-value-aio``.
+All returned stores support ``async with`` / ``get`` / ``put`` uniformly.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Mapping, SupportsFloat
 
-from key_value.aio.stores.base import BaseStore
-from key_value.aio.stores.base import BaseContextManagerStore
 from key_value.aio.stores.memory import MemoryStore
 from key_value.aio.stores.mongodb import MongoDBStore
 
@@ -24,68 +25,56 @@ from languagemodelcommon.utilities.mongo_url_utils import MongoUrlHelpers
 logger = logging.getLogger(__name__)
 
 
-class ResilientCacheStore(MemoryStore):
-    """A cache store that delegates to a primary backend with graceful fallback.
+class MemoryStoreWithContextManager(MemoryStore):
+    """MemoryStore with async context manager support for consistent interface."""
 
-    On ``__aenter__``, attempts to connect the primary store (e.g. MongoDB).
-    If it fails, logs a warning and operates as an in-memory store.
-    On ``get``/``put``, delegates to the primary; on error, falls back to
-    the in-memory layer.  Consumers never see exceptions from this store.
+    async def __aenter__(self) -> "MemoryStoreWithContextManager":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        pass
+
+
+class FileStore(MemoryStoreWithContextManager):
+    """A file-backed key-value store that loads/saves JSON on open/close.
+
+    On ``__aenter__``, reads existing data from the file into memory.
+    On ``put``/``delete``, persists the change to disk immediately.
+    Between open and close, all reads run against the in-memory store.
     """
 
     def __init__(
         self,
         *,
-        primary: BaseStore | None = None,
+        file_path: str | Path,
         default_collection: str = "snapshots",
     ) -> None:
         super().__init__(default_collection=default_collection)
-        self._primary = primary
-        self._primary_available = False
+        self._file_path = Path(file_path)
+        # Shadow index: tracks {collection: {key: value}} for serialization.
+        # MemoryStore internals are opaque; this is the source of truth for disk.
+        self._shadow: dict[str, dict[str, dict[str, Any]]] = {}
 
-    async def __aenter__(self) -> "ResilientCacheStore":
-        if self._primary is not None and isinstance(self._primary, BaseContextManagerStore):
+    async def __aenter__(self) -> "FileStore":
+        if self._file_path.is_file():
             try:
-                await self._primary.__aenter__()
-                self._primary_available = True
-                logger.info("Snapshot cache: primary store connected")
-            except Exception:
+                data = json.loads(self._file_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for collection, entries in data.items():
+                        if isinstance(entries, dict):
+                            for key, value in entries.items():
+                                await self.put(key, value, collection=collection)
+                logger.info("FileStore loaded from %s", self._file_path)
+            except (json.JSONDecodeError, OSError):
                 logger.warning(
-                    "Snapshot cache: primary store failed to connect; "
-                    "falling back to in-memory",
+                    "FileStore: failed to read %s; starting empty",
+                    self._file_path,
                     exc_info=True,
                 )
-                self._primary_available = False
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        if self._primary_available and isinstance(self._primary, BaseContextManagerStore):
-            try:
-                await self._primary.__aexit__(None, None, None)
-            except Exception:
-                logger.debug(
-                    "Snapshot cache: error closing primary store", exc_info=True
-                )
-        self._primary_available = False
-
-    async def get(
-        self,
-        key: str,
-        *,
-        collection: str | None = None,
-    ) -> dict[str, Any] | None:
-        if self._primary_available and self._primary is not None:
-            try:
-                result: dict[str, Any] | None = await self._primary.get(key, collection=collection)
-                return result
-            except Exception:
-                logger.debug(
-                    "Snapshot cache: primary get failed for key=%s; falling back",
-                    key,
-                    exc_info=True,
-                )
-        result = await super().get(key, collection=collection)
-        return result
+        self._flush_to_disk()
 
     async def put(
         self,
@@ -95,18 +84,10 @@ class ResilientCacheStore(MemoryStore):
         collection: str | None = None,
         ttl: SupportsFloat | None = None,
     ) -> None:
-        # Always store in memory as local fallback
+        resolved_collection = collection or self.default_collection
         await super().put(key, value, collection=collection, ttl=ttl)
-        # Also store in primary if available
-        if self._primary_available and self._primary is not None:
-            try:
-                await self._primary.put(key, value, collection=collection, ttl=ttl)
-            except Exception:
-                logger.debug(
-                    "Snapshot cache: primary put failed for key=%s",
-                    key,
-                    exc_info=True,
-                )
+        self._shadow.setdefault(resolved_collection, {})[key] = dict(value)
+        self._flush_to_disk()
 
     async def delete(
         self,
@@ -114,57 +95,82 @@ class ResilientCacheStore(MemoryStore):
         *,
         collection: str | None = None,
     ) -> bool:
-        deleted: bool = await super().delete(key, collection=collection)
-        if self._primary_available and self._primary is not None:
-            try:
-                await self._primary.delete(key, collection=collection)
-            except Exception:
-                logger.debug(
-                    "Snapshot cache: primary delete failed for key=%s",
-                    key,
-                    exc_info=True,
-                )
-        return deleted
+        resolved_collection = collection or self.default_collection
+        result: bool = await super().delete(key, collection=collection)
+        coll_data = self._shadow.get(resolved_collection)
+        if coll_data:
+            coll_data.pop(key, None)
+        self._flush_to_disk()
+        return result
+
+    def _flush_to_disk(self) -> None:
+        """Write shadow index to the JSON file."""
+        try:
+            self._file_path.parent.mkdir(parents=True, exist_ok=True)
+            self._file_path.write_text(
+                json.dumps(self._shadow, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.debug(
+                "FileStore: failed to flush to %s", self._file_path, exc_info=True
+            )
 
 
 def create_cache_store(
     *,
-    enabled: bool = False,
+    cache_type: str = "memory",
     mongo_url: str | None = None,
     mongo_db_name: str = "language_model_gateway",
     mongo_username: str | None = None,
     mongo_password: str | None = None,
     collection: str = "snapshots",
-) -> ResilientCacheStore:
-    """Create a resilient cache store based on configuration.
+    file_path: str | None = None,
+) -> MongoDBStore | FileStore | MemoryStoreWithContextManager:
+    """Create a cache store based on the specified type.
 
-    When ``enabled`` is True and a ``mongo_url`` is provided, the store
-    delegates to MongoDB as the primary backend.  If MongoDB is unreachable
-    at startup or during any operation, the store silently falls back to
-    in-memory storage.
-
-    Returns a ``ResilientCacheStore`` that always supports ``async with``
-    and never raises on cache operations.
+    Args:
+        cache_type: Backend type — ``'mongo'``, ``'file'``, or ``'memory'``.
+        mongo_url: MongoDB connection URL (required when cache_type='mongo').
+        mongo_db_name: MongoDB database name.
+        mongo_username: MongoDB username.
+        mongo_password: MongoDB password.
+        collection: Collection/namespace for cache entries.
+        file_path: Path for JSON file store (required when cache_type='file').
     """
-    primary: BaseStore | None = None
+    cache_type = cache_type.strip().lower()
 
-    if enabled and mongo_url:
+    if cache_type == "mongo":
+        if not mongo_url:
+            raise ValueError(
+                "SNAPSHOT_CACHE_TYPE is 'mongo' but no MongoDB URL is configured"
+            )
         connection_url = MongoUrlHelpers.add_credentials_to_mongo_url(
             mongo_url=mongo_url,
             username=mongo_username,
             password=mongo_password,
         )
         logger.info(
-            "Snapshot cache configured with MongoDB primary: db=%s, collection=%s",
+            "Snapshot cache using MongoDB: db=%s, collection=%s",
             mongo_db_name,
             collection,
         )
-        primary = MongoDBStore(
+        return MongoDBStore(
             url=connection_url,
             db_name=mongo_db_name,
             default_collection=collection,
         )
-    else:
-        logger.info("Snapshot cache: no primary configured; using in-memory only")
 
-    return ResilientCacheStore(primary=primary, default_collection=collection)
+    if cache_type == "file":
+        resolved_path = file_path or f"/tmp/snapshot_cache/{collection}.json"  # noqa: S108
+        logger.info("Snapshot cache using file: %s", resolved_path)
+        return FileStore(file_path=resolved_path, default_collection=collection)
+
+    # Default: in-memory (no persistence)
+    if cache_type != "memory":
+        logger.warning(
+            "Unknown SNAPSHOT_CACHE_TYPE '%s'; defaulting to memory",
+            cache_type,
+        )
+    logger.info("Snapshot cache using in-memory store")
+    return MemoryStoreWithContextManager(default_collection=collection)

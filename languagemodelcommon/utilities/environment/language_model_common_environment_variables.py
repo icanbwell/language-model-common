@@ -137,8 +137,19 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
 
     @property
-    def enable_snapshot_cache(self) -> bool:
-        return self.str2bool(os.environ.get("ENABLE_SNAPSHOT_CACHE", "false"))
+    def snapshot_cache_type(self) -> str:
+        """Cache backend type: 'mongo', 'memory', or '' (disabled).
+
+        Replaces the old ENABLE_SNAPSHOT_CACHE boolean.
+        Falls back to ENABLE_SNAPSHOT_CACHE for backward compatibility.
+        """
+        explicit = os.environ.get("SNAPSHOT_CACHE_TYPE", "").strip().lower()
+        if explicit:
+            return explicit
+        # Backward compat: ENABLE_SNAPSHOT_CACHE=true → "mongo"
+        if self.str2bool(os.environ.get("ENABLE_SNAPSHOT_CACHE", "false")):
+            return "mongo"
+        return "memory"
 
     @property
     def snapshot_cache_collection_name(self) -> str:
