@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Literal, Tuple, Type
 
 from langchain_core.tools import BaseTool
@@ -21,9 +22,15 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
+from languagemodelcommon.mcp.tool_catalog import (
+    ToolCatalog,
+    ToolResolverProtocol,
+    ServerRegistration,
+)
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.MCP)
@@ -63,6 +70,32 @@ class SearchToolsTool(BaseTool):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    @staticmethod
+    def _query_matches_server(query: str, server: ServerRegistration) -> bool:
+        """Check whether query terms overlap with the server's metadata.
+
+        Used to decide whether to surface a login link for a server that
+        requires authentication.  Without tool schemas loaded we can only
+        match against the server name, category, and description.
+        """
+        query_tokens = set(_WORD_RE.findall(query.lower()))
+        if not query_tokens:
+            return True  # empty query matches everything
+
+        corpus_parts: list[str] = [server.server_name]
+        if server.category:
+            corpus_parts.append(server.category)
+        if server.agent_config:
+            if server.agent_config.description:
+                corpus_parts.append(server.agent_config.description)
+            if server.agent_config.name:
+                corpus_parts.append(server.agent_config.name)
+            if server.agent_config.display_name:
+                corpus_parts.append(server.agent_config.display_name)
+
+        corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
+        return bool(query_tokens & corpus_tokens)
+
     def _run(self, query: str, category: str) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
@@ -78,22 +111,23 @@ class SearchToolsTool(BaseTool):
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
                 except AuthorizationNeededException as e:
-                    # Don't abort the entire search — the user may not
-                    # need this server.  The auth prompt will surface
-                    # naturally if call_tool targets it later.
-                    # Preserve the exception message which contains
-                    # actionable login links built by the auth layer.
+                    # Don't abort the entire search — the auth prompt
+                    # will surface naturally if call_tool targets it
+                    # later.  Only show login links when the query is
+                    # relevant to this server so unrelated servers
+                    # don't clutter the response.
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
                     )
-                    if e.message:
-                        resolution_errors.append(e.message)
-                    else:
-                        error_msg = (
-                            f"{server.server_name} requires authentication "
-                            f"(url: {server_url})"
-                        )
-                        resolution_errors.append(error_msg)
+                    if self._query_matches_server(query, server):
+                        if e.message:
+                            resolution_errors.append(e.message)
+                        else:
+                            error_msg = (
+                                f"{server.server_name} requires authentication "
+                                f"(url: {server_url})"
+                            )
+                            resolution_errors.append(error_msg)
                     logger.info(
                         "Server %s at %s requires auth during search, skipping: %s",
                         server.server_name,
