@@ -77,9 +77,24 @@ class SearchToolsTool(BaseTool):
             for server in unresolved:
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
-                except AuthorizationNeededException:
-                    # Re-raise so the user sees login links for this server
-                    raise
+                except AuthorizationNeededException as e:
+                    # Don't abort the entire search — the user may not
+                    # need this server.  The auth prompt will surface
+                    # naturally if call_tool targets it later.
+                    server_url = (
+                        server.agent_config.url if server.agent_config else "unknown"
+                    )
+                    error_msg = (
+                        f"{server.server_name} requires authentication "
+                        f"(url: {server_url})"
+                    )
+                    resolution_errors.append(error_msg)
+                    logger.info(
+                        "Server %s at %s requires auth during search, skipping: %s",
+                        server.server_name,
+                        server_url,
+                        ExceptionLogger.format_exception_message(e),
+                    )
                 except Exception as e:
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
