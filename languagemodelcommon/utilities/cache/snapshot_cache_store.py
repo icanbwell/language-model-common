@@ -162,7 +162,7 @@ def create_cache_store(
         )
 
     if cache_type == "file":
-        resolved_path = file_path or f"/tmp/snapshot_cache/{collection}.json"  # noqa: S108
+        resolved_path = file_path or f"/tmp/snapshot_cache/{collection}.json"  # noqa: S108  # nosec B108
         logger.info("Snapshot cache using file: %s", resolved_path)
         return FileStore(file_path=resolved_path, default_collection=collection)
 

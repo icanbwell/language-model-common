@@ -33,7 +33,7 @@ from languagemodelcommon.image_generation.providers.image_generation_provider im
 )
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
-from key_value.aio.stores.base import BaseStore
+from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
@@ -100,7 +100,7 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            BaseStore,
+            KeyValueBaseStore,
             lambda c: create_cache_store(
                 cache_type=c.resolve(
                     LanguageModelCommonEnvironmentVariables
@@ -133,7 +133,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 mcp_json_reader=c.resolve(McpJsonReader),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
-                snapshot_cache_store=c.resolve(BaseStore),
+                snapshot_cache_store=c.resolve(KeyValueBaseStore),
             ),
         )
         container.singleton(

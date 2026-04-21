@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -60,7 +61,7 @@ class TestCreateCacheStoreMongo:
 class TestCreateCacheStoreFile:
     """cache_type='file' returns FileStore."""
 
-    def test_returns_file_store(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_returns_file_store(self, tmp_path: Path) -> None:
         store = create_cache_store(
             cache_type="file",
             file_path=str(tmp_path / "cache.json"),
@@ -98,7 +99,7 @@ class TestFileStore:
     """FileStore persists data to a JSON file."""
 
     @pytest.mark.asyncio
-    async def test_put_and_get(self, tmp_path: pytest.TempPathFactory) -> None:
+    async def test_put_and_get(self, tmp_path: Path) -> None:
         path = tmp_path / "cache.json"
         async with FileStore(file_path=path) as store:
             await store.put("key1", {"data": "hello"})
@@ -107,7 +108,7 @@ class TestFileStore:
             assert result["data"] == "hello"
 
     @pytest.mark.asyncio
-    async def test_persists_to_disk(self, tmp_path: pytest.TempPathFactory) -> None:
+    async def test_persists_to_disk(self, tmp_path: Path) -> None:
         path = tmp_path / "cache.json"
         async with FileStore(file_path=path) as store:
             await store.put("key1", {"value": 42})
@@ -117,7 +118,7 @@ class TestFileStore:
         assert "key1" in data.get("snapshots", {})
 
     @pytest.mark.asyncio
-    async def test_restores_from_disk(self, tmp_path: pytest.TempPathFactory) -> None:
+    async def test_restores_from_disk(self, tmp_path: Path) -> None:
         path = tmp_path / "cache.json"
 
         # Write data in first session
@@ -131,14 +132,14 @@ class TestFileStore:
             assert result["persisted"] is True
 
     @pytest.mark.asyncio
-    async def test_handles_missing_file(self, tmp_path: pytest.TempPathFactory) -> None:
+    async def test_handles_missing_file(self, tmp_path: Path) -> None:
         path = tmp_path / "nonexistent" / "cache.json"
         async with FileStore(file_path=path) as store:
             result = await store.get("key1")
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_handles_corrupt_file(self, tmp_path: pytest.TempPathFactory) -> None:
+    async def test_handles_corrupt_file(self, tmp_path: Path) -> None:
         path = tmp_path / "cache.json"
         path.write_text("not valid json{{{", encoding="utf-8")
         async with FileStore(file_path=path) as store:

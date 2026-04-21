@@ -275,3 +275,178 @@ async def test_inline_prompt_content_still_works(
 
     assert configs[0].system_prompts is not None
     assert configs[0].system_prompts[0].content == "You are a helpful assistant."
+
+
+# ── Snapshot cache tests ────────────────────────────────────────────
+
+
+def _make_snapshot_store_mock() -> AsyncMock:
+    """Create an AsyncMock that quacks like key_value BaseStore."""
+    store = AsyncMock()
+    store.get = AsyncMock(return_value=None)
+    store.put = AsyncMock()
+    return store
+
+
+_SAMPLE_MODEL = ChatModelConfig(id="snap-1", name="SnapModel", description="cached")
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_hit_short_circuits_disk(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When the snapshot store returns data, disk/GitHub is never consulted."""
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [_SAMPLE_MODEL.model_dump()],
+    }
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+
+    with patch(
+        "languagemodelcommon.configs.config_reader.config_reader.FileConfigReader"
+    ) as fc_mock:
+        result = await reader.read_model_configs_async()
+        fc_mock.assert_not_called()
+
+    assert len(result) == 1
+    assert result[0].name == "SnapModel"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_returns_none_falls_through(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When the snapshot store returns None, configs are read from disk."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = None
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+    result = await reader.read_model_configs_async()
+    assert result[0].name == "DiskModel"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_get_error_falls_through(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """If the snapshot store .get() raises, config loading still succeeds."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.side_effect = ConnectionError("MongoDB unavailable")
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+    result = await reader.read_model_configs_async()
+    assert result[0].name == "DiskModel"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_deserialization_error_falls_through(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """If stored data is corrupt, config loading still succeeds from disk."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {"models": [{"bad": "data"}]}
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+    result = await reader.read_model_configs_async()
+    assert result[0].name == "DiskModel"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_put_error_does_not_break_config_read(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """If snapshot .put() raises, configs are still returned to the caller."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = None  # miss → read from disk
+    snapshot_store.put.side_effect = TimeoutError("MongoDB write timeout")
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
+    )
+    result = await reader.read_model_configs_async()
+    assert result[0].name == "DiskModel"
+    # put was attempted and failed silently
+    snapshot_store.put.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cache_none_store_skips_entirely(
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When no snapshot_cache_store is provided, cache logic is a no-op."""
+    (tmp_path / "model.json").write_text(
+        '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=None,
+    )
+    result = await reader.read_model_configs_async()
+    assert result[0].name == "DiskModel"
