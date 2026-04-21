@@ -81,14 +81,19 @@ class SearchToolsTool(BaseTool):
                     # Don't abort the entire search — the user may not
                     # need this server.  The auth prompt will surface
                     # naturally if call_tool targets it later.
+                    # Preserve the exception message which contains
+                    # actionable login links built by the auth layer.
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
                     )
-                    error_msg = (
-                        f"{server.server_name} requires authentication "
-                        f"(url: {server_url})"
-                    )
-                    resolution_errors.append(error_msg)
+                    if e.message:
+                        resolution_errors.append(e.message)
+                    else:
+                        error_msg = (
+                            f"{server.server_name} requires authentication "
+                            f"(url: {server_url})"
+                        )
+                        resolution_errors.append(error_msg)
                     logger.info(
                         "Server %s at %s requires auth during search, skipping: %s",
                         server.server_name,
