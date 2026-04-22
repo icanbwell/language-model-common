@@ -103,25 +103,33 @@ class SearchToolsTool(BaseTool):
         )
 
     async def _arun(self, query: str, category: str) -> Tuple[str, str]:
-        # Lazily resolve any unresolved servers matching the category
+        # Lazily resolve any unresolved servers matching the category.
+        # OAuth servers are only resolved when the search query matches
+        # their metadata.  When the query matches and auth is needed,
+        # the exception is re-raised so the gateway renders a login
+        # prompt — this is the moment the user has expressed intent to
+        # use that server's tools.
         resolution_errors: list[str] = []
-        # Track auth exceptions for query-matching servers so we can
-        # re-raise them when no tools are found, letting the gateway
-        # render clickable login links directly to the user.
         auth_exceptions: list[AuthorizationNeededException] = []
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
+                # Skip OAuth servers whose metadata doesn't match the
+                # query — no point attempting auth for an unrelated search.
+                if (
+                    server.agent_config.oauth is not None
+                    and not self._query_matches_server(query, server)
+                ):
+                    continue
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
                 except AuthorizationNeededException as e:
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
                     )
-                    if self._query_matches_server(query, server):
-                        auth_exceptions.append(e)
+                    auth_exceptions.append(e)
                     logger.info(
-                        "Server %s at %s requires auth during search, skipping: %s",
+                        "Server %s at %s requires auth during search: %s",
                         server.server_name,
                         server_url,
                         ExceptionLogger.format_exception_message(e),
@@ -142,6 +150,11 @@ class SearchToolsTool(BaseTool):
                         server_url,
                         ExceptionLogger.format_exception_message(e),
                     )
+
+        # If the matched server needs auth, raise immediately so the
+        # gateway can render the login prompt to the user.
+        if auth_exceptions:
+            raise auth_exceptions[0]
 
         try:
             results = self.catalog.search(
@@ -167,13 +180,6 @@ class SearchToolsTool(BaseTool):
                     f"Try searching with different keywords."
                 )
                 return no_match_text, no_match_text
-            # When a query-matching server needs authentication and we
-            # have no tools to show, re-raise the exception so the
-            # gateway renders clickable login links directly to the
-            # user instead of passing them through the LLM (which
-            # strips the URLs).
-            if auth_exceptions:
-                raise auth_exceptions[0]
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
                 error_text = (

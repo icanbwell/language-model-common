@@ -467,6 +467,7 @@ class ToolCatalog:
                     "description": reg.category or reg.server_name,
                     "tool_count": 0,
                     "resolved": reg.resolved,
+                    "requires_auth": reg.agent_config.oauth is not None,
                 }
 
         # Include resolved tool counts

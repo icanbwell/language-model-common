@@ -57,13 +57,19 @@ class ToolDiscoveryMiddleware(AgentMiddleware):
 
     @classmethod
     def _build_tools_prompt(cls, categories: list[dict[str, Any]]) -> str:
-        category_lines = "\n".join(
-            f"  <category>\n"
-            f"    <name>{c['name']}</name>\n"
-            f"    <description>{c['description']}</description>\n"
-            f"  </category>"
-            for c in categories
-        )
+        parts: list[str] = []
+        for c in categories:
+            auth_tag = ""
+            if c.get("requires_auth"):
+                auth_tag = "\n    <requires_auth>true</requires_auth>"
+            parts.append(
+                f"  <category>\n"
+                f"    <name>{c['name']}</name>\n"
+                f"    <description>{c['description']}</description>"
+                f"{auth_tag}\n"
+                f"  </category>"
+            )
+        category_lines = "\n".join(parts)
 
         return (
             "You have access to a tool discovery system with the following "
