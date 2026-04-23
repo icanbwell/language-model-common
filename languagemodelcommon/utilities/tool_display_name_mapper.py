@@ -3,14 +3,14 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-from langchain_ai_skills_framework.tools.load_skill_tool import LoadSkillTool
-from langchain_ai_skills_framework.tools.read_skill_resource_tool import (
+from langchain_ai_skills_framework.langchain.tools.load_skill_tool import LoadSkillTool
+from langchain_ai_skills_framework.langchain.tools.read_skill_resource_tool import (
     ReadSkillResourceTool,
 )
-from langchain_ai_skills_framework.tools.run_python_script_tool import (
+from langchain_ai_skills_framework.langchain.tools.run_python_script_tool import (
     RunPythonScriptTool,
 )
-from langchain_ai_skills_framework.tools.run_skill_script_tool import RunSkillScriptTool
+from langchain_ai_skills_framework.langchain.tools.run_skill_script_tool import RunSkillScriptTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.text_humanizer import Humanizer
 
