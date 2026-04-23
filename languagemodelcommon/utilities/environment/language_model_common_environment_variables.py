@@ -137,6 +137,45 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
 
     @property
+    def snapshot_cache_type(self) -> str:
+        """Cache backend type: 'mongo', 'memory', or '' (disabled).
+
+        Replaces the old ENABLE_SNAPSHOT_CACHE boolean.
+        Falls back to ENABLE_SNAPSHOT_CACHE for backward compatibility.
+        """
+        explicit = os.environ.get("SNAPSHOT_CACHE_TYPE", "").strip().lower()
+        if explicit:
+            return explicit
+        # Backward compat: ENABLE_SNAPSHOT_CACHE=true → "mongo"
+        if self.str2bool(os.environ.get("ENABLE_SNAPSHOT_CACHE", "false")):
+            return "mongo"
+        return "memory"
+
+    @property
+    def snapshot_cache_collection_name(self) -> str:
+        return os.environ.get("SNAPSHOT_CACHE_COLLECTION_NAME", "snapshot_cache")
+
+    @property
+    def snapshot_cache_ttl_seconds(self) -> int:
+        """TTL for snapshot cache entries in seconds.
+
+        Defaults to 3600 (1 hour).  This is independent of
+        ``config_cache_timeout_seconds`` which controls the in-memory
+        cache.  The snapshot cache should persist long enough to
+        survive restarts and new worker processes.
+        """
+        return int(os.environ.get("SNAPSHOT_CACHE_TTL_SECONDS", "3600"))
+
+    @property
+    def snapshot_cache_model_configs_collection(self) -> str | None:
+        """Optional separate collection for model config snapshots.
+
+        When set, ConfigReader stores its snapshot in this collection
+        instead of the store's default collection.
+        """
+        return os.environ.get("SNAPSHOT_CACHE_MODEL_CONFIGS_COLLECTION") or None
+
+    @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
 
@@ -165,12 +204,17 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("MONGO_DB_DCR_COLLECTION_NAME", "dcr_registrations")
 
     @property
-    def mcp_tools_metadata_cache_timeout_seconds(self) -> int:
-        return int(os.environ.get("MCP_TOOLS_METADATA_CACHE_TIMEOUT_SECONDS", 3600))
-
-    @property
     def mcp_tools_metadata_cache_ttl_seconds(self) -> int:
-        return int(os.environ.get("MCP_TOOLS_METADATA_CACHE_TTL_SECONDS", 3600))
+        """TTL for MCP tool list cache entries in seconds.
+
+        Falls back to MCP_TOOLS_METADATA_CACHE_TIMEOUT_SECONDS for
+        backward compatibility.  Defaults to 3600 (1 hour).
+        """
+        return int(
+            os.environ.get("MCP_TOOLS_METADATA_CACHE_TTL_SECONDS")
+            or os.environ.get("MCP_TOOLS_METADATA_CACHE_TIMEOUT_SECONDS")
+            or 3600
+        )
 
     @property
     def tool_output_token_limit(self) -> Optional[int]:

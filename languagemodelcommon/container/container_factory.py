@@ -33,8 +33,13 @@ from languagemodelcommon.image_generation.providers.image_generation_provider im
 )
 from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
+from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
+
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
+)
+from languagemodelcommon.utilities.cache.snapshot_cache_store import (
+    create_cache_store,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -95,6 +100,30 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
+            KeyValueBaseStore,
+            lambda c: create_cache_store(
+                cache_type=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).snapshot_cache_type,
+                mongo_url=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_uri,
+                mongo_db_name=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_name
+                or "language_model_gateway",
+                mongo_username=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_username,
+                mongo_password=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_password,
+                collection=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).snapshot_cache_collection_name,
+            ),
+        )
+        container.singleton(
             ConfigReader,
             lambda c: ConfigReader(
                 cache=c.resolve(ConfigExpiringCache),
@@ -104,6 +133,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 mcp_json_reader=c.resolve(McpJsonReader),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
+                snapshot_cache_store=c.resolve(KeyValueBaseStore),
             ),
         )
         container.singleton(

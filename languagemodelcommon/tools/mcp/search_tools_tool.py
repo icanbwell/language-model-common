@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Literal, Tuple, Type
 
 from langchain_core.tools import BaseTool
@@ -21,9 +22,15 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
+from languagemodelcommon.mcp.tool_catalog import (
+    ToolCatalog,
+    ToolResolverProtocol,
+    ServerRegistration,
+)
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.MCP)
@@ -63,6 +70,32 @@ class SearchToolsTool(BaseTool):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    @staticmethod
+    def _query_matches_server(query: str, server: ServerRegistration) -> bool:
+        """Check whether query terms overlap with the server's metadata.
+
+        Used to decide whether to surface a login link for a server that
+        requires authentication.  Without tool schemas loaded we can only
+        match against the server name, category, and description.
+        """
+        query_tokens = set(_WORD_RE.findall(query.lower()))
+        if not query_tokens:
+            return True  # empty query matches everything
+
+        corpus_parts: list[str] = [server.server_name]
+        if server.category:
+            corpus_parts.append(server.category)
+        if server.agent_config:
+            if server.agent_config.description:
+                corpus_parts.append(server.agent_config.description)
+            if server.agent_config.name:
+                corpus_parts.append(server.agent_config.name)
+            if server.agent_config.display_name:
+                corpus_parts.append(server.agent_config.display_name)
+
+        corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
+        return bool(query_tokens & corpus_tokens)
+
     def _run(self, query: str, category: str) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
@@ -70,16 +103,37 @@ class SearchToolsTool(BaseTool):
         )
 
     async def _arun(self, query: str, category: str) -> Tuple[str, str]:
-        # Lazily resolve any unresolved servers matching the category
+        # Lazily resolve any unresolved servers matching the category.
+        # OAuth servers are only resolved when the search query matches
+        # their metadata.  When the query matches and auth is needed,
+        # the exception is re-raised so the gateway renders a login
+        # prompt — this is the moment the user has expressed intent to
+        # use that server's tools.
         resolution_errors: list[str] = []
+        auth_exceptions: list[AuthorizationNeededException] = []
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
+                # Skip OAuth servers whose metadata doesn't match the
+                # query — no point attempting auth for an unrelated search.
+                if (
+                    server.agent_config.oauth is not None
+                    and not self._query_matches_server(query, server)
+                ):
+                    continue
                 try:
                     await self.catalog.resolve_server(server.server_name, self.resolver)
-                except AuthorizationNeededException:
-                    # Re-raise so the user sees login links for this server
-                    raise
+                except AuthorizationNeededException as e:
+                    server_url = (
+                        server.agent_config.url if server.agent_config else "unknown"
+                    )
+                    auth_exceptions.append(e)
+                    logger.info(
+                        "Server %s at %s requires auth during search: %s",
+                        server.server_name,
+                        server_url,
+                        ExceptionLogger.format_exception_message(e),
+                    )
                 except Exception as e:
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"
@@ -96,6 +150,11 @@ class SearchToolsTool(BaseTool):
                         server_url,
                         ExceptionLogger.format_exception_message(e),
                     )
+
+        # If the matched server needs auth, raise immediately so the
+        # gateway can render the login prompt to the user.
+        if auth_exceptions:
+            raise auth_exceptions[0]
 
         try:
             results = self.catalog.search(

@@ -19,6 +19,8 @@ from languagemodelcommon.configs.schemas.config_schema import (
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
+from key_value.aio.stores.base import BaseStore
+
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
@@ -41,6 +43,7 @@ class ConfigReader:
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
         mcp_json_reader: McpJsonReader | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
+        snapshot_cache_store: BaseStore | None = None,
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -59,6 +62,10 @@ class ConfigReader:
         )
         self._mcp_json_reader = mcp_json_reader or McpJsonReader(
             environment_variables=self._environment_variables
+        )
+        self._snapshot_cache_store = snapshot_cache_store
+        self._snapshot_cache_collection = (
+            self._environment_variables.snapshot_cache_model_configs_collection
         )
 
     async def read_model_configs_async(
@@ -110,6 +117,12 @@ class ConfigReader:
                 )
                 return cached_configs
 
+            # Check MongoDB snapshot cache before hitting filesystem/GitHub
+            models = await self._read_from_snapshot_cache()
+            if models:
+                await self._cache.set(models)
+                return models
+
             default_config_path = self._resolve_default_config_path(config_path)
             logger.info(
                 "ConfigReader with id: %s reading model configurations from %s",
@@ -143,7 +156,56 @@ class ConfigReader:
                 return models
 
             await self._cache.set(models)
+            await self._write_to_snapshot_cache(models)
             return models
+
+    _SNAPSHOT_CACHE_KEY = "model_configs"
+
+    async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
+        """Load model configs from the snapshot cache.
+
+        Returns ``None`` when the cache has no entry for the key.
+        Raises on store or deserialization errors so that a misconfigured
+        cache backend surfaces immediately (fail-fast).
+        """
+        if not self._snapshot_cache_store:
+            return None
+        data = await self._snapshot_cache_store.get(
+            self._SNAPSHOT_CACHE_KEY,
+            collection=self._snapshot_cache_collection,
+        )
+        if data is None:
+            return None
+        models_data: list[dict[str, Any]] = data.get("models", [])
+        models = [ChatModelConfig.model_validate(d) for d in models_data]
+        logger.info(
+            "ConfigReader with id: %s loaded %d configs from snapshot cache",
+            self._identifier,
+            len(models),
+        )
+        return models if models else None
+
+    async def _write_to_snapshot_cache(self, models: List[ChatModelConfig]) -> None:
+        """Store parsed model configs in the snapshot cache.
+
+        Raises on write errors so that a misconfigured cache backend
+        surfaces immediately (fail-fast).
+        """
+        if not self._snapshot_cache_store:
+            return
+        data = {"models": [m.model_dump() for m in models]}
+        ttl = self._environment_variables.snapshot_cache_ttl_seconds
+        await self._snapshot_cache_store.put(
+            self._SNAPSHOT_CACHE_KEY,
+            data,
+            ttl=ttl,
+            collection=self._snapshot_cache_collection,
+        )
+        logger.info(
+            "ConfigReader with id: %s wrote %d configs to snapshot cache",
+            self._identifier,
+            len(models),
+        )
 
     async def _read_configs_with_retry(
         self,
@@ -464,4 +526,12 @@ class ConfigReader:
 
     async def clear_cache(self) -> None:
         await self._cache.clear()
-        logger.info("ConfigReader with id: %s cleared cache", self._identifier)
+        if self._snapshot_cache_store:
+            await self._snapshot_cache_store.delete(
+                self._SNAPSHOT_CACHE_KEY,
+                collection=self._snapshot_cache_collection,
+            )
+        logger.info(
+            "ConfigReader with id: %s cleared in-memory and snapshot caches",
+            self._identifier,
+        )

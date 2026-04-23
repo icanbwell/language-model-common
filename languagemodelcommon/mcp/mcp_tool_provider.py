@@ -150,7 +150,11 @@ class MCPToolProvider:
             )
 
         self.auth_server_metadata_discovery = auth_server_metadata_discovery
-        self.tool_list_cache = ToolListCache(ttl_seconds=300.0)
+        self.tool_list_cache = ToolListCache(
+            ttl_seconds=float(
+                environment_variables.mcp_tools_metadata_cache_ttl_seconds
+            ),
+        )
 
     @staticmethod
     def get_httpx_async_client(

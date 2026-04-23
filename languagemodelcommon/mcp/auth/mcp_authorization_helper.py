@@ -29,3 +29,20 @@ class McpAuthorizationHelper:
             return match.group(1) or match.group(2)
 
         return None
+
+    @staticmethod
+    def build_www_authenticate_login_message(
+        *, resource_metadata_url: str | None, tool_url: str
+    ) -> str:
+        """Build a user-facing login message for MCP tools that return
+        WWW-Authenticate headers (RFC 9728).
+
+        This is the single place where WWW-Authenticate-based login
+        messages are constructed.
+        """
+        if resource_metadata_url:
+            return (
+                f"Please [login]({resource_metadata_url}) to access "
+                f"the MCP tool from {tool_url}."
+            )
+        return f"Authentication is required to access the MCP tool from {tool_url}."

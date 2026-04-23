@@ -258,8 +258,9 @@ class AuthMcpCallInterceptor:
         if not auth_token and not tool_config.auth_optional:
             url = tool_config.url or "unknown"
             raise AuthorizationMcpToolTokenInvalidException(
-                message=AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                    tool_config.name
+                message=(
+                    f"Authentication is required for **{tool_config.name}**. "
+                    f"Please log in to continue."
                 ),
                 tool_url=url,
                 token=None,

@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp.types import Tool as MCPTool
 
-from languagemodelcommon.configs.schemas.config_schema import AgentConfig
+from languagemodelcommon.configs.schemas.config_schema import (
+    AgentConfig,
+    McpOAuthConfig,
+)
 from languagemodelcommon.mcp.tool_catalog import (
     ToolCatalog,
     _BM25Index,
@@ -466,6 +469,30 @@ class TestServerRegistration:
         assert categories[0]["description"] == "Healthcare"
         assert categories[0]["resolved"] is False
         assert categories[0]["tool_count"] == 0
+
+    def test_get_categories_marks_oauth_servers(self) -> None:
+        """Categories include requires_auth flag for OAuth servers."""
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="google-search",
+            category="Web search",
+            agent_config=_agent_config("google-search"),
+        )
+        oauth_config = AgentConfig(
+            name="github",
+            url="https://api.githubcopilot.com/mcp/",
+            oauth=McpOAuthConfig(client_id="Iv23liP9XLkcIxslopoA"),
+        )
+        catalog.register_server(
+            server_name="github",
+            category="GitHub repositories",
+            agent_config=oauth_config,
+        )
+        categories = catalog.get_categories()
+        by_name = {c["name"]: c for c in categories}
+        assert len(by_name) == 2
+        assert by_name["google-search"]["requires_auth"] is False
+        assert by_name["github"]["requires_auth"] is True
 
     @pytest.mark.asyncio
     async def test_get_categories_after_resolution(self) -> None:
