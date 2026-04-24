@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Sequence
 
 from langchain_ai_skills_framework.langchain.tools.load_skill_tool import LoadSkillTool
 from langchain_ai_skills_framework.langchain.tools.read_skill_resource_tool import (
@@ -10,7 +10,10 @@ from langchain_ai_skills_framework.langchain.tools.read_skill_resource_tool impo
 from langchain_ai_skills_framework.langchain.tools.run_python_script_tool import (
     RunPythonScriptTool,
 )
-from langchain_ai_skills_framework.langchain.tools.run_skill_script_tool import RunSkillScriptTool
+from langchain_ai_skills_framework.langchain.tools.run_skill_script_tool import (
+    RunSkillScriptTool,
+)
+from langchain_core.tools import BaseTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.text_humanizer import Humanizer
 
@@ -66,6 +69,20 @@ class ToolDisplayNameMapper:
             if isinstance(value, str) and value.strip()
         }
         return cls(name_to_display_name=mapping)
+
+    def register_from_tools(self, tools: Sequence[BaseTool]) -> None:
+        """Populate display names from tool metadata.
+
+        Extracts ``mcp_title`` from each tool's ``metadata`` dict
+        (set during MCP-to-LangChain conversion) and registers it
+        as the display name.  Entries already present in the static
+        config are not overwritten — the config file always wins.
+        """
+        for tool in tools:
+            if tool.name in self._name_to_display_name:
+                continue
+            if tool.metadata and tool.metadata.get("mcp_title"):
+                self._name_to_display_name[tool.name] = tool.metadata["mcp_title"]
 
     def get_display_name(self, *, tool_name: str) -> str:
         display_name = self._name_to_display_name.get(tool_name)
