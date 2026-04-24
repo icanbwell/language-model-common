@@ -34,14 +34,9 @@ class GraphBuilder:
     tool integration, and optional state persistence.
     """
 
-    def __init__(self, skill_loader: Any = None) -> None:
-        """
-        Initialize the graph builder.
-
-        Args:
-            skill_loader: Unused, retained for backward compatibility.
-        """
-        self.skill_loader = skill_loader
+    def __init__(self) -> None:
+        """Initialize the graph builder."""
+        pass
 
     async def create_graph_for_llm_async(
         self,
@@ -51,7 +46,6 @@ class GraphBuilder:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        skill_loader: Any | None = None,
         tool_catalog: ToolCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
@@ -71,7 +65,6 @@ class GraphBuilder:
             store: Optional store for cross-conversation persistence
             checkpointer: Optional checkpointer for state management
             system_prompts: Optional list of system prompts to prepend
-            skill_loader: Optional override for the skill loader (per-request scoping)
             max_messages: Maximum number of messages before trimming
             max_tokens: Maximum tokens allowed in conversation history
 
