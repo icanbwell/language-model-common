@@ -3,16 +3,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
-from langchain_ai_skills_framework.langchain.tools.load_skill_tool import LoadSkillTool
-from langchain_ai_skills_framework.langchain.tools.read_skill_resource_tool import (
-    ReadSkillResourceTool,
-)
-from langchain_ai_skills_framework.langchain.tools.run_python_script_tool import (
-    RunPythonScriptTool,
-)
-from langchain_ai_skills_framework.langchain.tools.run_skill_script_tool import (
-    RunSkillScriptTool,
-)
 from langchain_core.tools import BaseTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.text_humanizer import Humanizer
@@ -116,21 +106,22 @@ class ToolDisplayNameMapper:
         if not tool_name:
             return ""
 
-        # TODO: Come up with a better way so we don't have to hardcode these
+        inputs = tool_input or {}
         if tool_name == "load_skill":
-            display_name = LoadSkillTool.get_friendly_name(tool_input=tool_input or {})
+            skill_name = str(inputs.get("skill_name") or "")
+            display_name = Humanizer.humanize_tool_name(key=skill_name)
         elif tool_name == "run_skill_script":
-            display_name = RunSkillScriptTool.get_friendly_name(
-                tool_input=tool_input or {}
+            skill_name = str(inputs.get("skill_name") or "")
+            script_name = str(inputs.get("script_name") or "")
+            display_name = (
+                f"{Humanizer.humanize_tool_name(key=skill_name)} ({script_name})"
             )
         elif tool_name == "read_skill_resource":
-            display_name = ReadSkillResourceTool.get_friendly_name(
-                tool_input=tool_input or {}
-            )
+            skill_name = str(inputs.get("skill_name") or "")
+            resource_name = str(inputs.get("resource_name") or "")
+            display_name = f"{Humanizer.humanize_tool_name(key=skill_name)} {Humanizer.humanize_tool_name(key=resource_name)}"
         elif tool_name == "run_python_script":
-            display_name = RunPythonScriptTool.get_friendly_name(
-                tool_input=tool_input or {}
-            )
+            display_name = str(inputs.get("skill_name") or "")
         else:
             display_name = self.get_display_name(tool_name=tool_name)
         return f"{display_name}"

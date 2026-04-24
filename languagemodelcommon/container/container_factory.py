@@ -1,10 +1,3 @@
-from langchain_ai_skills_framework.container.container_factory import (
-    LangchainAISkillsFrameworkContainerFactory,
-)
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
-
 from simple_container.container.simple_container import SimpleContainer
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
@@ -55,10 +48,6 @@ class LanguageModelCommonContainerFactory:
     def register_services_in_container(
         *, container: SimpleContainer
     ) -> SimpleContainer:
-
-        LangchainAISkillsFrameworkContainerFactory.register_services_in_container(
-            container=container,
-        )
 
         container.singleton(
             LanguageModelCommonEnvironmentVariables,
@@ -144,7 +133,6 @@ class LanguageModelCommonContainerFactory:
                 ),
                 token_reducer=c.resolve(TokenReducer),
                 streaming_manager=c.resolve(LangGraphStreamingManager),
-                skill_loader=c.resolve(SkillLoaderProtocol),
             ),
         )
         container.singleton(

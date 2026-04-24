@@ -5,9 +5,6 @@ LangGraph graph builder with smart history management.
 import logging
 from typing import Any, List, Sequence
 
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableLambda
@@ -37,12 +34,12 @@ class GraphBuilder:
     tool integration, and optional state persistence.
     """
 
-    def __init__(self, skill_loader: SkillLoaderProtocol) -> None:
+    def __init__(self, skill_loader: Any = None) -> None:
         """
         Initialize the graph builder.
 
         Args:
-            skill_loader: Default skill loader for agent middleware
+            skill_loader: Unused, retained for backward compatibility.
         """
         self.skill_loader = skill_loader
 
@@ -54,7 +51,7 @@ class GraphBuilder:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        skill_loader: SkillLoaderProtocol | None = None,
+        skill_loader: Any | None = None,
         tool_catalog: ToolCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
@@ -80,18 +77,7 @@ class GraphBuilder:
 
         Returns:
             Compiled state graph ready for invocation
-
-        Raises:
-            TypeError: If skill_loader is not SkillLoaderProtocol
         """
-        # Resolve skill loader
-        resolved_skill_loader = skill_loader or self.skill_loader
-        if not isinstance(resolved_skill_loader, SkillLoaderProtocol):
-            raise TypeError(
-                "skill_loader must be SkillLoaderProtocol, got "
-                f"{type(resolved_skill_loader)}"
-            )
-
         # Build system prompt
         system_prompt = self._build_system_prompt(system_prompts)
 

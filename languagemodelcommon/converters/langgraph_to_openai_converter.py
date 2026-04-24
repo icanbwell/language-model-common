@@ -11,9 +11,6 @@ from botocore.exceptions import (
 from fastapi import HTTPException
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
@@ -102,7 +99,6 @@ class LangGraphToOpenAIConverter:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         token_reducer: TokenReducer,
         streaming_manager: LangGraphStreamingManager,
-        skill_loader: SkillLoaderProtocol,
     ) -> None:
         if environment_variables is None:
             raise ValueError("environment_variables must not be None")
@@ -130,14 +126,6 @@ class LangGraphToOpenAIConverter:
         if not isinstance(self.streaming_manager, LangGraphStreamingManager):
             raise TypeError(
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
-            )
-
-        self.skill_loader = skill_loader
-        if self.skill_loader is None:
-            raise ValueError("skill_loader must not be None")
-        if not isinstance(self.skill_loader, SkillLoaderProtocol):
-            raise TypeError(
-                f"skill_loader must be SkillLoaderProtocol, got {type(self.skill_loader)}"
             )
 
     async def _stream_resp_async_generator(
@@ -857,7 +845,6 @@ class LangGraphToOpenAIConverter:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        skill_loader: SkillLoaderProtocol,
         tool_catalog: ToolCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
@@ -872,15 +859,8 @@ class LangGraphToOpenAIConverter:
             store: Optional store for persistence
             checkpointer: Optional checkpointer for state management
             system_prompts: Optional list of system prompts to prepend to the agent
-            skill_loader: Optional override for the skill loader (per-request scoping)
             tool_catalog: Optional tool catalog for tool discovery middleware
         """
-        resolved_skill_loader = skill_loader or self.skill_loader
-        if not isinstance(resolved_skill_loader, SkillLoaderProtocol):
-            raise TypeError(
-                "skill_loader must be SkillLoaderProtocol, got "
-                f"{type(resolved_skill_loader)}"
-            )
         # Build system prompt from config if provided
         system_prompt: str | None = None
         if system_prompts:
@@ -897,12 +877,11 @@ class LangGraphToOpenAIConverter:
 
         logger.debug(
             "Creating LLM graph with tools: tools=%s, store=%s, checkpointer=%s, "
-            "system_prompt=%s, skill_loader=%s",
+            "system_prompt=%s",
             tools,
             "provided" if store else "none",
             "provided" if checkpointer else "none",
             "provided" if system_prompt else "none",
-            "provided" if skill_loader else "none",
         )
         # Create the react agent with optional system prompt
         middleware: list[AgentMiddleware] = []

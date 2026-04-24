@@ -4,9 +4,6 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from langchain_ai_skills_framework.environment.environment_variables import (
-    LangchainAISkillsFrameworkEnvironmentVariables,
-)
 from oidcauthlib.utilities.environment.oidc_environment_variables import (
     OidcEnvironmentVariables,
 )
@@ -29,10 +26,21 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 
 
 class LanguageModelCommonEnvironmentVariables(
-    LangchainAISkillsFrameworkEnvironmentVariables,
     PromptLibraryEnvironmentVariables,
     OidcEnvironmentVariables,
 ):
+    @staticmethod
+    def _resolve_path(value: str | None) -> str | None:
+        """Replace ``{pid}`` with the current process ID.
+
+        When multiple gunicorn workers share the same environment, this
+        gives each worker its own directory tree so they don't collide
+        on reads/writes.
+        """
+        if value and "{pid}" in value:
+            return value.replace("{pid}", str(os.getpid()))
+        return value
+
     @property
     def github_cache_folder(self) -> Optional[str]:
         return self._resolve_path(os.environ.get("GITHUB_CACHE_FOLDER"))
