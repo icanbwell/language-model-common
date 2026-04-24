@@ -31,10 +31,14 @@ def _resolve_mcp_title(tool: MCPTool) -> str | None:
     1. ``tool.title``  — top-level, from BaseMetadata
     2. ``tool.annotations.title`` — hint from ToolAnnotations
     """
-    if tool.title:
-        return tool.title
-    if tool.annotations and tool.annotations.title:
-        return tool.annotations.title
+    if tool.title is not None:
+        title = tool.title.strip()
+        if title:
+            return title
+    if tool.annotations and tool.annotations.title is not None:
+        title = tool.annotations.title.strip()
+        if title:
+            return title
     return None
 
 

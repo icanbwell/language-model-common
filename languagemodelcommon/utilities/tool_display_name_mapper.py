@@ -71,8 +71,13 @@ class ToolDisplayNameMapper:
         for tool in tools:
             if tool.name in self._name_to_display_name:
                 continue
-            if tool.metadata and tool.metadata.get("mcp_title"):
-                self._name_to_display_name[tool.name] = tool.metadata["mcp_title"]
+            if not tool.metadata:
+                continue
+            mcp_title = tool.metadata.get("mcp_title")
+            if isinstance(mcp_title, str):
+                stripped_title = mcp_title.strip()
+                if stripped_title:
+                    self._name_to_display_name[tool.name] = stripped_title
 
     def get_display_name(self, *, tool_name: str) -> str:
         display_name = self._name_to_display_name.get(tool_name)
