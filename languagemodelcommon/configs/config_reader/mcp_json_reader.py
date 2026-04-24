@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -61,7 +61,7 @@ class McpJsonReader:
             logger.debug("Marketplace plugins directory not found: %s", plugins_dir)
             return None
 
-        merged_servers: Dict[str, object] = {}
+        merged_servers: Dict[str, Any] = {}
         for mcp_json_path in sorted(plugins_dir.glob(f"*/{_MCP_JSON_FILENAME}")):
             logger.info("Loading MCP servers from %s", mcp_json_path)
             try:
