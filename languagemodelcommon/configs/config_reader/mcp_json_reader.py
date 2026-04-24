@@ -1,8 +1,7 @@
 import json
 import logging
-import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
@@ -13,75 +12,54 @@ from languagemodelcommon.configs.schemas.config_schema import (
 from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
 )
-from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-    LanguageModelCommonEnvironmentVariables,
-)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
-_MCP_JSON_FILENAME = ".mcp.json"
-_PLUGINS_MARKETPLACE_ENV = "PLUGINS_MARKETPLACE"
+MCP_JSON_FILENAME = ".mcp.json"
 
 
 class McpJsonReader:
-    """Discovers ``.mcp.json`` files from marketplace plugin directories."""
+    """Reads a single ``.mcp.json`` file from a given path."""
 
-    def __init__(
-        self,
-        *,
-        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
-    ) -> None:
-        self._environment_variables = environment_variables
+    def __init__(self) -> None:
+        pass
 
-    def read_mcp_json(self) -> McpJsonConfig | None:
-        """Scan marketplace plugin directories for ``.mcp.json`` files.
+    # noinspection PyMethodMayBeStatic
+    def read_mcp_json(
+        self, *, mcp_json_path: str | None = None
+    ) -> McpJsonConfig | None:
+        """Read MCP server definitions from a ``.mcp.json`` file.
 
-        Looks under ``{PLUGINS_MARKETPLACE}/plugins/*/`` for
-        ``.mcp.json`` files and merges all ``mcpServers`` entries
-        into a single :class:`McpJsonConfig`.
+        Args:
+            mcp_json_path: Absolute path to a ``.mcp.json`` file.
+                If ``None`` or the file does not exist, returns ``None``.
 
-        Returns ``None`` when no marketplace path is configured or
-        no ``.mcp.json`` files are found.
+        Returns:
+            Parsed :class:`McpJsonConfig` or ``None``.
         """
-        if self._environment_variables is not None:
-            marketplace_path: str | None = (
-                self._environment_variables.plugins_marketplace
-            )
-        else:
-            marketplace_path = os.environ.get(_PLUGINS_MARKETPLACE_ENV)
-
-        if not marketplace_path:
+        if not mcp_json_path:
             return None
 
-        marketplace_dir = Path(marketplace_path).resolve()
-        plugins_dir = marketplace_dir / "plugins"
-        if not plugins_dir.is_dir():
-            logger.debug("Marketplace plugins directory not found: %s", plugins_dir)
+        path = Path(mcp_json_path)
+        if not path.is_file():
+            logger.debug(".mcp.json not found at %s", path)
             return None
 
-        merged_servers: Dict[str, Any] = {}
-        for mcp_json_path in sorted(plugins_dir.glob(f"*/{_MCP_JSON_FILENAME}")):
-            logger.info("Loading MCP servers from %s", mcp_json_path)
-            try:
-                with open(mcp_json_path, "r", encoding="utf-8") as f:
-                    data = substitute_env_vars(json.load(f))
-                servers = data.get("mcpServers", {})
-                if isinstance(servers, dict):
-                    merged_servers.update(servers)
-            except Exception:
-                logger.exception("Failed to load MCP config from %s", mcp_json_path)
-
-        if not merged_servers:
+        logger.info("Loading MCP servers from %s", path)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data: Any = substitute_env_vars(json.load(f))
+        except Exception:
+            logger.exception("Failed to load MCP config from %s", path)
             return None
 
-        return McpJsonConfig(mcpServers=merged_servers)
+        servers = data.get("mcpServers", {})
+        if not isinstance(servers, dict) or not servers:
+            return None
 
-
-def read_mcp_json() -> McpJsonConfig | None:
-    """Module-level convenience wrapper around :class:`McpJsonReader`."""
-    return McpJsonReader().read_mcp_json()
+        return McpJsonConfig(mcpServers=servers)
 
 
 def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
@@ -95,6 +73,38 @@ def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
     if oauth.client_id:
         return f"mcp_oauth_{oauth.client_id}"
     return server_key
+
+
+def resolve_mcp_servers_from_plugins(
+    configs: List[ChatModelConfig],
+    plugin_configs: dict[str, McpJsonConfig],
+) -> None:
+    """Resolve ``mcp_server`` references using per-plugin MCP configs.
+
+    For each model that declares ``plugins``, merges the ``mcpServers``
+    from those plugins and calls :func:`resolve_mcp_servers` with the
+    merged result.  Models without ``plugins`` are skipped.
+    """
+    for model in configs:
+        if not model.plugins:
+            continue
+        # Merge mcpServers from the declared plugins
+        merged_servers: dict[str, Any] = {}
+        for plugin_name in model.plugins:
+            plugin_mcp = plugin_configs.get(plugin_name)
+            if plugin_mcp:
+                merged_servers.update(plugin_mcp.mcpServers)
+            else:
+                logger.warning(
+                    "Model '%s' declares plugin '%s' but no MCP config "
+                    "was found for it (available: %s).",
+                    model.name,
+                    plugin_name,
+                    list(plugin_configs.keys()),
+                )
+        if merged_servers:
+            merged_config = McpJsonConfig(mcpServers=merged_servers)
+            resolve_mcp_servers([model], merged_config)
 
 
 def resolve_mcp_servers(

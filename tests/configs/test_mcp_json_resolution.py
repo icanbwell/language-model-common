@@ -10,8 +10,8 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
 )
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
     McpJsonReader,
-    read_mcp_json,
     resolve_mcp_servers,
+    resolve_mcp_servers_from_plugins,
 )
 from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
@@ -28,15 +28,9 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def _write_plugin_mcp_json(
-    marketplace_path: Path,
-    plugin_name: str,
-    data: dict[str, Any],
-) -> Path:
-    """Create ``{marketplace_path}/plugins/{plugin_name}/.mcp.json``."""
-    plugin_dir = marketplace_path / "plugins" / plugin_name
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    mcp_path = plugin_dir / ".mcp.json"
+def _write_mcp_json(directory: Path, data: dict[str, Any]) -> Path:
+    """Write a ``.mcp.json`` file into *directory*."""
+    mcp_path = directory / ".mcp.json"
     _write_json(mcp_path, data)
     return mcp_path
 
@@ -61,62 +55,39 @@ def _make_mcp_json(servers: dict[str, dict[str, Any]]) -> dict[str, Any]:
 
 
 class TestReadMcpJson:
-    def test_reads_from_marketplace_plugin(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_reads_from_file_path(self, tmp_path: Path) -> None:
         mcp_data = _make_mcp_json({"my-server": {"url": "https://example.com/mcp/"}})
-        _write_plugin_mcp_json(tmp_path, "test-plugin", mcp_data)
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
+        mcp_path = _write_mcp_json(tmp_path, mcp_data)
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
 
         assert result is not None
         assert "my-server" in result.mcpServers
         assert result.mcpServers["my-server"].url == "https://example.com/mcp/"
 
-    def test_returns_none_when_no_plugins_dir(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
-        result = read_mcp_json()
+    def test_returns_none_when_file_not_found(self, tmp_path: Path) -> None:
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(tmp_path / ".mcp.json"))
         assert result is None
 
-    def test_returns_none_when_no_env_var(self, monkeypatch: Any) -> None:
-        monkeypatch.delenv("PLUGINS_MARKETPLACE", raising=False)
-        result = read_mcp_json()
+    def test_returns_none_when_path_is_none(self) -> None:
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=None)
         assert result is None
-
-    def test_merges_multiple_plugins(self, tmp_path: Path, monkeypatch: Any) -> None:
-        _write_plugin_mcp_json(
-            tmp_path,
-            "plugin-a",
-            _make_mcp_json({"server-a": {"url": "https://a.example.com/"}}),
-        )
-        _write_plugin_mcp_json(
-            tmp_path,
-            "plugin-b",
-            _make_mcp_json({"server-b": {"url": "https://b.example.com/"}}),
-        )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
-
-        result = read_mcp_json()
-
-        assert result is not None
-        assert "server-a" in result.mcpServers
-        assert "server-b" in result.mcpServers
 
     def test_env_var_substitution(self, tmp_path: Path, monkeypatch: Any) -> None:
         monkeypatch.setenv("MCP_SERVER_URL", "https://resolved.example.com/")
         mcp_data = _make_mcp_json({"my-server": {"url": "${MCP_SERVER_URL}"}})
-        _write_plugin_mcp_json(tmp_path, "test-plugin", mcp_data)
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
+        mcp_path = _write_mcp_json(tmp_path, mcp_data)
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
 
         assert result is not None
         assert result.mcpServers["my-server"].url == "https://resolved.example.com/"
 
-    def test_extra_fields_preserved(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_extra_fields_preserved(self, tmp_path: Path) -> None:
         mcp_data = _make_mcp_json(
             {
                 "server": {
@@ -130,10 +101,10 @@ class TestReadMcpJson:
                 }
             }
         )
-        _write_plugin_mcp_json(tmp_path, "test-plugin", mcp_data)
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
+        mcp_path = _write_mcp_json(tmp_path, mcp_data)
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
         assert result is not None
         server = result.mcpServers["server"]
         # oauth is now a first-class field
@@ -146,25 +117,6 @@ class TestReadMcpJson:
         assert extras is not None
         assert "customField" in extras
         assert extras["customField"] == "custom_value"
-
-    def test_reader_uses_environment_variables_object(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        mcp_data = _make_mcp_json({"srv": {"url": "https://srv.example.com/"}})
-        _write_plugin_mcp_json(tmp_path, "test-plugin", mcp_data)
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
-
-        from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-            LanguageModelCommonEnvironmentVariables,
-        )
-
-        reader = McpJsonReader(
-            environment_variables=LanguageModelCommonEnvironmentVariables()
-        )
-        result = reader.read_mcp_json()
-
-        assert result is not None
-        assert "srv" in result.mcpServers
 
 
 class TestResolveMcpServers:
@@ -368,12 +320,9 @@ class TestResolveMcpServers:
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_abc123"]
 
-    def test_oauth_parsed_from_camel_case_json(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        _write_plugin_mcp_json(
+    def test_oauth_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
+        mcp_path = _write_mcp_json(
             tmp_path,
-            "test-plugin",
             _make_mcp_json(
                 {
                     "google-drive": {
@@ -388,9 +337,9 @@ class TestResolveMcpServers:
                 }
             ),
         )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
 
         assert result is not None
         server = result.mcpServers["google-drive"]
@@ -439,12 +388,9 @@ class TestResolveMcpServers:
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_vid"]
 
-    def test_oauth_explicit_endpoints_from_json(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        _write_plugin_mcp_json(
+    def test_oauth_explicit_endpoints_from_json(self, tmp_path: Path) -> None:
+        mcp_path = _write_mcp_json(
             tmp_path,
-            "test-plugin",
             _make_mcp_json(
                 {
                     "vendor": {
@@ -462,9 +408,9 @@ class TestResolveMcpServers:
                 }
             ),
         )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
 
         assert result is not None
         server = result.mcpServers["vendor"]
@@ -500,12 +446,9 @@ class TestResolveMcpServers:
         assert tool.url == "https://mcp.example.com/drive/"
         assert tool.display_name == "Google Drive"
 
-    def test_display_name_parsed_from_camel_case_json(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        _write_plugin_mcp_json(
+    def test_display_name_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
+        mcp_path = _write_mcp_json(
             tmp_path,
-            "test-plugin",
             _make_mcp_json(
                 {
                     "google-drive": {
@@ -516,9 +459,9 @@ class TestResolveMcpServers:
                 }
             ),
         )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(tmp_path))
 
-        result = read_mcp_json()
+        reader = McpJsonReader()
+        result = reader.read_mcp_json(mcp_json_path=str(mcp_path))
 
         assert result is not None
         server = result.mcpServers["google-drive"]
@@ -575,20 +518,18 @@ class TestResolveMcpServers:
 
 
 class TestFileConfigReaderMcpJsonIntegration:
-    def test_resolves_mcp_server_during_read(
-        self, tmp_path: Path, monkeypatch: Any
+    def test_file_config_reader_does_not_resolve_mcp_servers(
+        self, tmp_path: Path
     ) -> None:
+        """FileConfigReader reads models but does not resolve mcp_server refs."""
         model_dir = tmp_path / "models"
         model_dir.mkdir()
         _write_json(
             model_dir / "model.json",
             _make_model_config("drive", mcp_server="google-drive"),
         )
-
-        marketplace = tmp_path / "marketplace"
-        _write_plugin_mcp_json(
-            marketplace,
-            "all-employees",
+        _write_mcp_json(
+            model_dir,
             _make_mcp_json(
                 {
                     "google-drive": {
@@ -598,20 +539,16 @@ class TestFileConfigReaderMcpJsonIntegration:
                 }
             ),
         )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(marketplace))
 
-        reader = McpJsonReader()
-        configs = FileConfigReader(mcp_json_reader=reader).read_model_configs(
-            config_path=str(model_dir)
-        )
+        configs = FileConfigReader().read_model_configs(config_path=str(model_dir))
 
         assert len(configs) == 1
         assert configs[0].tools is not None
-        assert configs[0].tools[0].url == "https://mcp.example.com/drive/"
         assert configs[0].tools[0].mcp_server == "google-drive"
+        # URL should NOT be resolved — FileConfigReader no longer does MCP resolution
+        assert configs[0].tools[0].url is None
 
-    def test_no_mcp_json_still_works(self, tmp_path: Path, monkeypatch: Any) -> None:
-        monkeypatch.delenv("PLUGINS_MARKETPLACE", raising=False)
+    def test_no_mcp_json_still_works(self, tmp_path: Path) -> None:
         _write_json(
             tmp_path / "model.json",
             _make_model_config("drive", url="https://direct.example.com/"),
@@ -622,33 +559,6 @@ class TestFileConfigReaderMcpJsonIntegration:
         assert len(configs) == 1
         assert configs[0].tools is not None
         assert configs[0].tools[0].url == "https://direct.example.com/"
-
-    def test_marketplace_plugin_mcp_json(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
-        model_dir = tmp_path / "models"
-        model_dir.mkdir()
-        _write_json(
-            model_dir / "model.json",
-            _make_model_config("drive", mcp_server="gd"),
-        )
-
-        marketplace = tmp_path / "marketplace"
-        _write_plugin_mcp_json(
-            marketplace,
-            "my-plugin",
-            _make_mcp_json({"gd": {"url": "https://custom.example.com/"}}),
-        )
-        monkeypatch.setenv("PLUGINS_MARKETPLACE", str(marketplace))
-
-        reader = McpJsonReader()
-        configs = FileConfigReader(mcp_json_reader=reader).read_model_configs(
-            config_path=str(model_dir)
-        )
-
-        assert len(configs) == 1
-        assert configs[0].tools is not None
-        assert configs[0].tools[0].url == "https://custom.example.com/"
 
     @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_resolves_description_from_mcp_json(self) -> None:
@@ -746,3 +656,150 @@ class TestFileConfigReaderMcpJsonIntegration:
         assert config.tools[0].mcp_server is None
         assert config.tools[1].name == "google-drive"
         assert config.tools[1].url == "https://mcp.example.com/drive/"
+
+
+class TestResolveMcpServersFromPlugins:
+    def test_resolves_from_declared_plugin(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            plugins=["all-employees"],
+            tools=[AgentConfig(name="drive", mcp_server="google-drive")],
+        )
+        plugin_configs = {
+            "all-employees": McpJsonConfig(
+                mcpServers={
+                    "google-drive": McpServerEntry(
+                        url="https://mcp.example.com/drive/"
+                    ),
+                }
+            ),
+        }
+
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        assert config.tools[0].url == "https://mcp.example.com/drive/"
+
+    def test_ignores_servers_from_undeclared_plugins(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            plugins=["plugin-a"],
+            tools=[AgentConfig(name="drive", mcp_server="google-drive")],
+        )
+        plugin_configs = {
+            "plugin-a": McpJsonConfig(
+                mcpServers={
+                    "server-a": McpServerEntry(url="https://a.example.com/"),
+                }
+            ),
+            "plugin-b": McpJsonConfig(
+                mcpServers={
+                    "google-drive": McpServerEntry(url="https://b.example.com/drive/"),
+                }
+            ),
+        }
+
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        # google-drive is only in plugin-b which is not declared — should NOT resolve
+        assert config.tools[0].url is None
+
+    def test_merges_multiple_declared_plugins(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            plugins=["plugin-a", "plugin-b"],
+            tools=[
+                AgentConfig(name="server-a", mcp_server="server-a"),
+                AgentConfig(name="server-b", mcp_server="server-b"),
+            ],
+        )
+        plugin_configs = {
+            "plugin-a": McpJsonConfig(
+                mcpServers={
+                    "server-a": McpServerEntry(url="https://a.example.com/"),
+                }
+            ),
+            "plugin-b": McpJsonConfig(
+                mcpServers={
+                    "server-b": McpServerEntry(url="https://b.example.com/"),
+                }
+            ),
+        }
+
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        assert config.tools[0].url == "https://a.example.com/"
+        assert config.tools[1].url == "https://b.example.com/"
+
+    def test_wildcard_expands_from_declared_plugins_only(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            plugins=["plugin-a"],
+            tools=[AgentConfig(name="all", mcp_server="*")],
+        )
+        plugin_configs = {
+            "plugin-a": McpJsonConfig(
+                mcpServers={
+                    "server-a": McpServerEntry(url="https://a.example.com/"),
+                }
+            ),
+            "plugin-b": McpJsonConfig(
+                mcpServers={
+                    "server-b": McpServerEntry(url="https://b.example.com/"),
+                }
+            ),
+        }
+
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        assert len(config.tools) == 1
+        assert config.tools[0].name == "server-a"
+        assert config.tools[0].url == "https://a.example.com/"
+
+    def test_skips_models_without_plugins(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            tools=[AgentConfig(name="drive", mcp_server="google-drive")],
+        )
+        plugin_configs = {
+            "plugin-a": McpJsonConfig(
+                mcpServers={
+                    "google-drive": McpServerEntry(url="https://a.example.com/drive/"),
+                }
+            ),
+        }
+
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        # No plugins declared — should NOT resolve
+        assert config.tools[0].url is None
+
+    def test_warns_on_missing_plugin(self) -> None:
+        config = ChatModelConfig(
+            id="model-1",
+            name="Model 1",
+            plugins=["nonexistent-plugin"],
+            tools=[AgentConfig(name="drive", mcp_server="google-drive")],
+        )
+        plugin_configs = {
+            "plugin-a": McpJsonConfig(
+                mcpServers={
+                    "google-drive": McpServerEntry(url="https://a.example.com/drive/"),
+                }
+            ),
+        }
+
+        # Should not raise, just warn
+        resolve_mcp_servers_from_plugins([config], plugin_configs)
+
+        assert config.tools is not None
+        assert config.tools[0].url is None

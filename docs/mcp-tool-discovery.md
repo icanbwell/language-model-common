@@ -6,13 +6,14 @@ This document describes how the language-model-gateway discovers, registers, and
 
 ## Overview
 
-MCP server definitions live in `.mcp.json` files inside marketplace plugin directories. At startup, the gateway scans these files, merges server entries, and resolves them onto model configs. At request time, the LLM discovers tools lazily through two meta-tools (`search_tools` and `call_tool`) rather than loading all tools upfront.
+MCP server definitions live in a `.mcp.json` file alongside model configs in the `chat_completions/` directory. At startup, the gateway auto-discovers this file, parses it, and resolves server entries onto model configs. At request time, the LLM discovers tools lazily through two meta-tools (`search_tools` and `call_tool`) rather than loading all tools upfront.
 
 **Data flow:**
 
 ```
-marketplace/plugins/*/.mcp.json           ← MCP server definitions
-    → McpJsonReader.read_mcp_json()       ← scan & merge
+chat_completions/.mcp.json                ← MCP server definitions
+    → FileConfigReader.discover_mcp_json_path()  ← auto-discover
+    → McpJsonReader.read_mcp_json()       ← parse & substitute env vars
     → resolve_mcp_servers()               ← expand wildcards, populate AgentConfig
     → ChatModelConfig.tools               ← resolved model configs (cached)
 
@@ -30,30 +31,35 @@ marketplace/plugins/*/.mcp.json           ← MCP server definitions
 
 ## Phase 1: Configuration Loading
 
-### 1.1 McpJsonReader scans marketplace plugins
-
-`languagemodelcommon/configs/config_reader/mcp_json_reader.py`
-
-`McpJsonReader.read_mcp_json()` reads the `PLUGINS_MARKETPLACE` environment variable and globs `{PLUGINS_MARKETPLACE}/plugins/*/.mcp.json`. Each file is parsed, environment variable substitution is applied (e.g. `${GROUNDCOVER_API_KEY}`), and all `mcpServers` entries are merged into a single `McpJsonConfig`.
-
-```
-marketplace/
-  plugins/
-    all-employees/
-      .mcp.json          ← atlassian, github, skills, google-drive, ...
-    team-specific/
-      .mcp.json          ← team-only servers
-```
-
-If multiple plugins define the same server key, later files (sorted alphabetically by plugin name) overwrite earlier ones.
-
-### 1.2 FileConfigReader loads model configs
+### 1.1 FileConfigReader auto-discovers `.mcp.json`
 
 `languagemodelcommon/configs/config_reader/file_config_reader.py`
 
-`FileConfigReader.read_model_configs()` reads all `.json` files recursively from `MODELS_OFFICIAL_PATH`, parses them into `ChatModelConfig` objects, then calls `resolve_mcp_servers(configs, mcp_config)`.
+`FileConfigReader.discover_mcp_json_path()` checks for a `.mcp.json` file alongside the model config directory (e.g. `chat_completions/official/.mcp.json`). This follows the same pattern as `discover_prompts_path()` which finds the `prompts/` folder.
 
-### 1.3 resolve_mcp_servers expands wildcards and populates fields
+```
+chat_completions/
+  official/
+    general_purpose.json     ← model configs
+    aiden.json
+  .mcp.json                  ← MCP server definitions
+  prompts/
+    skills.md                ← system prompts
+```
+
+### 1.2 McpJsonReader parses the file
+
+`languagemodelcommon/configs/config_reader/mcp_json_reader.py`
+
+`McpJsonReader.read_mcp_json(mcp_json_path=...)` takes the absolute path to a single `.mcp.json` file, parses the JSON, applies environment variable substitution (e.g. `${GROUNDCOVER_API_KEY}`), and returns a `McpJsonConfig`.
+
+### 1.3 FileConfigReader loads model configs
+
+`languagemodelcommon/configs/config_reader/file_config_reader.py`
+
+`FileConfigReader.read_model_configs()` reads all `.json` files recursively from `MODELS_OFFICIAL_PATH` (skipping `.mcp.json`), parses them into `ChatModelConfig` objects, then calls `resolve_mcp_servers(configs, mcp_config)`.
+
+### 1.4 resolve_mcp_servers expands wildcards and populates fields
 
 `languagemodelcommon/configs/config_reader/mcp_json_reader.py`
 
@@ -64,7 +70,7 @@ For each model config:
 3. **Auto-auth**: OAuth config sets `auth: "jwt_token"`. An `Authorization` header sets `auth: "headers"`.
 4. **Scope union**: A second pass merges OAuth scopes for agents sharing the same provider key, so the user gets a single consent prompt.
 
-### 1.4 ConfigReader orchestrates with caching
+### 1.5 ConfigReader orchestrates with caching
 
 `languagemodelcommon/configs/config_reader/config_reader.py`
 
@@ -166,9 +172,9 @@ LLM → call_tool(name="load_skill", arguments={"skill_name": "fhir_query_builde
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│              Marketplace Plugin Directory             │
+│              chat_completions/ directory              │
 │                                                       │
-│  plugins/all-employees/.mcp.json                     │
+│  .mcp.json                                           │
 │  ┌─────────────────────────────────────────────────┐ │
 │  │ mcpServers:                                     │ │
 │  │   skills:      { url, oauth }                   │ │
@@ -176,15 +182,24 @@ LLM → call_tool(name="load_skill", arguments={"skill_name": "fhir_query_builde
 │  │   atlassian:   { url, oauth }                   │ │
 │  │   google-drive: { url, oauth }                  │ │
 │  └─────────────────────────────────────────────────┘ │
+│                                                       │
+│  official/                                            │
+│    general_purpose.json   (mcp_server: "*")          │
+│    aiden.json                                         │
+│  prompts/                                             │
+│    skills.md                                          │
 └──────────────────────┬──────────────────────────────┘
                        │
-            McpJsonReader.read_mcp_json()
-            scans plugins/*/.mcp.json
+            FileConfigReader.discover_mcp_json_path()
+            finds .mcp.json alongside configs
+                       │
+            McpJsonReader.read_mcp_json(path)
+            parses & substitutes env vars
                        │
                        ▼
             ┌─────────────────────┐
             │  McpJsonConfig      │
-            │  (merged servers)   │
+            │  (server entries)   │
             └──────────┬──────────┘
                        │
             resolve_mcp_servers()
@@ -254,7 +269,6 @@ search_tools(                      call_tool(
 
 | Variable | Description | Example |
 |---|---|---|
-| `PLUGINS_MARKETPLACE` | Root directory for marketplace plugins | `/configs/marketplace` |
 | `MODELS_OFFICIAL_PATH` | Directory containing model config JSON files | `/configs/chat_completions/official` |
 | `PROMPT_LIBRARY_PATH` | Directory containing system prompt files | `/configs/chat_completions/prompts` |
 | `CONFIG_CACHE_TIMEOUT_SECONDS` | TTL for in-memory config cache | `10` |
@@ -266,14 +280,13 @@ search_tools(                      call_tool(
 volumes:
   # Config files (from local checkout or GitHub download)
   - ./language-model-gateway-configs/chat_completions:/configs/chat_completions
-  - ./language-model-gateway-configs/marketplace:/configs/marketplace
 ```
 
 ### Key Files
 
 | File | Purpose |
 |---|---|
-| `marketplace/plugins/all-employees/.mcp.json` | MCP server definitions (URLs, auth, display names) |
+| `chat_completions/.mcp.json` | MCP server definitions (URLs, auth, display names) |
 | `chat_completions/official/general_purpose.json` | Model config with `mcp_server: "*"` wildcard |
 | `chat_completions/prompts/skills.md` | System prompt instructing LLM to use `search_tools`/`call_tool` |
 
@@ -281,7 +294,7 @@ volumes:
 
 ## Adding a New MCP Server
 
-1. Add an entry to `marketplace/plugins/{plugin-name}/.mcp.json`:
+1. Add an entry to `chat_completions/.mcp.json`:
 
 ```json
 {
@@ -313,6 +326,6 @@ volumes:
 
 **Per-request session pooling.** `McpSessionPool` reuses TCP+TLS connections within a single chat request. Multiple `call_tool` invocations to the same server share one connection.
 
-**Marketplace plugin convention.** `.mcp.json` files live inside plugin directories (`plugins/{name}/.mcp.json`) rather than a single global file. This allows different plugin bundles to contribute servers independently. The same convention is used by `mcp-server-gateway`.
+**`.mcp.json` alongside model configs.** The `.mcp.json` file lives in the `chat_completions/` directory alongside model configs and prompts, auto-discovered by `FileConfigReader.discover_mcp_json_path()`. This follows the same convention as `discover_prompts_path()` and keeps all gateway configuration co-located. The marketplace plugin directory (`PLUGINS_MARKETPLACE`) is used only by `mcp-server-gateway`, not by the gateway or `language-model-common`.
 
 **Two-pass OAuth scope union.** Agents sharing the same OAuth provider key get their scopes merged in a second pass. This produces a single consent prompt covering all tools from that provider.

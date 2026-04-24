@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import List
 
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
-    McpJsonReader,
-    resolve_mcp_servers,
+    MCP_JSON_FILENAME,
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PROMPTS_FOLDER_NAME,
@@ -20,13 +19,6 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class FileConfigReader:
-    def __init__(
-        self,
-        *,
-        mcp_json_reader: McpJsonReader | None = None,
-    ) -> None:
-        self._mcp_json_reader = mcp_json_reader or McpJsonReader()
-
     # noinspection PyMethodMayBeStatic
     def read_model_configs(
         self,
@@ -45,10 +37,7 @@ class FileConfigReader:
         logger.info("Reading model configurations from %s", config_path)
         config_folder: Path = Path(config_path)
         excluded = exclude_dirs or set()
-        # read all the .json files recursively in the config folder
-        # for each file, parse the json data into ModelConfig
         configs: List[ChatModelConfig] = []
-        # Read all the .json files recursively in the config folder
         for json_file in config_folder.rglob("*.json"):
             if json_file.name == ".mcp.json":
                 continue
@@ -59,12 +48,7 @@ class FileConfigReader:
             with open(json_file, "r") as file:
                 data = substitute_env_vars(json.load(file))
                 configs.append(ChatModelConfig(**data))
-        # Resolve mcp_server references from .mcp.json in marketplace plugins
-        mcp_config = self._mcp_json_reader.read_mcp_json()
-        if mcp_config:
-            resolve_mcp_servers(configs, mcp_config)
 
-        # sort the configs by name
         configs.sort(key=lambda x: x.name)
         return configs
 
@@ -78,4 +62,16 @@ class FileConfigReader:
         if prompts_dir.is_dir():
             logger.info("Discovered prompts folder at %s", prompts_dir)
             return str(prompts_dir)
+        return None
+
+    @staticmethod
+    def discover_mcp_json_path(config_path: str) -> str | None:
+        """Look for a ``.mcp.json`` file alongside the config directory.
+
+        Returns the path as a string if found, ``None`` otherwise.
+        """
+        mcp_json = Path(config_path) / MCP_JSON_FILENAME
+        if mcp_json.is_file():
+            logger.info("Discovered .mcp.json at %s", mcp_json)
+            return str(mcp_json)
         return None

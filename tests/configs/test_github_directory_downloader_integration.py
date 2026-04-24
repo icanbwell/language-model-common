@@ -215,7 +215,7 @@ async def test_read_models_from_https_github_url(
 
 @pytest.mark.asyncio
 async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) -> None:
-    """github:// download path still resolves .mcp.json references from marketplace plugins."""
+    """github:// download path resolves .mcp.json alongside model configs."""
     local_dir = tmp_path / "downloaded"
     local_dir.mkdir()
     _write_json(
@@ -226,16 +226,11 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
             "tools": [{"name": "drive", "mcp_server": "google-drive"}],
         },
     )
-
-    # Set up marketplace plugin directory with .mcp.json
-    marketplace = tmp_path / "marketplace"
-    plugin_dir = marketplace / "plugins" / "all-employees"
-    plugin_dir.mkdir(parents=True)
+    # Place .mcp.json alongside model configs (auto-discovered by FileConfigReader)
     _write_json(
-        plugin_dir / ".mcp.json",
+        local_dir / ".mcp.json",
         {"mcpServers": {"google-drive": {"url": "https://mcp.example.com/drive/"}}},
     )
-    monkeypatch.setenv("PLUGINS_MARKETPLACE", str(marketplace))
 
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir

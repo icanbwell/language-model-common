@@ -57,10 +57,6 @@ class LanguageModelCommonEnvironmentVariables(
         return self._resolve_path(os.environ.get("MODELS_TESTING_PATH"))
 
     @property
-    def plugins_marketplace(self) -> Optional[str]:
-        return self._resolve_path(os.environ.get("PLUGINS_MARKETPLACE"))
-
-    @property
     def streaming_buffer_flush_interval_seconds(self) -> float:
         """Interval in seconds for flushing the streaming buffer when processing LLM responses."""
         return float(
@@ -319,3 +315,13 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def github_token(self) -> Optional[str]:
         return os.environ.get("GITHUB_TOKEN")
+
+    @property
+    def plugins_mcp_server(self) -> Optional[str]:
+        """URL of the MCP server that returns plugin MCP configs.
+
+        When set, ``ConfigReader`` fetches MCP server definitions by
+        calling the ``get_mcp_servers_config`` tool on this server
+        instead of reading a local ``.mcp.json`` file.
+        """
+        return os.environ.get("PLUGINS_MCP_SERVER")
