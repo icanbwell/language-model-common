@@ -59,8 +59,8 @@ class FileConfigReader:
             with open(json_file, "r") as file:
                 data = substitute_env_vars(json.load(file))
                 configs.append(ChatModelConfig(**data))
-        # Resolve mcp_server references from .mcp.json
-        mcp_config = self._mcp_json_reader.read_mcp_json(config_dir=config_path)
+        # Resolve mcp_server references from .mcp.json in marketplace plugins
+        mcp_config = self._mcp_json_reader.read_mcp_json()
         if mcp_config:
             resolve_mcp_servers(configs, mcp_config)
 

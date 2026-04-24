@@ -2,11 +2,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
-from languagemodelcommon.configs.config_reader.github_directory_helper import (
-    GitHubDirectoryHelper,
-)
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.configs.schemas.config_schema import (
     AgentConfig,
@@ -24,93 +21,67 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
-MCP_JSON_PATH_ENV = (
-    "MCP_JSON_PATH"  # Environment variable to override the path to .mcp.json
-)
-
-MCP_JSON_FILENAME = ".mcp.json"
+_MCP_JSON_FILENAME = ".mcp.json"
+_PLUGINS_MARKETPLACE_ENV = "PLUGINS_MARKETPLACE"
 
 
 class McpJsonReader:
-    """Reads and parses ``.mcp.json``, resolving the path via environment variables."""
+    """Discovers ``.mcp.json`` files from marketplace plugin directories."""
 
     def __init__(
         self,
         *,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
-        github_directory_helper: GitHubDirectoryHelper | None = None,
     ) -> None:
         self._environment_variables = environment_variables
-        self._github_directory_helper = github_directory_helper or (
-            GitHubDirectoryHelper(environment_variables=environment_variables)
-            if environment_variables
-            else None
-        )
 
-    def read_mcp_json(
-        self,
-        config_dir: str | None = None,
-    ) -> McpJsonConfig | None:
-        """Read and parse ``.mcp.json``.
+    def read_mcp_json(self) -> McpJsonConfig | None:
+        """Scan marketplace plugin directories for ``.mcp.json`` files.
 
-        Resolution order for the file path:
-        1. ``mcp_json_path`` from *environment_variables* (supports ``{pid}``
-           substitution for per-worker isolation).
-        2. ``MCP_JSON_PATH`` environment variable (fallback when no
-           environment_variables is provided).
-        3. ``.mcp.json`` in *config_dir* (the model-configs directory).
+        Looks under ``{PLUGINS_MARKETPLACE}/plugins/*/`` for
+        ``.mcp.json`` files and merges all ``mcpServers`` entries
+        into a single :class:`McpJsonConfig`.
 
-        Returns ``None`` when no ``.mcp.json`` is found.
+        Returns ``None`` when no marketplace path is configured or
+        no ``.mcp.json`` files are found.
         """
         if self._environment_variables is not None:
-            env_path: str | None = self._environment_variables.mcp_json_path
+            marketplace_path: str | None = (
+                self._environment_variables.plugins_marketplace
+            )
         else:
-            env_path = os.environ.get(MCP_JSON_PATH_ENV)
+            marketplace_path = os.environ.get(_PLUGINS_MARKETPLACE_ENV)
 
-        if env_path:
-            if GitHubDirectoryHelper.is_github_path(env_path):
-                if self._github_directory_helper is None:
-                    raise RuntimeError(
-                        "GitHubDirectoryHelper is required to resolve GitHub paths"
-                    )
-                resolved_dir = self._github_directory_helper.resolve_github_path(
-                    env_path
-                )
-            else:
-                resolved_dir = Path(env_path).resolve()
-            mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
-        elif config_dir:
-            resolved_dir = Path(config_dir).resolve()
-            mcp_json_path = (resolved_dir / MCP_JSON_FILENAME).resolve()
-            if not mcp_json_path.parent == resolved_dir:
-                logger.warning(
-                    ".mcp.json path resolved outside config directory: %s",
-                    mcp_json_path,
-                )
-                return None
-        else:
+        if not marketplace_path:
             return None
 
-        if not mcp_json_path.is_file():
-            logger.debug(".mcp.json not found at %s", mcp_json_path)
+        marketplace_dir = Path(marketplace_path).resolve()
+        plugins_dir = marketplace_dir / "plugins"
+        if not plugins_dir.is_dir():
+            logger.debug("Marketplace plugins directory not found: %s", plugins_dir)
             return None
 
-        logger.info("Loading MCP server registry from %s", mcp_json_path)
-        with open(mcp_json_path, "r", encoding="utf-8") as f:
-            data = substitute_env_vars(json.load(f))
-        return McpJsonConfig(**data)
+        merged_servers: Dict[str, object] = {}
+        for mcp_json_path in sorted(plugins_dir.glob(f"*/{_MCP_JSON_FILENAME}")):
+            logger.info("Loading MCP servers from %s", mcp_json_path)
+            try:
+                with open(mcp_json_path, "r", encoding="utf-8") as f:
+                    data = substitute_env_vars(json.load(f))
+                servers = data.get("mcpServers", {})
+                if isinstance(servers, dict):
+                    merged_servers.update(servers)
+            except Exception:
+                logger.exception("Failed to load MCP config from %s", mcp_json_path)
+
+        if not merged_servers:
+            return None
+
+        return McpJsonConfig(mcpServers=merged_servers)
 
 
-# Keep module-level function for backward compatibility with existing callers
-def read_mcp_json(
-    config_dir: str | None = None,
-) -> McpJsonConfig | None:
-    """Backward-compatible wrapper around :class:`McpJsonReader`.
-
-    Prefer injecting ``McpJsonReader`` via the container instead of
-    calling this function directly.
-    """
-    return McpJsonReader().read_mcp_json(config_dir=config_dir)
+def read_mcp_json() -> McpJsonConfig | None:
+    """Module-level convenience wrapper around :class:`McpJsonReader`."""
+    return McpJsonReader().read_mcp_json()
 
 
 def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:

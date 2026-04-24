@@ -57,8 +57,8 @@ class LanguageModelCommonEnvironmentVariables(
         return self._resolve_path(os.environ.get("MODELS_TESTING_PATH"))
 
     @property
-    def mcp_json_path(self) -> Optional[str]:
-        return self._resolve_path(os.environ.get("MCP_JSON_PATH"))
+    def plugins_marketplace(self) -> Optional[str]:
+        return self._resolve_path(os.environ.get("PLUGINS_MARKETPLACE"))
 
     @property
     def streaming_buffer_flush_interval_seconds(self) -> float:

@@ -85,7 +85,6 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
-                github_directory_helper=c.resolve(GitHubDirectoryHelper),
             ),
         )
         container.singleton(
