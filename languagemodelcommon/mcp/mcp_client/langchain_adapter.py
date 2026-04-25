@@ -24,6 +24,24 @@ from languagemodelcommon.mcp.mcp_client.tool_invocation import (
 )
 
 
+def _resolve_mcp_title(tool: MCPTool) -> str | None:
+    """Return the best human-readable title from an MCP Tool, or None.
+
+    Precedence (per MCP 2025-06-18 spec):
+    1. ``tool.title``  — top-level, from BaseMetadata
+    2. ``tool.annotations.title`` — hint from ToolAnnotations
+    """
+    if tool.title is not None:
+        title = tool.title.strip()
+        if title:
+            return title
+    if tool.annotations and tool.annotations.title is not None:
+        title = tool.annotations.title.strip()
+        if title:
+            return title
+    return None
+
+
 def mcp_tool_to_langchain_tool(
     tool: MCPTool,
     *,
@@ -67,10 +85,18 @@ def mcp_tool_to_langchain_tool(
         content = convert_call_tool_result(call_tool_result)
         return content, None
 
+    metadata: dict[str, Any] = {}
+    mcp_title = _resolve_mcp_title(tool)
+    if mcp_title:
+        metadata["mcp_title"] = mcp_title
+    if tool.description:
+        metadata["mcp_description"] = tool.description
+
     return StructuredTool(
         name=tool.name,
         description=tool.description or "",
         args_schema=tool.inputSchema,
         coroutine=call_tool,
         response_format="content_and_artifact",
+        metadata=metadata or None,
     )

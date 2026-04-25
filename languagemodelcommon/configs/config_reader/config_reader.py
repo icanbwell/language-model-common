@@ -28,7 +28,10 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-from languagemodelcommon.configs.config_reader.mcp_json_reader import McpJsonReader
+from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
+from languagemodelcommon.configs.config_reader.mcp_json_reader import (
+    resolve_mcp_servers_from_plugins,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
@@ -41,7 +44,7 @@ class ConfigReader:
         cache: ConfigExpiringCache,
         prompt_library_manager: PromptLibraryManager,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
-        mcp_json_reader: McpJsonReader | None = None,
+        mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
         snapshot_cache_store: BaseStore | None = None,
     ) -> None:
@@ -60,9 +63,7 @@ class ConfigReader:
             github_directory_helper
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
-        self._mcp_json_reader = mcp_json_reader or McpJsonReader(
-            environment_variables=self._environment_variables
-        )
+        self._mcp_json_fetcher = mcp_json_fetcher
         self._snapshot_cache_store = snapshot_cache_store
         self._snapshot_cache_collection = (
             self._environment_variables.snapshot_cache_model_configs_collection
@@ -78,6 +79,11 @@ class ConfigReader:
             config_path=config_path,
             models_testing_path=models_testing_path,
         )
+
+        # Retry MCP resolution for cached models that have unresolved servers
+        # (e.g. the MCP server was unavailable during initial config load)
+        if self._has_unresolved_mcp_servers(base_models):
+            await self._retry_mcp_resolution(base_models, config_path)
 
         if client_id:
             override_models = await self._read_override_models_async(
@@ -296,6 +302,7 @@ class ConfigReader:
         self, config_path: str, *, exclude_dirs: set[str] | None = None
     ) -> List[ChatModelConfig]:
         models: List[ChatModelConfig]
+        local_config_path: str = config_path
         if config_path.startswith("s3"):
             models = await S3ConfigReader().read_model_configs(s3_url=config_path)
             logger.info(
@@ -304,11 +311,10 @@ class ConfigReader:
                 len(models),
             )
         elif GitHubDirectoryHelper.is_github_path(config_path):
-            local_path = self._github_directory_helper.resolve_github_path(config_path)
-            models = FileConfigReader(
-                mcp_json_reader=self._mcp_json_reader
-            ).read_model_configs(
-                config_path=str(local_path),
+            resolved = self._github_directory_helper.resolve_github_path(config_path)
+            local_config_path = str(resolved)
+            models = FileConfigReader().read_model_configs(
+                config_path=local_config_path,
                 exclude_dirs=exclude_dirs,
             )
             logger.info(
@@ -317,9 +323,7 @@ class ConfigReader:
                 len(models),
             )
         else:
-            models = FileConfigReader(
-                mcp_json_reader=self._mcp_json_reader
-            ).read_model_configs(
+            models = FileConfigReader().read_model_configs(
                 config_path=config_path,
                 exclude_dirs=exclude_dirs,
             )
@@ -328,7 +332,79 @@ class ConfigReader:
                 self._identifier,
                 len(models),
             )
+
+        # Resolve MCP server references from plugins or local .mcp.json
+        await self._resolve_mcp_servers_async(models, local_config_path)
         return models
+
+    async def _resolve_mcp_servers_async(
+        self,
+        models: List[ChatModelConfig],
+        config_path: str,
+    ) -> None:
+        """Resolve ``mcp_server`` references on model tools/agents.
+
+        All MCP server definitions come from marketplace plugins via
+        the ``McpJsonFetcher``.  Each model must declare its ``plugins``
+        list; servers are resolved only from those declared plugins.
+        """
+        has_mcp_refs = any(a.mcp_server for m in models for a in m.get_agents())
+        if not has_mcp_refs:
+            return
+
+        if not self._mcp_json_fetcher:
+            logger.warning(
+                "Models have mcp_server references but no McpJsonFetcher "
+                "is configured — MCP servers will not be resolved"
+            )
+            return
+
+        all_plugin_names: list[str] = []
+        for m in models:
+            if m.plugins:
+                all_plugin_names.extend(m.plugins)
+        unique_plugins = list(dict.fromkeys(all_plugin_names))
+        if not unique_plugins:
+            logger.warning(
+                "Models have mcp_server references but no plugins declared "
+                "— MCP servers will not be resolved"
+            )
+            return
+
+        plugin_configs = await self._mcp_json_fetcher.fetch_plugins_async(
+            unique_plugins
+        )
+        if plugin_configs:
+            resolve_mcp_servers_from_plugins(models, plugin_configs)
+
+    @staticmethod
+    def _has_unresolved_mcp_servers(models: List[ChatModelConfig]) -> bool:
+        """Check whether any model has agents with ``mcp_server`` set but no ``url``."""
+        for model in models:
+            for agent in model.get_agents():
+                if agent.mcp_server and not agent.url:
+                    return True
+        return False
+
+    async def _retry_mcp_resolution(
+        self, models: List[ChatModelConfig], config_path: str
+    ) -> None:
+        """Re-attempt MCP server resolution for models with unresolved refs.
+
+        Called when cached configs still carry ``mcp_server`` references
+        without a resolved ``url`` — typically because the MCP server was
+        unreachable during the initial config load.  On success the
+        in-memory and snapshot caches are updated so subsequent requests
+        use the resolved configs.
+        """
+        logger.info("Retrying MCP server resolution for models with unresolved refs")
+        await self._resolve_mcp_servers_async(models, config_path)
+        if not self._has_unresolved_mcp_servers(models):
+            logger.info("MCP server resolution retry succeeded — updating caches")
+            await self._cache.set(models)
+            await self._write_to_snapshot_cache(models)
+        else:
+            logger.warning("MCP server resolution retry did not resolve all refs")
 
     @staticmethod
     def _resolve_default_config_path(config_path: str) -> str:
