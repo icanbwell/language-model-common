@@ -2,14 +2,22 @@ import os
 import pytest
 import tempfile
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
-from languagemodelcommon.configs.schemas.config_schema import ChatModelConfig
+from languagemodelcommon.configs.schemas.config_schema import (
+    AgentConfig,
+    ChatModelConfig,
+)
+from languagemodelcommon.configs.schemas.mcp_json_schema import (
+    McpJsonConfig,
+    McpServerEntry,
+)
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -486,3 +494,159 @@ async def test_clear_cache_without_snapshot_store(
     )
     await reader.clear_cache()
     cache_mock.clear.assert_awaited_once()
+
+
+# ── MCP resolution retry tests ─────────────────────────────────────
+
+
+def _model_with_unresolved_mcp(plugin: str = "all-employees") -> ChatModelConfig:
+    """Create a model config with an unresolved mcp_server wildcard."""
+    return ChatModelConfig(
+        id="test-model",
+        name="Test Model",
+        description="",
+        plugins=[plugin],
+        tools=[AgentConfig(name="all_mcp_servers", mcp_server="*")],
+    )
+
+
+def _model_without_mcp() -> ChatModelConfig:
+    return ChatModelConfig(id="simple", name="Simple", description="")
+
+
+def _mcp_json_config() -> McpJsonConfig:
+    return McpJsonConfig(
+        mcpServers={
+            "skills": McpServerEntry(
+                url="http://mcp:5000/skills/", description="Skills"
+            ),
+            "google": McpServerEntry(
+                url="http://mcp:5000/google/", description="Google"
+            ),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_resolves_cached_models_with_unresolved_mcp(
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When cache returns models with unresolved mcp_server refs, retry resolves them."""
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    unresolved_model = _model_with_unresolved_mcp()
+    cache_mock = AsyncMock()
+    cache_mock.get.return_value = [unresolved_model]
+
+    fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher.fetch_plugins_async = AsyncMock(
+        return_value={"all-employees": _mcp_json_config()}
+    )
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        mcp_json_fetcher=fetcher,
+    )
+    result = await reader.read_model_configs_async()
+
+    # The wildcard should have been expanded and URLs populated
+    agents = result[0].get_agents()
+    assert len(agents) == 2
+    assert all(a.url for a in agents), "All agents should have resolved URLs"
+
+    # Cache should have been updated with resolved models
+    assert cache_mock.set.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_mcp_already_resolved(
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When cached models have resolved URLs, no retry is attempted."""
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    resolved_model = ChatModelConfig(
+        id="test",
+        name="Test",
+        description="",
+        plugins=["all-employees"],
+        tools=[
+            AgentConfig(
+                name="skills", mcp_server="skills", url="http://mcp:5000/skills/"
+            ),
+        ],
+    )
+    cache_mock = AsyncMock()
+    cache_mock.get.return_value = [resolved_model]
+
+    fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher.fetch_plugins_async = AsyncMock()
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        mcp_json_fetcher=fetcher,
+    )
+    await reader.read_model_configs_async()
+
+    # Fetcher should NOT have been called since nothing is unresolved
+    fetcher.fetch_plugins_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_still_fails_gracefully(
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """When retry also fails, models are returned unresolved without error."""
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    unresolved_model = _model_with_unresolved_mcp()
+    cache_mock = AsyncMock()
+    cache_mock.get.return_value = [unresolved_model]
+
+    fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher.fetch_plugins_async = AsyncMock(return_value={})
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        mcp_json_fetcher=fetcher,
+    )
+    result = await reader.read_model_configs_async()
+
+    # Models returned but mcp_server still unresolved
+    agents = result[0].get_agents()
+    assert agents[0].mcp_server == "*"
+    assert agents[0].url is None
+
+
+@pytest.mark.asyncio
+async def test_no_retry_when_no_mcp_refs(
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """Models without mcp_server references skip the retry entirely."""
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    cache_mock = AsyncMock()
+    cache_mock.get.return_value = [_model_without_mcp()]
+
+    fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher.fetch_plugins_async = AsyncMock()
+
+    reader = ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        mcp_json_fetcher=fetcher,
+    )
+    await reader.read_model_configs_async()
+
+    fetcher.fetch_plugins_async.assert_not_awaited()

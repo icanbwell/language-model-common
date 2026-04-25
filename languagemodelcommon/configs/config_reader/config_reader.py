@@ -80,6 +80,11 @@ class ConfigReader:
             models_testing_path=models_testing_path,
         )
 
+        # Retry MCP resolution for cached models that have unresolved servers
+        # (e.g. the MCP server was unavailable during initial config load)
+        if self._has_unresolved_mcp_servers(base_models):
+            await self._retry_mcp_resolution(base_models, config_path)
+
         if client_id:
             override_models = await self._read_override_models_async(
                 config_path=config_path,
@@ -371,6 +376,35 @@ class ConfigReader:
         )
         if plugin_configs:
             resolve_mcp_servers_from_plugins(models, plugin_configs)
+
+    @staticmethod
+    def _has_unresolved_mcp_servers(models: List[ChatModelConfig]) -> bool:
+        """Check whether any model has agents with ``mcp_server`` set but no ``url``."""
+        for model in models:
+            for agent in model.get_agents():
+                if agent.mcp_server and not agent.url:
+                    return True
+        return False
+
+    async def _retry_mcp_resolution(
+        self, models: List[ChatModelConfig], config_path: str
+    ) -> None:
+        """Re-attempt MCP server resolution for models with unresolved refs.
+
+        Called when cached configs still carry ``mcp_server`` references
+        without a resolved ``url`` — typically because the MCP server was
+        unreachable during the initial config load.  On success the
+        in-memory and snapshot caches are updated so subsequent requests
+        use the resolved configs.
+        """
+        logger.info("Retrying MCP server resolution for models with unresolved refs")
+        await self._resolve_mcp_servers_async(models, config_path)
+        if not self._has_unresolved_mcp_servers(models):
+            logger.info("MCP server resolution retry succeeded — updating caches")
+            await self._cache.set(models)
+            await self._write_to_snapshot_cache(models)
+        else:
+            logger.warning("MCP server resolution retry did not resolve all refs")
 
     @staticmethod
     def _resolve_default_config_path(config_path: str) -> str:
