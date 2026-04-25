@@ -49,6 +49,8 @@ class McpJsonReader:
 
         logger.info("Loading MCP servers from %s", path)
         try:
+            if ".." in str(path):
+                raise Exception("Invalid file path")
             with open(path, "r", encoding="utf-8") as f:
                 data: Any = substitute_env_vars(json.load(f))
         except Exception:
