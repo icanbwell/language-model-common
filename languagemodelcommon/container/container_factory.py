@@ -8,7 +8,6 @@ from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
 from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
-from languagemodelcommon.configs.config_reader.mcp_json_reader import McpJsonReader
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -82,10 +81,6 @@ class LanguageModelCommonContainerFactory:
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
             ),
         )
-        container.singleton(
-            McpJsonReader,
-            lambda c: McpJsonReader(),
-        )
 
         def _create_mcp_json_fetcher(c: Any) -> McpJsonFetcher | None:
             url = c.resolve(LanguageModelCommonEnvironmentVariables).plugins_mcp_server
@@ -124,7 +119,6 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
-                mcp_json_reader=c.resolve(McpJsonReader),
                 mcp_json_fetcher=c.resolve(McpJsonFetcher),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
                 snapshot_cache_store=c.resolve(KeyValueBaseStore),

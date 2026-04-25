@@ -30,8 +30,6 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
-    McpJsonReader,
-    resolve_mcp_servers,
     resolve_mcp_servers_from_plugins,
 )
 
@@ -46,7 +44,6 @@ class ConfigReader:
         cache: ConfigExpiringCache,
         prompt_library_manager: PromptLibraryManager,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
-        mcp_json_reader: McpJsonReader | None = None,
         mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
         snapshot_cache_store: BaseStore | None = None,
@@ -66,7 +63,6 @@ class ConfigReader:
             github_directory_helper
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
-        self._mcp_json_reader = mcp_json_reader or McpJsonReader()
         self._mcp_json_fetcher = mcp_json_fetcher
         self._snapshot_cache_store = snapshot_cache_store
         self._snapshot_cache_collection = (
@@ -343,36 +339,38 @@ class ConfigReader:
     ) -> None:
         """Resolve ``mcp_server`` references on model tools/agents.
 
-        Uses the ``McpJsonFetcher`` (per-plugin MCP configs from the
-        skills server) when available, filtering by each model's
-        ``plugins`` list.  Falls back to a local ``.mcp.json`` file
-        via ``McpJsonReader`` for models without ``plugins`` or when
-        the fetcher is not configured.
+        All MCP server definitions come from marketplace plugins via
+        the ``McpJsonFetcher``.  Each model must declare its ``plugins``
+        list; servers are resolved only from those declared plugins.
         """
-        has_plugins = any(m.plugins for m in models)
         has_mcp_refs = any(a.mcp_server for m in models for a in m.get_agents())
         if not has_mcp_refs:
             return
 
-        # Try plugin-scoped resolution via McpJsonFetcher
-        if has_plugins and self._mcp_json_fetcher:
-            plugin_configs = await self._mcp_json_fetcher.fetch_async()
-            if plugin_configs:
-                resolve_mcp_servers_from_plugins(models, plugin_configs)
-
-        # Fallback: resolve any remaining mcp_server refs from local .mcp.json
-        remaining = [
-            m
-            for m in models
-            if not m.plugins and any(a.mcp_server and not a.url for a in m.get_agents())
-        ]
-        if remaining:
-            mcp_json_path = FileConfigReader.discover_mcp_json_path(config_path)
-            mcp_config = self._mcp_json_reader.read_mcp_json(
-                mcp_json_path=mcp_json_path
+        if not self._mcp_json_fetcher:
+            logger.warning(
+                "Models have mcp_server references but no McpJsonFetcher "
+                "is configured — MCP servers will not be resolved"
             )
-            if mcp_config:
-                resolve_mcp_servers(remaining, mcp_config)
+            return
+
+        all_plugin_names: list[str] = []
+        for m in models:
+            if m.plugins:
+                all_plugin_names.extend(m.plugins)
+        unique_plugins = list(dict.fromkeys(all_plugin_names))
+        if not unique_plugins:
+            logger.warning(
+                "Models have mcp_server references but no plugins declared "
+                "— MCP servers will not be resolved"
+            )
+            return
+
+        plugin_configs = await self._mcp_json_fetcher.fetch_plugins_async(
+            unique_plugins
+        )
+        if plugin_configs:
+            resolve_mcp_servers_from_plugins(models, plugin_configs)
 
     @staticmethod
     def _resolve_default_config_path(config_path: str) -> str:
