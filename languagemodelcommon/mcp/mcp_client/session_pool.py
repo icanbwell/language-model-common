@@ -61,26 +61,34 @@ class _PooledSession:
         cm: AbstractAsyncContextManager[ClientSession] = create_mcp_session(
             config, mcp_callbacks=mcp_callbacks
         )
+
         try:
             session = await cm.__aenter__()
-            try:
-                await session.initialize()
-            except BaseException:
-                await cm.__aexit__(None, None, None)
-                raise
-            self.session = session
-            self._ready_event.set()
-            await self._close_event.wait()
         except BaseException as exc:
             self._error = exc
             self._ready_event.set()
             return
+
+        try:
+            await session.initialize()
+        except BaseException as exc:
+            self._error = exc
+            self._ready_event.set()
+            await self._safe_exit(cm)
+            return
+
+        self.session = session
+        self._ready_event.set()
+        try:
+            await self._close_event.wait()
         finally:
-            if hasattr(self, "session"):
-                try:
-                    await cm.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning("Error closing MCP session for %s: %s", self.url, e)
+            await self._safe_exit(cm)
+
+    async def _safe_exit(self, cm: AbstractAsyncContextManager[ClientSession]) -> None:
+        try:
+            await cm.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning("Error closing MCP session for %s: %s", self.url, e)
 
     async def close(self) -> None:
         """Signal the background task to exit and wait for it."""
