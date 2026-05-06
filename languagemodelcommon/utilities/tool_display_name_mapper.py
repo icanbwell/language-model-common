@@ -102,6 +102,10 @@ class ToolDisplayNameMapper:
             return f"\n📖 Reading resource from skill: {name_for_tool}.\n"
         elif tool_name == "run_python_script":
             return f"\n🐍 Running Python script: {name_for_tool}.\n"
+        elif tool_name == "call_tool":
+            return f"\n🛠️ Call Tool: {name_for_tool}.\n"
+        elif tool_name == "search_tools":
+            return f"Search Tools: \n{name_for_tool}.\n"
         else:
             return f"\n{name_for_tool}.\n"
 
@@ -127,6 +131,23 @@ class ToolDisplayNameMapper:
             display_name = f"{Humanizer.humanize_tool_name(key=skill_name)} {Humanizer.humanize_tool_name(key=resource_name)}"
         elif tool_name == "run_python_script":
             display_name = str(inputs.get("skill_name") or "")
+        elif tool_name == "call_tool":
+            target_tool_name = str(inputs.get("name") or "")
+            if target_tool_name:
+                configured = self._name_to_display_name.get(target_tool_name)
+                display_name = (
+                    configured
+                    if configured
+                    else Humanizer.humanize_tool_name(target_tool_name)
+                )
+            else:
+                display_name = "Call Tool"
+        elif tool_name == "search_tools":
+            query = str(inputs.get("query") or "")
+            if query:
+                display_name = f"🔍 Search Tools ({query})"
+            else:
+                display_name = "🔍 Search Tools"
         else:
             display_name = self.get_display_name(tool_name=tool_name)
         return f"{display_name}"
