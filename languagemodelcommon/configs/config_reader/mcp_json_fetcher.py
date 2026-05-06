@@ -92,6 +92,59 @@ class McpJsonFetcher:
         )
         return McpJsonConfig(mcpServers=servers)
 
+    async def fetch_all_async(self) -> McpJsonConfig | None:
+        """Fetch MCP server config for all plugins in a single call.
+
+        Calls the ``get_mcp_servers_config`` tool without a plugin_name
+        argument, which returns all MCP server definitions merged across
+        all plugins.
+        """
+        config: MCPConnectionConfig = {
+            "url": self._url,
+            "transport": "streamable_http",
+        }
+        try:
+            async with create_mcp_session(config) as session:
+                await session.initialize()
+                result = await session.call_tool(TOOL_NAME, {})
+        except Exception:
+            logger.exception(
+                "Failed to fetch all MCP configs from %s",
+                self._url,
+            )
+            return None
+
+        text_parts = [
+            block.text for block in (result.content or []) if hasattr(block, "text")
+        ]
+        if not text_parts:
+            logger.warning(
+                "get_mcp_servers_config returned no text from %s",
+                self._url,
+            )
+            return None
+
+        raw_json = text_parts[0]
+        try:
+            data: Any = substitute_env_vars(json.loads(raw_json))
+        except (json.JSONDecodeError, TypeError):
+            logger.exception(
+                "Failed to parse MCP config JSON from %s",
+                self._url,
+            )
+            return None
+
+        servers = data.get("mcpServers", {})
+        if not isinstance(servers, dict) or not servers:
+            return None
+
+        logger.info(
+            "Fetched %d MCP server definition(s) for all plugins via %s",
+            len(servers),
+            self._url,
+        )
+        return McpJsonConfig(mcpServers=servers)
+
     async def fetch_plugins_async(
         self, plugin_names: list[str]
     ) -> dict[str, McpJsonConfig]:
