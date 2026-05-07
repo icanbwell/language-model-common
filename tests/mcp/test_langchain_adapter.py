@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from mcp.types import Tool as MCPTool, ToolAnnotations
 
 from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
     _resolve_mcp_title,
+    _sanitize_tool_name,
     mcp_tool_to_langchain_tool,
 )
 from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
@@ -60,6 +62,34 @@ class TestResolveMcpTitle:
             annotations=ToolAnnotations(),
         )
         assert _resolve_mcp_title(tool) is None
+
+
+class TestSanitizeToolName:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("get_weather", "get_weather"),
+            ("search-code", "search-code"),
+            ("github.search_code", "github_search_code"),
+            ("namespace:operation", "namespace_operation"),
+            ("tool/with/slashes", "tool_with_slashes"),
+            ("tool with spaces", "tool_with_spaces"),
+            ("complex.name:v2/query", "complex_name_v2_query"),
+        ],
+    )
+    def test_sanitizes_invalid_characters(self, raw: str, expected: str) -> None:
+        assert _sanitize_tool_name(raw) == expected
+
+    def test_sanitized_name_used_in_langchain_tool(self) -> None:
+        mcp_tool = MCPTool(
+            name="github.search_code",
+            description="Search code",
+            inputSchema={"type": "object"},
+        )
+        lc_tool = mcp_tool_to_langchain_tool(
+            mcp_tool, connection=_make_connection_config()
+        )
+        assert lc_tool.name == "github_search_code"
 
 
 class TestMcpToolToLangchainToolMetadata:

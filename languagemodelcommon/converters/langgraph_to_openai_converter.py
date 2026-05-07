@@ -666,6 +666,31 @@ class LangGraphToOpenAIConverter:
                 raise BaileyException(
                     "Upstream model timed out while streaming. Please try again."
                 ) from e
+            if "toolUse.name" in str(e) or "tool_use" in str(e).lower():
+                tool_names_in_messages = []
+                for msg in messages:
+                    if hasattr(msg, "tool_calls"):
+                        for tc in msg.tool_calls or []:
+                            tool_names_in_messages.append(
+                                tc.get("name", "unknown")
+                                if isinstance(tc, dict)
+                                else getattr(tc, "name", "unknown")
+                            )
+                    if hasattr(msg, "name") and msg.name:
+                        tool_names_in_messages.append(f"msg.name={msg.name}")
+                    if hasattr(msg, "content") and isinstance(msg.content, list):
+                        for block in msg.content:
+                            if (
+                                isinstance(block, dict)
+                                and block.get("type") == "tool_use"
+                            ):
+                                tool_names_in_messages.append(
+                                    f"content.tool_use.name={block.get('name')}"
+                                )
+                logger.error(
+                    "Tool name validation failed. Tool names in messages: %s",
+                    tool_names_in_messages,
+                )
             logger.exception(
                 "Exception occurred while streaming graph. request_id=%s message_count=%d error=%s",
                 request_information.request_id,

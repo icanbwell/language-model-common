@@ -44,6 +44,7 @@ from languagemodelcommon.mcp.interceptors.truncation import (
     TruncationMcpCallInterceptor,
 )
 from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
+    _sanitize_tool_name,
     mcp_tool_to_langchain_tool,
 )
 from languagemodelcommon.mcp.mcp_client.session import (
@@ -360,6 +361,22 @@ class MCPToolProvider:
                     await session.initialize()
                     mcp_tools = await list_all_tools(session)
 
+                logger.info(
+                    "MCP tools discovered from '%s': %s",
+                    tool_config.name,
+                    [t.name for t in mcp_tools],
+                )
+                invalid_names = [
+                    t.name for t in mcp_tools if _sanitize_tool_name(t.name) != t.name
+                ]
+                if invalid_names:
+                    logger.warning(
+                        "MCP server '%s' returned tools with names that require "
+                        "sanitization for LLM provider compatibility: %s",
+                        tool_config.name,
+                        invalid_names,
+                    )
+
                 tools = [
                     mcp_tool_to_langchain_tool(
                         mcp_tool,
@@ -398,7 +415,8 @@ class MCPToolProvider:
                 return []
 
             if tool_names and tools:
-                tools = [t for t in tools if t.name in tool_names]
+                sanitized_filter = {_sanitize_tool_name(n) for n in tool_names}
+                tools = [t for t in tools if t.name in sanitized_filter]
             return tools
         except* HTTPStatusError as e:
             tool_url = tool_config.url or "unknown"

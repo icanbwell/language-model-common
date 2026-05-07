@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -22,6 +23,17 @@ from languagemodelcommon.mcp.mcp_client.tool_invocation import (
     _make_execute_tool,
     build_interceptor_chain,
 )
+
+
+_INVALID_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitize_tool_name(name: str) -> str:
+    """Replace characters that violate LLM provider tool-name constraints.
+
+    AWS Bedrock ConverseStream requires: [a-zA-Z0-9_-]+
+    """
+    return _INVALID_TOOL_NAME_CHARS.sub("_", name)
 
 
 def _resolve_mcp_title(tool: MCPTool) -> str | None:
@@ -93,7 +105,7 @@ def mcp_tool_to_langchain_tool(
         metadata["mcp_description"] = tool.description
 
     return StructuredTool(
-        name=tool.name,
+        name=_sanitize_tool_name(tool.name),
         description=tool.description or "",
         args_schema=tool.inputSchema,
         coroutine=call_tool,
