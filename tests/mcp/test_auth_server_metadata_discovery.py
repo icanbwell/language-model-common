@@ -83,3 +83,38 @@ async def test_optional_fields_none() -> None:
     assert result.registration_url is None
     assert result.issuer is None
     assert result.scopes is None
+
+
+@pytest.mark.parametrize(
+    "mcp_server_url,expected",
+    [
+        (
+            "https://mcp.example.com/skills-library/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/skills-library",
+        ),
+        (
+            "https://mcp.example.com/skills-library",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/skills-library",
+        ),
+        (
+            "https://mcp.example.com/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource",
+        ),
+        (
+            "https://mcp.example.com",
+            "https://mcp.example.com/.well-known/oauth-protected-resource",
+        ),
+        (
+            "https://mcp.example.com/api/v1/mcp",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/api/v1/mcp",
+        ),
+    ],
+)
+def test_build_protected_resource_metadata_url(
+    mcp_server_url: str, expected: str
+) -> None:
+    """RFC 9728 URL is built correctly, trailing slashes are normalized."""
+    result = McpAuthServerDiscovery._build_protected_resource_metadata_url(
+        mcp_server_url
+    )
+    assert result == expected
