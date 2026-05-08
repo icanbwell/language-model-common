@@ -32,6 +32,14 @@ class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
         return self._prompt_library_path
 
 
+def _make_snapshot_store_mock() -> AsyncMock:
+    """Create an AsyncMock that quacks like key_value BaseStore."""
+    store = AsyncMock()
+    store.get = AsyncMock(return_value=None)
+    store.put = AsyncMock()
+    return store
+
+
 @pytest.fixture
 def cache_mock() -> AsyncMock:
     mock = AsyncMock()
@@ -54,15 +62,20 @@ def config_reader(
 
 
 @pytest.mark.asyncio
-async def test_cache_hit(
+async def test_snapshot_cache_hit(
     monkeypatch: Any,
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
-    cache_mock.get.return_value = [ChatModelConfig(id="1", name="Test", description="")]
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [ChatModelConfig(id="1", name="Test", description="").model_dump()],
+    }
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "Test"
@@ -288,14 +301,6 @@ async def test_inline_prompt_content_still_works(
 # ── Snapshot cache tests ────────────────────────────────────────────
 
 
-def _make_snapshot_store_mock() -> AsyncMock:
-    """Create an AsyncMock that quacks like key_value BaseStore."""
-    store = AsyncMock()
-    store.get = AsyncMock(return_value=None)
-    store.put = AsyncMock()
-    return store
-
-
 _SAMPLE_MODEL = ChatModelConfig(id="snap-1", name="SnapModel", description="cached")
 
 
@@ -463,7 +468,7 @@ async def test_clear_cache_deletes_snapshot_entry(
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
-    """clear_cache() should delete both in-memory and snapshot cache entries."""
+    """clear_cache() should delete the snapshot cache entry."""
     snapshot_store = _make_snapshot_store_mock()
     snapshot_store.delete = AsyncMock(return_value=True)
 
@@ -474,7 +479,6 @@ async def test_clear_cache_deletes_snapshot_entry(
     )
     await reader.clear_cache()
 
-    cache_mock.clear.assert_awaited_once()
     snapshot_store.delete.assert_awaited_once_with(
         "model_configs",
         collection=None,
@@ -486,14 +490,13 @@ async def test_clear_cache_without_snapshot_store(
     cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
-    """clear_cache() with no snapshot store should only clear in-memory cache."""
+    """clear_cache() with no snapshot store is a no-op."""
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         snapshot_cache_store=None,
     )
     await reader.clear_cache()
-    cache_mock.clear.assert_awaited_once()
 
 
 # ── MCP resolution retry tests ─────────────────────────────────────
@@ -532,13 +535,15 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When cache returns models with unresolved mcp_server refs, retry resolves them."""
+    """When snapshot returns models with unresolved mcp_server refs, retry resolves them."""
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    cache_mock = AsyncMock()
-    cache_mock.get.return_value = [unresolved_model]
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [unresolved_model.model_dump()],
+    }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher.fetch_plugins_async = AsyncMock(
@@ -546,9 +551,9 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     )
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
 
@@ -557,16 +562,16 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     assert len(agents) == 2
     assert all(a.url for a in agents), "All agents should have resolved URLs"
 
-    # Cache should have been updated with resolved models
-    assert cache_mock.set.await_count >= 1
+    # Snapshot cache should have been updated with resolved models
+    assert snapshot_store.put.await_count >= 1
 
 
 @pytest.mark.asyncio
-async def test_no_retry_when_mcp_already_resolved(
+async def test_first_request_always_resolves_mcp(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When cached models have resolved URLs, no retry is attempted."""
+    """First request always re-resolves MCP servers even if URLs are present."""
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
@@ -581,21 +586,25 @@ async def test_no_retry_when_mcp_already_resolved(
             ),
         ],
     )
-    cache_mock = AsyncMock()
-    cache_mock.get.return_value = [resolved_model]
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [resolved_model.model_dump()],
+    }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
-    fetcher.fetch_plugins_async = AsyncMock()
+    fetcher.fetch_plugins_async = AsyncMock(
+        return_value={"all-employees": _mcp_json_config()}
+    )
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        snapshot_cache_store=snapshot_store,
     )
     await reader.read_model_configs_async()
 
-    # Fetcher should NOT have been called since nothing is unresolved
-    fetcher.fetch_plugins_async.assert_not_awaited()
+    # First request always resolves to pick up .mcp.json changes
+    fetcher.fetch_plugins_async.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -608,16 +617,18 @@ async def test_retry_still_fails_gracefully(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    cache_mock = AsyncMock()
-    cache_mock.get.return_value = [unresolved_model]
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [unresolved_model.model_dump()],
+    }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher.fetch_plugins_async = AsyncMock(return_value={})
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
 
@@ -636,16 +647,18 @@ async def test_no_retry_when_no_mcp_refs(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_mock = AsyncMock()
-    cache_mock.get.return_value = [_model_without_mcp()]
+    snapshot_store = _make_snapshot_store_mock()
+    snapshot_store.get.return_value = {
+        "models": [_model_without_mcp().model_dump()],
+    }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher.fetch_plugins_async = AsyncMock()
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        snapshot_cache_store=snapshot_store,
     )
     await reader.read_model_configs_async()
 

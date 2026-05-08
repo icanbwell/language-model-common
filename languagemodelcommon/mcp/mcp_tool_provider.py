@@ -318,6 +318,17 @@ class MCPToolProvider:
             # Attach auth headers for discovery if needed.
             discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
             requires_auth = tool_config.auth or tool_config.oauth is not None
+            logger.info(
+                "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
+                "requires_auth=%s, has_headers=%s, header_keys=%s",
+                tool_config.name,
+                tool_config.auth,
+                tool_config.oauth is not None,
+                tool_config.auth_providers,
+                requires_auth,
+                bool(headers),
+                list(headers.keys()) if headers else [],
+            )
             if headers and requires_auth:
                 if tool_config.auth_providers:
                     resolved_header: (
@@ -332,8 +343,10 @@ class MCPToolProvider:
                             "Authorization": resolved_header,
                         }
                         logger.info(
-                            "Tool discovery for '%s': attached resolved auth header",
+                            "Tool discovery for '%s': attached resolved auth header: %s...%s",
                             tool_config.name,
+                            resolved_header[:20],
+                            resolved_header[-10:] if len(resolved_header) > 30 else "",
                         )
                     else:
                         logger.info(
@@ -351,8 +364,10 @@ class MCPToolProvider:
                             "Authorization": auth_header,
                         }
                         logger.info(
-                            "Tool discovery for '%s': forwarding pass-through auth header",
+                            "Tool discovery for '%s': forwarding pass-through token: %s...%s",
                             tool_config.name,
+                            auth_header[:20],
+                            auth_header[-10:] if len(auth_header) > 30 else "",
                         )
                     else:
                         logger.info(
@@ -678,10 +693,14 @@ class MCPToolProvider:
             if tool_config.url is None:
                 continue
             logger.info(
-                "discover_tool_catalog Registering server: %s (url: %s, category: %s)",
+                "discover_tool_catalog Registering server: %s (url: %s, category: %s, "
+                "auth=%s, oauth=%s, auth_providers=%s)",
                 tool_config.name,
                 tool_config.url,
                 tool_config.description,
+                tool_config.auth,
+                tool_config.oauth is not None,
+                tool_config.auth_providers,
             )
             catalog.register_server(
                 server_name=tool_config.name,
@@ -702,6 +721,17 @@ class MCPToolProvider:
 
         # Attach auth headers for discovery if needed
         requires_auth = tool_config.auth or tool_config.oauth is not None
+        logger.info(
+            "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
+            "requires_auth=%s, has_headers=%s, header_keys=%s",
+            tool_config.name,
+            tool_config.auth,
+            tool_config.oauth is not None,
+            tool_config.auth_providers,
+            requires_auth,
+            bool(headers),
+            list(headers.keys()) if headers else [],
+        )
         if headers and requires_auth:
             if tool_config.auth_providers:
                 resolved_header = (
@@ -713,8 +743,10 @@ class MCPToolProvider:
                     existing = config.get("headers") or {}
                     config["headers"] = {**existing, "Authorization": resolved_header}
                     logger.info(
-                        "Tool discovery for '%s': attached resolved auth header",
+                        "Tool discovery for '%s': attached resolved auth header: %s...%s",
                         tool_config.name,
+                        resolved_header[:20],
+                        resolved_header[-10:] if len(resolved_header) > 30 else "",
                     )
                 else:
                     logger.info(
@@ -727,8 +759,10 @@ class MCPToolProvider:
                     existing = config.get("headers") or {}
                     config["headers"] = {**existing, "Authorization": auth_header}
                     logger.info(
-                        "Tool discovery for '%s': forwarding pass-through auth header",
+                        "Tool discovery for '%s': forwarding pass-through token: %s...%s",
                         tool_config.name,
+                        auth_header[:20],
+                        auth_header[-10:] if len(auth_header) > 30 else "",
                     )
                 else:
                     logger.info(

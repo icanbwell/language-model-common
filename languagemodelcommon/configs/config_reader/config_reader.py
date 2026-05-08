@@ -22,7 +22,7 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from key_value.aio.stores.base import BaseStore
 
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,
+    ConfigExpiringCache,  # kept for backwards-compatible constructor signature
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -41,7 +41,7 @@ class ConfigReader:
     def __init__(
         self,
         *,
-        cache: ConfigExpiringCache,
+        cache: ConfigExpiringCache | None = None,
         prompt_library_manager: PromptLibraryManager,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
         mcp_json_fetcher: McpJsonFetcher | None = None,
@@ -50,11 +50,7 @@ class ConfigReader:
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
-        if cache is None:
-            raise ValueError("cache must not be None")
-        self._cache: ConfigExpiringCache = cache
-        if self._cache is None:
-            raise ValueError("self._cache must not be None")
+        self._mcp_resolved_once: bool = False
         self._prompt_library_manager = prompt_library_manager
         self._environment_variables = (
             environment_variables or LanguageModelCommonEnvironmentVariables()
@@ -80,10 +76,11 @@ class ConfigReader:
             models_testing_path=models_testing_path,
         )
 
-        # Retry MCP resolution for cached models that have unresolved servers
-        # (e.g. the MCP server was unavailable during initial config load)
-        if self._has_unresolved_mcp_servers(base_models):
+        # Re-resolve MCP servers on first request (snapshot may be stale)
+        # and on subsequent requests if servers remain unresolved.
+        if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
             await self._retry_mcp_resolution(base_models, config_path)
+            self._mcp_resolved_once = True
 
         if client_id:
             override_models = await self._read_override_models_async(
@@ -105,28 +102,20 @@ class ConfigReader:
         config_path: str,
         models_testing_path: Optional[str],
     ) -> List[ChatModelConfig]:
-        cached_configs: List[ChatModelConfig] | None = await self._cache.get()
-        if cached_configs is not None:
-            logger.debug(
-                "ConfigReader with id: %s using cached model configurations",
-                self._identifier,
-            )
-            return cached_configs
-        logger.info("ConfigReader with id: %s cache is empty", self._identifier)
+        # Read from MongoDB snapshot cache
+        models = await self._read_from_snapshot_cache()
+        if models:
+            return models
+
+        logger.info(
+            "ConfigReader with id: %s no snapshot cache, reading from source",
+            self._identifier,
+        )
 
         async with self._lock:
-            cached_configs = await self._cache.get()
-            if cached_configs is not None:
-                logger.debug(
-                    "ConfigReader with id: %s using cached model configurations",
-                    self._identifier,
-                )
-                return cached_configs
-
-            # Check MongoDB snapshot cache before hitting filesystem/GitHub
+            # Double-check after acquiring lock
             models = await self._read_from_snapshot_cache()
             if models:
-                await self._cache.set(models)
                 return models
 
             default_config_path = self._resolve_default_config_path(config_path)
@@ -143,25 +132,14 @@ class ConfigReader:
             )
 
             if not models:
-                stale = await self._cache.get_stale()
-                if stale:
-                    logger.warning(
-                        "ConfigReader with id: %s read 0 model configurations "
-                        "from %s — returning %d stale cached configs",
-                        self._identifier,
-                        default_config_path,
-                        len(stale),
-                    )
-                    return stale
                 logger.warning(
                     "ConfigReader with id: %s read 0 model configurations "
-                    "from %s and no stale cache available",
+                    "from %s and no snapshot cache available",
                     self._identifier,
                     default_config_path,
                 )
                 return models
 
-            await self._cache.set(models)
             await self._write_to_snapshot_cache(models)
             return models
 
@@ -391,20 +369,18 @@ class ConfigReader:
     ) -> None:
         """Re-attempt MCP server resolution for models with unresolved refs.
 
-        Called when cached configs still carry ``mcp_server`` references
-        without a resolved ``url`` — typically because the MCP server was
-        unreachable during the initial config load.  On success the
-        in-memory and snapshot caches are updated so subsequent requests
-        use the resolved configs.
+        Called on first request (to pick up .mcp.json changes not in the
+        snapshot) and when cached configs carry ``mcp_server`` references
+        without a resolved ``url``.  Always writes back to the snapshot
+        cache so subsequent reads get the resolved data.
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models, config_path)
-        if not self._has_unresolved_mcp_servers(models):
-            logger.info("MCP server resolution retry succeeded — updating caches")
-            await self._cache.set(models)
-            await self._write_to_snapshot_cache(models)
-        else:
+        await self._write_to_snapshot_cache(models)
+        if self._has_unresolved_mcp_servers(models):
             logger.warning("MCP server resolution retry did not resolve all refs")
+        else:
+            logger.info("MCP server resolution retry succeeded")
 
     @staticmethod
     def _resolve_default_config_path(config_path: str) -> str:
@@ -601,13 +577,12 @@ class ConfigReader:
                 ) from exc
 
     async def clear_cache(self) -> None:
-        await self._cache.clear()
         if self._snapshot_cache_store:
             await self._snapshot_cache_store.delete(
                 self._SNAPSHOT_CACHE_KEY,
                 collection=self._snapshot_cache_collection,
             )
         logger.info(
-            "ConfigReader with id: %s cleared in-memory and snapshot caches",
+            "ConfigReader with id: %s cleared snapshot cache",
             self._identifier,
         )
