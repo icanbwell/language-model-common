@@ -317,7 +317,8 @@ class MCPToolProvider:
 
             # Attach auth headers for discovery if needed.
             discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
-            if headers and tool_config.auth:
+            requires_auth = tool_config.auth or tool_config.oauth is not None
+            if headers and requires_auth:
                 if tool_config.auth_providers:
                     resolved_header: (
                         str | None
@@ -330,6 +331,15 @@ class MCPToolProvider:
                             **existing_headers,
                             "Authorization": resolved_header,
                         }
+                        logger.info(
+                            "Tool discovery for '%s': attached resolved auth header",
+                            tool_config.name,
+                        )
+                    else:
+                        logger.info(
+                            "Tool discovery for '%s': auth_providers set but no token resolved",
+                            tool_config.name,
+                        )
                 else:
                     auth_header: str | None = (
                         AuthMcpCallInterceptor._extract_auth_header(headers)
@@ -340,6 +350,20 @@ class MCPToolProvider:
                             **existing_headers,
                             "Authorization": auth_header,
                         }
+                        logger.info(
+                            "Tool discovery for '%s': forwarding pass-through auth header",
+                            tool_config.name,
+                        )
+                    else:
+                        logger.info(
+                            "Tool discovery for '%s': requires auth but no Authorization header in request",
+                            tool_config.name,
+                        )
+            elif requires_auth:
+                logger.info(
+                    "Tool discovery for '%s': requires auth but no headers provided",
+                    tool_config.name,
+                )
 
             callbacks = Callbacks(
                 on_progress=self.on_mcp_tool_progress,
@@ -677,7 +701,8 @@ class MCPToolProvider:
         config = self._build_connection_config(tool_config)
 
         # Attach auth headers for discovery if needed
-        if headers and tool_config.auth:
+        requires_auth = tool_config.auth or tool_config.oauth is not None
+        if headers and requires_auth:
             if tool_config.auth_providers:
                 resolved_header = (
                     await auth_interceptor.resolve_auth_header_for_discovery(
@@ -687,11 +712,34 @@ class MCPToolProvider:
                 if resolved_header:
                     existing = config.get("headers") or {}
                     config["headers"] = {**existing, "Authorization": resolved_header}
+                    logger.info(
+                        "Tool discovery for '%s': attached resolved auth header",
+                        tool_config.name,
+                    )
+                else:
+                    logger.info(
+                        "Tool discovery for '%s': auth_providers set but no token resolved",
+                        tool_config.name,
+                    )
             else:
                 auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
                 if auth_header:
                     existing = config.get("headers") or {}
                     config["headers"] = {**existing, "Authorization": auth_header}
+                    logger.info(
+                        "Tool discovery for '%s': forwarding pass-through auth header",
+                        tool_config.name,
+                    )
+                else:
+                    logger.info(
+                        "Tool discovery for '%s': requires auth but no Authorization header in request",
+                        tool_config.name,
+                    )
+        elif requires_auth:
+            logger.info(
+                "Tool discovery for '%s': requires auth but no headers provided",
+                tool_config.name,
+            )
 
         callbacks = Callbacks(
             on_progress=self.on_mcp_tool_progress,
