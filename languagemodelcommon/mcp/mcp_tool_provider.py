@@ -290,6 +290,7 @@ class MCPToolProvider:
             tool_config: An AgentConfig instance containing the tool's configuration.
             headers: A dictionary of headers to include in the request, such as Authorization.
             auth_interceptor: An AuthMcpCallInterceptor instance.
+            session_pool: An optional session pool instance.
         Returns:
             A list of BaseTool instances retrieved from the MCP.
         """
@@ -315,70 +316,62 @@ class MCPToolProvider:
                 tool_config.tools.split(",") if tool_config.tools else None
             )
 
-            # Attach auth headers for discovery if needed.
+            # Attach auth headers for discovery.
             discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
-            requires_auth = tool_config.auth or tool_config.oauth is not None
             logger.info(
                 "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
-                "requires_auth=%s, has_headers=%s, header_keys=%s",
+                "has_headers=%s, header_keys=%s",
                 tool_config.name,
                 tool_config.auth,
                 tool_config.oauth is not None,
                 tool_config.auth_providers,
-                requires_auth,
                 bool(headers),
                 list(headers.keys()) if headers else [],
             )
-            if headers and requires_auth:
-                if tool_config.auth_providers:
-                    resolved_header: (
-                        str | None
-                    ) = await auth_interceptor.resolve_auth_header_for_discovery(
-                        tool_config
-                    )
-                    if resolved_header:
-                        existing_headers = discovery_config.get("headers") or {}
-                        discovery_config["headers"] = {
-                            **existing_headers,
-                            "Authorization": resolved_header,
-                        }
-                        logger.info(
-                            "Tool discovery for '%s': attached resolved auth header: %s...%s",
-                            tool_config.name,
-                            resolved_header[:20],
-                            resolved_header[-10:] if len(resolved_header) > 30 else "",
-                        )
-                    else:
-                        logger.info(
-                            "Tool discovery for '%s': auth_providers set but no token resolved",
-                            tool_config.name,
-                        )
-                else:
-                    auth_header: str | None = (
-                        AuthMcpCallInterceptor._extract_auth_header(headers)
-                    )
-                    if auth_header:
-                        existing_headers = discovery_config.get("headers") or {}
-                        discovery_config["headers"] = {
-                            **existing_headers,
-                            "Authorization": auth_header,
-                        }
-                        logger.info(
-                            "Tool discovery for '%s': forwarding pass-through token: %s...%s",
-                            tool_config.name,
-                            auth_header[:20],
-                            auth_header[-10:] if len(auth_header) > 30 else "",
-                        )
-                    else:
-                        logger.info(
-                            "Tool discovery for '%s': requires auth but no Authorization header in request",
-                            tool_config.name,
-                        )
-            elif requires_auth:
-                logger.info(
-                    "Tool discovery for '%s': requires auth but no headers provided",
-                    tool_config.name,
+            if headers and tool_config.auth_providers:
+                resolved_header: (
+                    str | None
+                ) = await auth_interceptor.resolve_auth_header_for_discovery(
+                    tool_config
                 )
+                if resolved_header:
+                    existing_headers = discovery_config.get("headers") or {}
+                    discovery_config["headers"] = {
+                        **existing_headers,
+                        "Authorization": resolved_header,
+                    }
+                    logger.info(
+                        "Tool discovery for '%s': attached resolved auth header: %s...%s",
+                        tool_config.name,
+                        resolved_header[:20],
+                        resolved_header[-10:] if len(resolved_header) > 30 else "",
+                    )
+                else:
+                    logger.info(
+                        "Tool discovery for '%s': auth_providers set but no token resolved",
+                        tool_config.name,
+                    )
+            elif headers:
+                auth_header: str | None = AuthMcpCallInterceptor._extract_auth_header(
+                    headers
+                )
+                if auth_header:
+                    existing_headers = discovery_config.get("headers") or {}
+                    discovery_config["headers"] = {
+                        **existing_headers,
+                        "Authorization": auth_header,
+                    }
+                    logger.info(
+                        "Tool discovery for '%s': forwarding pass-through token: %s...%s",
+                        tool_config.name,
+                        auth_header[:20],
+                        auth_header[-10:] if len(auth_header) > 30 else "",
+                    )
+                else:
+                    logger.info(
+                        "Tool discovery for '%s': no Authorization header in request",
+                        tool_config.name,
+                    )
 
             callbacks = Callbacks(
                 on_progress=self.on_mcp_tool_progress,
@@ -719,57 +712,56 @@ class MCPToolProvider:
         """List raw MCP tools from a configured server (no LangChain conversion)."""
         config = self._build_connection_config(tool_config)
 
-        # Attach auth headers for discovery if needed
-        requires_auth = tool_config.auth or tool_config.oauth is not None
+        # Attach auth headers for discovery.
+        # When auth_providers is configured, use the token exchange flow.
+        # Otherwise forward the caller's Authorization header directly —
+        # MCP servers that require auth need the token even if the config
+        # doesn't explicitly declare oauth/auth (e.g. stale snapshot cache).
         logger.info(
             "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
-            "requires_auth=%s, has_headers=%s, header_keys=%s",
+            "has_headers=%s, header_keys=%s",
             tool_config.name,
             tool_config.auth,
             tool_config.oauth is not None,
             tool_config.auth_providers,
-            requires_auth,
             bool(headers),
             list(headers.keys()) if headers else [],
         )
-        if headers and requires_auth:
-            if tool_config.auth_providers:
-                resolved_header = (
-                    await auth_interceptor.resolve_auth_header_for_discovery(
-                        tool_config
-                    )
+        if headers and tool_config.auth_providers:
+            resolved_header = await auth_interceptor.resolve_auth_header_for_discovery(
+                tool_config
+            )
+            if resolved_header:
+                existing = config.get("headers") or {}
+                config["headers"] = {**existing, "Authorization": resolved_header}
+                logger.info(
+                    "Tool discovery for '%s': attached resolved auth header: %s...%s",
+                    tool_config.name,
+                    resolved_header[:20],
+                    resolved_header[-10:] if len(resolved_header) > 30 else "",
                 )
-                if resolved_header:
-                    existing = config.get("headers") or {}
-                    config["headers"] = {**existing, "Authorization": resolved_header}
-                    logger.info(
-                        "Tool discovery for '%s': attached resolved auth header: %s...%s",
-                        tool_config.name,
-                        resolved_header[:20],
-                        resolved_header[-10:] if len(resolved_header) > 30 else "",
-                    )
-                else:
-                    logger.info(
-                        "Tool discovery for '%s': auth_providers set but no token resolved",
-                        tool_config.name,
-                    )
             else:
-                auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
-                if auth_header:
-                    existing = config.get("headers") or {}
-                    config["headers"] = {**existing, "Authorization": auth_header}
-                    logger.info(
-                        "Tool discovery for '%s': forwarding pass-through token: %s...%s",
-                        tool_config.name,
-                        auth_header[:20],
-                        auth_header[-10:] if len(auth_header) > 30 else "",
-                    )
-                else:
-                    logger.info(
-                        "Tool discovery for '%s': requires auth but no Authorization header in request",
-                        tool_config.name,
-                    )
-        elif requires_auth:
+                logger.info(
+                    "Tool discovery for '%s': auth_providers set but no token resolved",
+                    tool_config.name,
+                )
+        elif headers:
+            auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
+            if auth_header:
+                existing = config.get("headers") or {}
+                config["headers"] = {**existing, "Authorization": auth_header}
+                logger.info(
+                    "Tool discovery for '%s': forwarding pass-through token: %s...%s",
+                    tool_config.name,
+                    auth_header[:20],
+                    auth_header[-10:] if len(auth_header) > 30 else "",
+                )
+            else:
+                logger.info(
+                    "Tool discovery for '%s': no Authorization header in request",
+                    tool_config.name,
+                )
+        elif tool_config.auth == "jwt_token":
             logger.info(
                 "Tool discovery for '%s': requires auth but no headers provided",
                 tool_config.name,
