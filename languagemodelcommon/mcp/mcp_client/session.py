@@ -133,7 +133,7 @@ async def create_mcp_session(
         # which often contain the URL, causing the guard to pass
         # incorrectly and re-raising the raw ExceptionGroup.
         # Chain from e (not first) to preserve the full exception tree
-        # so _contains_http_401 can traverse all children.
+        # so _contains_http_auth_error can traverse all children.
         if url not in str(e):
             raise McpSessionError(
                 f"MCP session failed for {url}: {msg}",
