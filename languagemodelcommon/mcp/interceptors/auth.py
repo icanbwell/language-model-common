@@ -129,6 +129,13 @@ class AuthMcpCallInterceptor:
         ) -> MCPToolCallResult:
             tool_config = self._tool_configs_by_server_name.get(request.server_name)
             if tool_config is None or tool_config.auth != "jwt_token":
+                # Forward caller's token as pass-through even when config
+                # doesn't explicitly declare auth (e.g. stale snapshot cache)
+                auth_header = self._extract_auth_header(self._headers)
+                if auth_header:
+                    existing_headers: Dict[str, Any] = dict(request.headers or {})
+                    existing_headers["Authorization"] = auth_header
+                    request = request.override(headers=existing_headers)
                 return await self._call_handler_with_auth_error_handling(
                     handler=handler, request=request
                 )
@@ -136,7 +143,7 @@ class AuthMcpCallInterceptor:
             if not tool_config.auth_providers:
                 auth_header = self._extract_auth_header(self._headers)
                 if auth_header:
-                    existing_headers: Dict[str, Any] = dict(request.headers or {})
+                    existing_headers = dict(request.headers or {})
                     existing_headers["Authorization"] = auth_header
                     request = request.override(headers=existing_headers)
                 return await self._call_handler_with_auth_error_handling(

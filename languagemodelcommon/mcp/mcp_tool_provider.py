@@ -44,6 +44,7 @@ from languagemodelcommon.mcp.interceptors.truncation import (
     TruncationMcpCallInterceptor,
 )
 from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
+    _sanitize_tool_name,
     mcp_tool_to_langchain_tool,
 )
 from languagemodelcommon.mcp.mcp_client.session import (
@@ -289,6 +290,7 @@ class MCPToolProvider:
             tool_config: An AgentConfig instance containing the tool's configuration.
             headers: A dictionary of headers to include in the request, such as Authorization.
             auth_interceptor: An AuthMcpCallInterceptor instance.
+            session_pool: An optional session pool instance.
         Returns:
             A list of BaseTool instances retrieved from the MCP.
         """
@@ -314,31 +316,62 @@ class MCPToolProvider:
                 tool_config.tools.split(",") if tool_config.tools else None
             )
 
-            # Attach auth headers for discovery if needed.
+            # Attach auth headers for discovery.
             discovery_config: MCPConnectionConfig = dict(invocation_config)  # type: ignore[assignment]
-            if headers and tool_config.auth:
-                if tool_config.auth_providers:
-                    resolved_header: (
-                        str | None
-                    ) = await auth_interceptor.resolve_auth_header_for_discovery(
-                        tool_config
+            logger.info(
+                "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
+                "has_headers=%s, header_keys=%s",
+                tool_config.name,
+                tool_config.auth,
+                tool_config.oauth is not None,
+                tool_config.auth_providers,
+                bool(headers),
+                list(headers.keys()) if headers else [],
+            )
+            if headers and tool_config.auth_providers:
+                resolved_header: (
+                    str | None
+                ) = await auth_interceptor.resolve_auth_header_for_discovery(
+                    tool_config
+                )
+                if resolved_header:
+                    existing_headers = discovery_config.get("headers") or {}
+                    discovery_config["headers"] = {
+                        **existing_headers,
+                        "Authorization": resolved_header,
+                    }
+                    logger.info(
+                        "Tool discovery for '%s': attached resolved auth header: %s...%s",
+                        tool_config.name,
+                        resolved_header[:20],
+                        resolved_header[-10:] if len(resolved_header) > 30 else "",
                     )
-                    if resolved_header:
-                        existing_headers = discovery_config.get("headers") or {}
-                        discovery_config["headers"] = {
-                            **existing_headers,
-                            "Authorization": resolved_header,
-                        }
                 else:
-                    auth_header: str | None = (
-                        AuthMcpCallInterceptor._extract_auth_header(headers)
+                    logger.info(
+                        "Tool discovery for '%s': auth_providers set but no token resolved",
+                        tool_config.name,
                     )
-                    if auth_header:
-                        existing_headers = discovery_config.get("headers") or {}
-                        discovery_config["headers"] = {
-                            **existing_headers,
-                            "Authorization": auth_header,
-                        }
+            elif headers:
+                auth_header: str | None = AuthMcpCallInterceptor._extract_auth_header(
+                    headers
+                )
+                if auth_header:
+                    existing_headers = discovery_config.get("headers") or {}
+                    discovery_config["headers"] = {
+                        **existing_headers,
+                        "Authorization": auth_header,
+                    }
+                    logger.info(
+                        "Tool discovery for '%s': forwarding pass-through token: %s...%s",
+                        tool_config.name,
+                        auth_header[:20],
+                        auth_header[-10:] if len(auth_header) > 30 else "",
+                    )
+                else:
+                    logger.info(
+                        "Tool discovery for '%s': no Authorization header in request",
+                        tool_config.name,
+                    )
 
             callbacks = Callbacks(
                 on_progress=self.on_mcp_tool_progress,
@@ -360,6 +393,22 @@ class MCPToolProvider:
                     await session.initialize()
                     mcp_tools = await list_all_tools(session)
 
+                logger.info(
+                    "MCP tools discovered from '%s': %s",
+                    tool_config.name,
+                    [t.name for t in mcp_tools],
+                )
+                invalid_names = [
+                    t.name for t in mcp_tools if _sanitize_tool_name(t.name) != t.name
+                ]
+                if invalid_names:
+                    logger.warning(
+                        "MCP server '%s' returned tools with names that require "
+                        "sanitization for LLM provider compatibility: %s",
+                        tool_config.name,
+                        invalid_names,
+                    )
+
                 tools = [
                     mcp_tool_to_langchain_tool(
                         mcp_tool,
@@ -375,7 +424,7 @@ class MCPToolProvider:
                 tool_url = tool_config.url or "unknown"
 
                 if (
-                    self._contains_http_401(e)
+                    self._contains_http_auth_error(e)
                     and tool_config.oauth is None
                     and not tool_config.oauth_providers
                     and tool_url != "unknown"
@@ -398,16 +447,17 @@ class MCPToolProvider:
                 return []
 
             if tool_names and tools:
-                tools = [t for t in tools if t.name in tool_names]
+                sanitized_filter = {_sanitize_tool_name(n) for n in tool_names}
+                tools = [t for t in tools if t.name in sanitized_filter]
             return tools
         except* HTTPStatusError as e:
             tool_url = tool_config.url or "unknown"
             first_exception = ExceptionLogger.get_first_exception(e)
 
-            # Attempt auth server discovery on 401 when no OAuth is configured
+            # Attempt auth server discovery on 401/403 when no OAuth is configured
             if (
                 isinstance(first_exception, HTTPStatusError)
-                and first_exception.response.status_code == 401
+                and first_exception.response.status_code in self._AUTH_ERROR_CODES
                 and tool_config.oauth is None
                 and not tool_config.oauth_providers
                 and tool_url != "unknown"
@@ -416,8 +466,10 @@ class MCPToolProvider:
                     tool_config=tool_config,
                 )
                 if discovered:
-                    login_message = await auth_interceptor.build_login_message_for_tool(
-                        tool_config
+                    login_message = await self._build_login_message_or_fallback(
+                        auth_interceptor=auth_interceptor,
+                        tool_config=tool_config,
+                        tool_url=tool_url,
                     )
                     raise AuthorizationMcpToolTokenInvalidException(
                         message=login_message,
@@ -430,8 +482,10 @@ class MCPToolProvider:
                 tool_url,
                 ExceptionLogger.format_exception_message(e),
             )
-            login_message = await auth_interceptor.build_login_message_for_tool(
-                tool_config
+            login_message = await self._build_login_message_or_fallback(
+                auth_interceptor=auth_interceptor,
+                tool_config=tool_config,
+                tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
                 message=login_message,
@@ -445,8 +499,10 @@ class MCPToolProvider:
                 tool_url,
                 ExceptionLogger.format_exception_message(e),
             )
-            login_message = await auth_interceptor.build_login_message_for_tool(
-                tool_config
+            login_message = await self._build_login_message_or_fallback(
+                auth_interceptor=auth_interceptor,
+                tool_config=tool_config,
+                tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
                 message=login_message,
@@ -462,25 +518,30 @@ class MCPToolProvider:
             )
             raise e
 
+    _AUTH_ERROR_CODES = {401, 403}
+
     @staticmethod
-    def _contains_http_401(exc: BaseException) -> bool:
-        """Check if an exception tree contains an HTTPStatusError with status 401.
+    def _contains_http_auth_error(exc: BaseException) -> bool:
+        """Check if an exception tree contains an HTTPStatusError with status 401 or 403.
 
         Traverses BaseExceptionGroup children and the ``__cause__`` chain so
         that wrapped exceptions (e.g. McpSessionError wrapping an
-        ExceptionGroup containing an HTTP 401) are still detected.
+        ExceptionGroup containing an HTTP 401/403) are still detected.
         """
-        if isinstance(exc, HTTPStatusError) and exc.response.status_code == 401:
+        if (
+            isinstance(exc, HTTPStatusError)
+            and exc.response.status_code in MCPToolProvider._AUTH_ERROR_CODES
+        ):
             return True
         if isinstance(exc, BaseExceptionGroup):
             return any(
-                MCPToolProvider._contains_http_401(e) for e in exc.exceptions
+                MCPToolProvider._contains_http_auth_error(e) for e in exc.exceptions
             ) or (
                 exc.__cause__ is not None
-                and MCPToolProvider._contains_http_401(exc.__cause__)
+                and MCPToolProvider._contains_http_auth_error(exc.__cause__)
             )
         if exc.__cause__ is not None:
-            return MCPToolProvider._contains_http_401(exc.__cause__)
+            return MCPToolProvider._contains_http_auth_error(exc.__cause__)
         return False
 
     async def _attempt_auth_server_discovery(
@@ -518,6 +579,10 @@ class MCPToolProvider:
         if not discovered.display_name:
             discovered.display_name = tool_config.display_name or tool_config.name
 
+        # Enable app login by default for discovered servers so the user
+        # gets a login link even when DCR fails (no client_id for direct OAuth).
+        discovered.app_login_allowed = True
+
         provider_key = (
             f"oauth_{discovered.client_id}"
             if discovered.client_id
@@ -526,10 +591,19 @@ class MCPToolProvider:
         tool_config.auth = "jwt_token"
         tool_config.auth_providers = [provider_key]
 
-        await self.pass_through_token_manager._ensure_oauth_provider_registered(
-            auth_provider=provider_key,
-            oauth=discovered,
-        )
+        try:
+            await self.pass_through_token_manager._ensure_oauth_provider_registered(
+                auth_provider=provider_key,
+                oauth=discovered,
+            )
+        except Exception as dcr_err:
+            logger.warning(
+                "OAuth provider registration failed for %s (provider '%s'): %s. "
+                "Discovery succeeded but DCR did not — login links may be limited.",
+                tool_config.name,
+                provider_key,
+                ExceptionLogger.format_exception_message(dcr_err),
+            )
 
         logger.info(
             "Auth server discovery succeeded for %s — registered provider '%s'",
@@ -537,6 +611,29 @@ class MCPToolProvider:
             provider_key,
         )
         return True
+
+    async def _build_login_message_or_fallback(
+        self,
+        *,
+        auth_interceptor: "AuthMcpCallInterceptor",
+        tool_config: AgentConfig,
+        tool_url: str,
+    ) -> str:
+        """Build a login message, falling back to a generic one if DCR or other steps fail."""
+        try:
+            return await auth_interceptor.build_login_message_for_tool(tool_config)
+        except Exception as msg_err:
+            tool_display_name = tool_config.display_name or tool_config.name
+            logger.warning(
+                "Could not build login message for %s: %s — using fallback",
+                tool_display_name,
+                ExceptionLogger.format_exception_message(msg_err),
+            )
+            return (
+                AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_display_name
+                )
+            )
 
     async def get_tools_async(
         self,
@@ -636,10 +733,14 @@ class MCPToolProvider:
             if tool_config.url is None:
                 continue
             logger.info(
-                "discover_tool_catalog Registering server: %s (url: %s, category: %s)",
+                "discover_tool_catalog Registering server: %s (url: %s, category: %s, "
+                "auth=%s, oauth=%s, auth_providers=%s)",
                 tool_config.name,
                 tool_config.url,
                 tool_config.description,
+                tool_config.auth,
+                tool_config.oauth is not None,
+                tool_config.auth_providers,
             )
             catalog.register_server(
                 server_name=tool_config.name,
@@ -658,22 +759,60 @@ class MCPToolProvider:
         """List raw MCP tools from a configured server (no LangChain conversion)."""
         config = self._build_connection_config(tool_config)
 
-        # Attach auth headers for discovery if needed
-        if headers and tool_config.auth:
-            if tool_config.auth_providers:
-                resolved_header = (
-                    await auth_interceptor.resolve_auth_header_for_discovery(
-                        tool_config
-                    )
+        # Attach auth headers for discovery.
+        # When auth_providers is configured, use the token exchange flow.
+        # Otherwise forward the caller's Authorization header directly —
+        # MCP servers that require auth need the token even if the config
+        # doesn't explicitly declare oauth/auth (e.g. stale snapshot cache).
+        logger.info(
+            "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
+            "has_headers=%s, header_keys=%s",
+            tool_config.name,
+            tool_config.auth,
+            tool_config.oauth is not None,
+            tool_config.auth_providers,
+            bool(headers),
+            list(headers.keys()) if headers else [],
+        )
+        if headers and tool_config.auth_providers:
+            resolved_header = await auth_interceptor.resolve_auth_header_for_discovery(
+                tool_config
+            )
+            if resolved_header:
+                existing = config.get("headers") or {}
+                config["headers"] = {**existing, "Authorization": resolved_header}
+                logger.info(
+                    "Tool discovery for '%s': attached resolved auth header: %s...%s",
+                    tool_config.name,
+                    resolved_header[:20],
+                    resolved_header[-10:] if len(resolved_header) > 30 else "",
                 )
-                if resolved_header:
-                    existing = config.get("headers") or {}
-                    config["headers"] = {**existing, "Authorization": resolved_header}
             else:
-                auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
-                if auth_header:
-                    existing = config.get("headers") or {}
-                    config["headers"] = {**existing, "Authorization": auth_header}
+                logger.info(
+                    "Tool discovery for '%s': auth_providers set but no token resolved",
+                    tool_config.name,
+                )
+        elif headers:
+            auth_header = AuthMcpCallInterceptor._extract_auth_header(headers)
+            if auth_header:
+                existing = config.get("headers") or {}
+                config["headers"] = {**existing, "Authorization": auth_header}
+                logger.info(
+                    "Tool discovery for '%s': forwarding pass-through token: %s...%s",
+                    tool_config.name,
+                    auth_header[:20],
+                    auth_header[-10:] if len(auth_header) > 30 else "",
+                )
+            else:
+                logger.info(
+                    "Tool discovery for '%s': no Authorization header in request",
+                    tool_config.name,
+                )
+        elif tool_config.auth == "jwt_token":
+            logger.info(
+                "Tool discovery for '%s': requires auth but no headers provided",
+                tool_config.name,
+            )
 
         callbacks = Callbacks(
             on_progress=self.on_mcp_tool_progress,
@@ -708,7 +847,7 @@ class MCPToolProvider:
                         cache_key=cache_key,
                     )
             except BaseException as e:
-                if self._contains_http_401(e):
+                if self._contains_http_auth_error(e):
                     # Invalidate cache on auth errors so retry uses a fresh fetch
                     self.tool_list_cache.invalidate(cache_key)
                 else:
@@ -723,10 +862,10 @@ class MCPToolProvider:
                         tool_config=tool_config,
                     )
                     if discovered:
-                        login_message = (
-                            await auth_interceptor.build_login_message_for_tool(
-                                tool_config
-                            )
+                        login_message = await self._build_login_message_or_fallback(
+                            auth_interceptor=auth_interceptor,
+                            tool_config=tool_config,
+                            tool_url=tool_url,
                         )
                         raise AuthorizationMcpToolTokenInvalidException(
                             message=login_message,
@@ -734,8 +873,10 @@ class MCPToolProvider:
                             token=None,
                         ) from e
 
-                login_message = await auth_interceptor.build_login_message_for_tool(
-                    tool_config
+                login_message = await self._build_login_message_or_fallback(
+                    auth_interceptor=auth_interceptor,
+                    tool_config=tool_config,
+                    tool_url=tool_url,
                 )
                 raise AuthorizationMcpToolTokenInvalidException(
                     message=login_message,
@@ -907,14 +1048,21 @@ class _BoundToolResolver:
                 headers=self._headers,
                 auth_interceptor=self._auth_interceptor,
             )
-        except AuthorizationMcpToolTokenInvalidException:
-            # The MCP server returned 401. Trigger the full token
+        except AuthorizationMcpToolTokenInvalidException as orig:
+            # The MCP server returned 401/403. Trigger the full token
             # resolution flow which either raises
             # AuthorizationNeededException with login links (user must
             # log in) or succeeds when the token was refreshed.
-            await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
-                tool_config=agent_config,
-            )
+            try:
+                await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
+                    tool_config=agent_config,
+                )
+            except AuthorizationNeededException:
+                raise
+            except Exception as e:
+                raise AuthorizationNeededException(
+                    message=orig.message,
+                ) from e
             # Token was refreshed — retry the MCP call.
             try:
                 return await self._provider._list_mcp_tools_for_config(
@@ -922,10 +1070,17 @@ class _BoundToolResolver:
                     headers=self._headers,
                     auth_interceptor=self._auth_interceptor,
                 )
-            except AuthorizationMcpToolTokenInvalidException:
+            except AuthorizationMcpToolTokenInvalidException as retry_orig:
                 # Retry also failed. Trigger login link resolution
                 # again so the user sees actionable links.
-                await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
-                    tool_config=agent_config,
-                )
+                try:
+                    await self._auth_interceptor.resolve_auth_for_tool_with_login_links(
+                        tool_config=agent_config,
+                    )
+                except AuthorizationNeededException:
+                    raise
+                except Exception as e:
+                    raise AuthorizationNeededException(
+                        message=retry_orig.message,
+                    ) from e
                 raise

@@ -159,7 +159,7 @@ class GitHubDirectoryHelper:
         The downloader itself handles locking, atomic swap, and retry so this
         method no longer needs its own file lock.
         """
-        from langchain_ai_skills_framework.loaders.github_directory_downloader import (
+        from languagemodelcommon.configs.config_reader.github_directory_downloader import (
             GithubDirectoryDownloader,
         )
 

@@ -1,11 +1,15 @@
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.configs.schemas.mcp_json_schema import (
+    McpJsonConfig,
+    McpServerEntry,
+)
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
@@ -214,8 +218,10 @@ async def test_read_models_from_https_github_url(
 
 
 @pytest.mark.asyncio
-async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) -> None:
-    """github:// download path still resolves .mcp.json references."""
+async def test_github_uri_resolves_mcp_via_fetcher(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """github:// download path resolves mcp_server refs via McpJsonFetcher."""
     local_dir = tmp_path / "downloaded"
     local_dir.mkdir()
     _write_json(
@@ -223,16 +229,22 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
         {
             "id": "m1",
             "name": "Model One",
+            "plugins": ["all-employees"],
             "tools": [{"name": "drive", "mcp_server": "google-drive"}],
         },
-    )
-    _write_json(
-        local_dir / ".mcp.json",
-        {"mcpServers": {"google-drive": {"url": "https://mcp.example.com/drive/"}}},
     )
 
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
+
+    mock_fetcher = AsyncMock()
+    mock_fetcher.fetch_plugins_async.return_value = {
+        "all-employees": McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(url="https://mcp.example.com/drive/"),
+            }
+        ),
+    }
 
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
@@ -240,6 +252,7 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
         cache=cache,
         prompt_library_manager=prompt_mgr,
         github_directory_helper=mock_helper,
+        mcp_json_fetcher=mock_fetcher,
     )
 
     models = await reader.read_models_from_path_async(
@@ -249,6 +262,7 @@ async def test_github_uri_resolves_mcp_json(tmp_path: Path, monkeypatch: Any) ->
     assert len(models) == 1
     assert models[0].tools is not None
     assert models[0].tools[0].url == "https://mcp.example.com/drive/"
+    mock_fetcher.fetch_plugins_async.assert_awaited_once_with(["all-employees"])
 
 
 @pytest.mark.asyncio

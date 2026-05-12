@@ -5,9 +5,6 @@ LangGraph graph builder with smart history management.
 import logging
 from typing import Any, List, Sequence
 
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableLambda
@@ -37,14 +34,9 @@ class GraphBuilder:
     tool integration, and optional state persistence.
     """
 
-    def __init__(self, skill_loader: SkillLoaderProtocol) -> None:
-        """
-        Initialize the graph builder.
-
-        Args:
-            skill_loader: Default skill loader for agent middleware
-        """
-        self.skill_loader = skill_loader
+    def __init__(self) -> None:
+        """Initialize the graph builder."""
+        pass
 
     async def create_graph_for_llm_async(
         self,
@@ -54,7 +46,6 @@ class GraphBuilder:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        skill_loader: SkillLoaderProtocol | None = None,
         tool_catalog: ToolCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
@@ -74,24 +65,12 @@ class GraphBuilder:
             store: Optional store for cross-conversation persistence
             checkpointer: Optional checkpointer for state management
             system_prompts: Optional list of system prompts to prepend
-            skill_loader: Optional override for the skill loader (per-request scoping)
             max_messages: Maximum number of messages before trimming
             max_tokens: Maximum tokens allowed in conversation history
 
         Returns:
             Compiled state graph ready for invocation
-
-        Raises:
-            TypeError: If skill_loader is not SkillLoaderProtocol
         """
-        # Resolve skill loader
-        resolved_skill_loader = skill_loader or self.skill_loader
-        if not isinstance(resolved_skill_loader, SkillLoaderProtocol):
-            raise TypeError(
-                "skill_loader must be SkillLoaderProtocol, got "
-                f"{type(resolved_skill_loader)}"
-            )
-
         # Build system prompt
         system_prompt = self._build_system_prompt(system_prompts)
 

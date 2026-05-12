@@ -432,6 +432,11 @@ class ChatModelConfig(BaseModel):
         description="Alias for tools. If both are provided, agents takes precedence.",
     )
 
+    plugins: List[str] | None = Field(
+        None,
+        description="Marketplace plugin names this model uses. MCP servers and skills from these plugins are resolved at config-load time.",
+    )
+
     skills: List[str] | None = Field(
         None,
         description='Skills to enable for the model. Use ["*"] for all skills.',

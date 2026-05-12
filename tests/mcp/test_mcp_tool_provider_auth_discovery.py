@@ -176,14 +176,14 @@ async def test_401_discovery_returns_none_falls_through() -> None:
     discover_mock.assert_awaited_once()
 
 
-class TestContainsHttp401:
+class TestContainsHttpAuthError:
     def test_direct_401(self) -> None:
         response = httpx.Response(
             401, request=httpx.Request("GET", "https://example.com")
         )
         exc = httpx.HTTPStatusError("401", request=response.request, response=response)
         eg = BaseExceptionGroup("test", [exc])
-        assert MCPToolProvider._contains_http_401(eg) is True
+        assert MCPToolProvider._contains_http_auth_error(eg) is True
 
     def test_nested_401(self) -> None:
         response = httpx.Response(
@@ -192,19 +192,42 @@ class TestContainsHttp401:
         exc = httpx.HTTPStatusError("401", request=response.request, response=response)
         inner = BaseExceptionGroup("inner", [exc])
         outer = BaseExceptionGroup("outer", [inner])
-        assert MCPToolProvider._contains_http_401(outer) is True
+        assert MCPToolProvider._contains_http_auth_error(outer) is True
 
-    def test_non_401(self) -> None:
+    def test_direct_403(self) -> None:
+        response = httpx.Response(
+            403, request=httpx.Request("GET", "https://example.com")
+        )
+        exc = httpx.HTTPStatusError("403", request=response.request, response=response)
+        eg = BaseExceptionGroup("test", [exc])
+        assert MCPToolProvider._contains_http_auth_error(eg) is True
+
+    def test_403_wrapped_in_cause_chain(self) -> None:
+        """A McpSessionError whose __cause__ contains a 403 should be detected."""
+        from languagemodelcommon.mcp.mcp_client.session import McpSessionError
+
+        response = httpx.Response(
+            403, request=httpx.Request("GET", "https://example.com")
+        )
+        http_exc = httpx.HTTPStatusError(
+            "403", request=response.request, response=response
+        )
+        eg = BaseExceptionGroup("task group", [http_exc])
+        wrapper = McpSessionError("MCP session failed", url="https://example.com")
+        wrapper.__cause__ = eg
+        assert MCPToolProvider._contains_http_auth_error(wrapper) is True
+
+    def test_non_auth_error(self) -> None:
         response = httpx.Response(
             500, request=httpx.Request("GET", "https://example.com")
         )
         exc = httpx.HTTPStatusError("500", request=response.request, response=response)
         eg = BaseExceptionGroup("test", [exc])
-        assert MCPToolProvider._contains_http_401(eg) is False
+        assert MCPToolProvider._contains_http_auth_error(eg) is False
 
     def test_non_http_error(self) -> None:
         eg = BaseExceptionGroup("test", [ValueError("not http")])
-        assert MCPToolProvider._contains_http_401(eg) is False
+        assert MCPToolProvider._contains_http_auth_error(eg) is False
 
     def test_401_wrapped_in_cause_chain(self) -> None:
         """A McpSessionError whose __cause__ contains a 401 should be detected."""
@@ -219,7 +242,7 @@ class TestContainsHttp401:
         eg = BaseExceptionGroup("task group", [http_exc])
         wrapper = McpSessionError("MCP session failed", url="https://example.com")
         wrapper.__cause__ = eg
-        assert MCPToolProvider._contains_http_401(wrapper) is True
+        assert MCPToolProvider._contains_http_auth_error(wrapper) is True
 
     def test_non_401_wrapped_in_cause_chain(self) -> None:
         """A McpSessionError whose __cause__ contains a 500 should not match."""
@@ -234,4 +257,4 @@ class TestContainsHttp401:
         eg = BaseExceptionGroup("task group", [http_exc])
         wrapper = McpSessionError("MCP session failed", url="https://example.com")
         wrapper.__cause__ = eg
-        assert MCPToolProvider._contains_http_401(wrapper) is False
+        assert MCPToolProvider._contains_http_auth_error(wrapper) is False

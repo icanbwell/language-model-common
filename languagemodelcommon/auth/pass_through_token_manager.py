@@ -274,7 +274,15 @@ class PassThroughTokenManager:
         an actionable message when an MCP server rejects a request.
         """
         if tool_auth_provider is None:
-            await self._resolve_oauth_providers(authentication_config)
+            try:
+                await self._resolve_oauth_providers(authentication_config)
+            except Exception:
+                logger.warning(
+                    "Could not resolve OAuth providers for %s — "
+                    "login link may be unavailable",
+                    authentication_config.name,
+                    exc_info=True,
+                )
             providers = authentication_config.auth_providers
             tool_auth_provider = providers[0] if providers else None
 
@@ -290,11 +298,19 @@ class PassThroughTokenManager:
                 )
             )
             if auth_config is None and authentication_config.oauth:
-                auth_config = await self._ensure_oauth_provider_registered(
-                    auth_provider=tool_auth_provider,
-                    oauth=authentication_config.oauth,
-                    server_url=authentication_config.url,
-                )
+                try:
+                    auth_config = await self._ensure_oauth_provider_registered(
+                        auth_provider=tool_auth_provider,
+                        oauth=authentication_config.oauth,
+                        server_url=authentication_config.url,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Could not register OAuth provider for %s — "
+                        "login link may be unavailable",
+                        authentication_config.name,
+                        exc_info=True,
+                    )
             if auth_config is not None:
                 try:
                     authorization_url = (

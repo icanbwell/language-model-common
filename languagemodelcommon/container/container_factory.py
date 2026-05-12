@@ -1,9 +1,4 @@
-from langchain_ai_skills_framework.container.container_factory import (
-    LangchainAISkillsFrameworkContainerFactory,
-)
-from langchain_ai_skills_framework.loaders.skill_loader_protocol import (
-    SkillLoaderProtocol,
-)
+from typing import Any
 
 from simple_container.container.simple_container import SimpleContainer
 
@@ -12,7 +7,7 @@ from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
-from languagemodelcommon.configs.config_reader.mcp_json_reader import McpJsonReader
+from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -56,10 +51,6 @@ class LanguageModelCommonContainerFactory:
         *, container: SimpleContainer
     ) -> SimpleContainer:
 
-        LangchainAISkillsFrameworkContainerFactory.register_services_in_container(
-            container=container,
-        )
-
         container.singleton(
             LanguageModelCommonEnvironmentVariables,
             lambda c: LanguageModelCommonEnvironmentVariables(),
@@ -90,15 +81,12 @@ class LanguageModelCommonContainerFactory:
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
             ),
         )
-        container.singleton(
-            McpJsonReader,
-            lambda c: McpJsonReader(
-                environment_variables=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ),
-                github_directory_helper=c.resolve(GitHubDirectoryHelper),
-            ),
-        )
+
+        def _create_mcp_json_fetcher(c: Any) -> McpJsonFetcher | None:
+            url = c.resolve(LanguageModelCommonEnvironmentVariables).plugins_mcp_server
+            return McpJsonFetcher(plugins_mcp_server_url=url) if url else None
+
+        container.singleton(McpJsonFetcher, _create_mcp_json_fetcher)
         container.singleton(
             KeyValueBaseStore,
             lambda c: create_cache_store(
@@ -131,7 +119,7 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
-                mcp_json_reader=c.resolve(McpJsonReader),
+                mcp_json_fetcher=c.resolve(McpJsonFetcher),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
                 snapshot_cache_store=c.resolve(KeyValueBaseStore),
             ),
@@ -144,7 +132,6 @@ class LanguageModelCommonContainerFactory:
                 ),
                 token_reducer=c.resolve(TokenReducer),
                 streaming_manager=c.resolve(LangGraphStreamingManager),
-                skill_loader=c.resolve(SkillLoaderProtocol),
             ),
         )
         container.singleton(

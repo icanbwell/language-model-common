@@ -4,9 +4,6 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from langchain_ai_skills_framework.environment.environment_variables import (
-    LangchainAISkillsFrameworkEnvironmentVariables,
-)
 from oidcauthlib.utilities.environment.oidc_environment_variables import (
     OidcEnvironmentVariables,
 )
@@ -29,10 +26,21 @@ DEFAULT_GENERIC_ERROR_MESSAGE = (
 
 
 class LanguageModelCommonEnvironmentVariables(
-    LangchainAISkillsFrameworkEnvironmentVariables,
     PromptLibraryEnvironmentVariables,
     OidcEnvironmentVariables,
 ):
+    @staticmethod
+    def _resolve_path(value: str | None) -> str | None:
+        """Replace ``{pid}`` with the current process ID.
+
+        When multiple gunicorn workers share the same environment, this
+        gives each worker its own directory tree so they don't collide
+        on reads/writes.
+        """
+        if value and "{pid}" in value:
+            return value.replace("{pid}", str(os.getpid()))
+        return value
+
     @property
     def github_cache_folder(self) -> Optional[str]:
         return self._resolve_path(os.environ.get("GITHUB_CACHE_FOLDER"))
@@ -47,10 +55,6 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def models_testing_path(self) -> Optional[str]:
         return self._resolve_path(os.environ.get("MODELS_TESTING_PATH"))
-
-    @property
-    def mcp_json_path(self) -> Optional[str]:
-        return self._resolve_path(os.environ.get("MCP_JSON_PATH"))
 
     @property
     def streaming_buffer_flush_interval_seconds(self) -> float:
@@ -311,3 +315,13 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def github_token(self) -> Optional[str]:
         return os.environ.get("GITHUB_TOKEN")
+
+    @property
+    def plugins_mcp_server(self) -> Optional[str]:
+        """URL of the MCP server that returns plugin MCP configs.
+
+        When set, ``ConfigReader`` fetches MCP server definitions by
+        calling the ``get_mcp_servers_config`` tool on this server
+        instead of reading a local ``.mcp.json`` file.
+        """
+        return os.environ.get("PLUGINS_MCP_SERVER")

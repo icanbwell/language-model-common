@@ -7,7 +7,9 @@ from typing import List, Any, Dict, TYPE_CHECKING
 
 from google.oauth2 import service_account
 from google.oauth2.service_account import Credentials
-from langchain_aws import ChatBedrockConverse
+from languagemodelcommon.models.sanitizing_bedrock_converse import (
+    SanitizingChatBedrockConverse as ChatBedrockConverse,
+)
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
