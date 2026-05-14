@@ -29,12 +29,15 @@ class McpJsonFetcher:
     def __init__(self, *, plugins_mcp_server_url: str) -> None:
         self._url = plugins_mcp_server_url
 
-    async def fetch_plugin_async(self, plugin_name: str) -> McpJsonConfig | None:
+    async def fetch_plugin_async(
+        self, plugin_name: str
+    ) -> tuple[McpJsonConfig | None, str | None]:
         """Fetch MCP server config for a single plugin.
 
         Calls the ``get_mcp_servers_config`` tool with the given
-        *plugin_name* and returns the resulting ``McpJsonConfig``,
-        or ``None`` if the fetch fails or returns no servers.
+        *plugin_name* and returns a tuple of (config, error).
+        On success error is ``None``; on failure config is ``None``
+        and error describes what went wrong.
         Environment variable substitution is applied so placeholders
         like ``${MCP_SERVER_GATEWAY_URL}`` are resolved in the caller's
         environment.
@@ -49,40 +52,40 @@ class McpJsonFetcher:
                 result = await session.call_tool(
                     TOOL_NAME, {"plugin_name": plugin_name}
                 )
-        except Exception:
-            logger.exception(
-                "Failed to fetch MCP config for plugin '%s' from %s",
-                plugin_name,
-                self._url,
+        except Exception as e:
+            error_msg = (
+                f"Failed to fetch MCP config for plugin '{plugin_name}' "
+                f"from {self._url}: {type(e).__name__}: {e}"
             )
-            return None
+            logger.warning(error_msg)
+            return None, error_msg
 
         # Extract text content from the tool result
         text_parts = [
             block.text for block in (result.content or []) if hasattr(block, "text")
         ]
         if not text_parts:
-            logger.warning(
-                "get_mcp_servers_config returned no text for plugin '%s' from %s",
-                plugin_name,
-                self._url,
+            error_msg = (
+                f"get_mcp_servers_config returned no text for plugin "
+                f"'{plugin_name}' from {self._url}"
             )
-            return None
+            logger.warning(error_msg)
+            return None, error_msg
 
         raw_json = text_parts[0]
         try:
             data: Any = substitute_env_vars(json.loads(raw_json))
-        except (json.JSONDecodeError, TypeError):
-            logger.exception(
-                "Failed to parse MCP config JSON for plugin '%s' from %s",
-                plugin_name,
-                self._url,
+        except (json.JSONDecodeError, TypeError) as e:
+            error_msg = (
+                f"Failed to parse MCP config JSON for plugin '{plugin_name}' "
+                f"from {self._url}: {type(e).__name__}: {e}"
             )
-            return None
+            logger.warning(error_msg)
+            return None, error_msg
 
         servers = data.get("mcpServers", {})
         if not isinstance(servers, dict) or not servers:
-            return None
+            return None, None
 
         logger.info(
             "Fetched %d MCP server definition(s) for plugin '%s' via %s",
@@ -90,7 +93,7 @@ class McpJsonFetcher:
             plugin_name,
             self._url,
         )
-        return McpJsonConfig(mcpServers=servers)
+        return McpJsonConfig(mcpServers=servers), None
 
     async def fetch_all_async(self) -> McpJsonConfig | None:
         """Fetch MCP server config for all plugins in a single call.
@@ -147,16 +150,19 @@ class McpJsonFetcher:
 
     async def fetch_plugins_async(
         self, plugin_names: list[str]
-    ) -> dict[str, McpJsonConfig]:
+    ) -> tuple[dict[str, McpJsonConfig], list[str]]:
         """Fetch MCP server config for multiple plugins.
 
-        Calls ``fetch_plugin_async`` for each name and returns a dict
-        mapping plugin name to its ``McpJsonConfig``.  Plugins that
-        fail to fetch or return no servers are omitted from the result.
+        Calls ``fetch_plugin_async`` for each name and returns a tuple of
+        (configs, errors).  Plugins that fail to fetch or return no servers
+        are omitted from configs; their error messages are collected in errors.
         """
         result: dict[str, McpJsonConfig] = {}
+        errors: list[str] = []
         for name in plugin_names:
-            mcp_config = await self.fetch_plugin_async(name)
+            mcp_config, error = await self.fetch_plugin_async(name)
             if mcp_config:
                 result[name] = mcp_config
-        return result
+            elif error:
+                errors.append(error)
+        return result, errors

@@ -355,9 +355,14 @@ class ConfigReader:
             )
             return
 
-        plugin_configs = await self._mcp_json_fetcher.fetch_plugins_async(
+        plugin_configs, fetch_errors = await self._mcp_json_fetcher.fetch_plugins_async(
             unique_plugins
         )
+        if fetch_errors:
+            logger.warning(
+                "MCP plugin config fetch errors: %s",
+                fetch_errors,
+            )
         if plugin_configs:
             resolve_mcp_servers_from_plugins(models, plugin_configs)
         else:
@@ -411,7 +416,7 @@ class ConfigReader:
             )
             logger.warning(
                 "MCP server resolution retry did not resolve all refs. "
-                "PLUGINS_MCP_SERVER=%s. Unresolved: %s",
+                "Failed to fetch plugin configs from %s. Unresolved: %s",
                 fetcher_url,
                 unresolved,
             )
