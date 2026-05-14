@@ -343,9 +343,15 @@ class ConfigReader:
                 all_plugin_names.extend(m.plugins)
         unique_plugins = list(dict.fromkeys(all_plugin_names))
         if not unique_plugins:
+            models_with_refs = [
+                m.name or m.id
+                for m in models
+                if any(a.mcp_server for a in m.get_agents())
+            ]
             logger.warning(
                 "Models have mcp_server references but no plugins declared "
-                "— MCP servers will not be resolved"
+                "— MCP servers will not be resolved. Affected models: %s",
+                models_with_refs,
             )
             return
 
@@ -354,6 +360,13 @@ class ConfigReader:
         )
         if plugin_configs:
             resolve_mcp_servers_from_plugins(models, plugin_configs)
+        else:
+            logger.warning(
+                "McpJsonFetcher returned no configs for plugins %s from %s "
+                "— MCP servers will remain unresolved",
+                unique_plugins,
+                self._mcp_json_fetcher._url,
+            )
 
     @staticmethod
     def _has_unresolved_mcp_servers(models: List[ChatModelConfig]) -> bool:
@@ -363,6 +376,20 @@ class ConfigReader:
                 if agent.mcp_server and not agent.url:
                     return True
         return False
+
+    @staticmethod
+    def _get_unresolved_mcp_servers(
+        models: List[ChatModelConfig],
+    ) -> List[str]:
+        """Return descriptions of unresolved mcp_server refs for diagnostics."""
+        unresolved: List[str] = []
+        for model in models:
+            for agent in model.get_agents():
+                if agent.mcp_server and not agent.url:
+                    unresolved.append(
+                        f"{model.name or model.id}:{agent.name}(mcp_server={agent.mcp_server})"
+                    )
+        return unresolved
 
     async def _retry_mcp_resolution(
         self, models: List[ChatModelConfig], config_path: str
@@ -377,8 +404,17 @@ class ConfigReader:
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models, config_path)
         await self._write_to_snapshot_cache(models)
-        if self._has_unresolved_mcp_servers(models):
-            logger.warning("MCP server resolution retry did not resolve all refs")
+        unresolved = self._get_unresolved_mcp_servers(models)
+        if unresolved:
+            fetcher_url = (
+                self._mcp_json_fetcher._url if self._mcp_json_fetcher else "N/A"
+            )
+            logger.warning(
+                "MCP server resolution retry did not resolve all refs. "
+                "PLUGINS_MCP_SERVER=%s. Unresolved: %s",
+                fetcher_url,
+                unresolved,
+            )
         else:
             logger.info("MCP server resolution retry succeeded")
 
