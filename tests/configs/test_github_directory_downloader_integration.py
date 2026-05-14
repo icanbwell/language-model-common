@@ -238,13 +238,19 @@ async def test_github_uri_resolves_mcp_via_fetcher(
     mock_helper.resolve_github_path.return_value = local_dir
 
     mock_fetcher = AsyncMock()
-    mock_fetcher.fetch_plugins_async.return_value = {
-        "all-employees": McpJsonConfig(
-            mcpServers={
-                "google-drive": McpServerEntry(url="https://mcp.example.com/drive/"),
-            }
-        ),
-    }
+    mock_fetcher._url = "http://localhost:5000/plugin-marketplace/"
+    mock_fetcher.fetch_plugins_async.return_value = (
+        {
+            "all-employees": McpJsonConfig(
+                mcpServers={
+                    "google-drive": McpServerEntry(
+                        url="https://mcp.example.com/drive/"
+                    ),
+                }
+            ),
+        },
+        [],
+    )
 
     cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)

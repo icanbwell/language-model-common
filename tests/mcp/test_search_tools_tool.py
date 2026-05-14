@@ -75,8 +75,8 @@ class TestSearchToolsTool:
         catalog = ToolCatalog()
         tool = SearchToolsTool(catalog=catalog)
         content, artifact = await tool._arun(query="anything", category="Nonexistent")
-        assert "No tools found" in content
-        assert "No tools found" in artifact
+        assert "catalog is empty" in content
+        assert "catalog is empty" in artifact
 
     @pytest.mark.asyncio
     async def test_category_filter(self) -> None:
@@ -136,7 +136,7 @@ class TestSearchToolsTool:
 
         tool = SearchToolsTool(catalog=catalog)
         content, _artifact = await tool._arun(query="patient", category="Healthcare")
-        assert "No tools found" in content
+        assert "have not been resolved" in content
 
     @pytest.mark.asyncio
     async def test_resolver_failure_does_not_crash(self) -> None:
@@ -184,7 +184,7 @@ class TestSearchToolsTool:
         )
         # Server should not have been resolved at all
         resolver.resolve_tools.assert_not_awaited()
-        assert "No tools found" in content
+        assert "have not been resolved" in content
 
     @pytest.mark.asyncio
     async def test_auth_exception_raised_when_query_matches(self) -> None:
@@ -328,7 +328,7 @@ class TestOAuthSearchScenarios:
         # github is OAuth and "web content" has no overlap with
         # "github" / "GitHub" / "GitHub repositories" → skipped
         resolver.resolve_tools.assert_not_awaited()
-        assert "No tools found" in content
+        assert "have not been resolved" in content
 
     @pytest.mark.asyncio
     async def test_oauth_server_raises_auth_when_query_matches(self) -> None:
