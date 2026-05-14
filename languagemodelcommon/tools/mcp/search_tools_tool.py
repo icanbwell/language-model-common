@@ -180,6 +180,8 @@ class SearchToolsTool(BaseTool):
                     f"Try searching with different keywords."
                 )
                 return no_match_text, no_match_text
+            # No resolved tools — check if servers are registered but failed
+            registered_servers = self.catalog.get_unresolved_servers(category)
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
                 error_text = (
@@ -188,7 +190,32 @@ class SearchToolsTool(BaseTool):
                     f"{errors_detail}"
                 )
                 return error_text, error_text
-            not_found_text = f"No tools found matching your query in {category}."
+            if registered_servers:
+                server_names = [s.server_name for s in registered_servers]
+                pending_text = (
+                    f"The following servers are registered in the {category} "
+                    f"category but their tools have not been resolved yet: "
+                    f"{', '.join(server_names)}. "
+                    f"This may indicate the servers are unreachable. "
+                    f"Try again shortly or use call_tool with a specific tool name."
+                )
+                return pending_text, pending_text
+            # Category doesn't exist at all — list available categories
+            all_categories = self.catalog.get_categories()
+            if all_categories:
+                category_names = [
+                    c.get("description") or c.get("name", "unknown")
+                    for c in all_categories
+                ]
+                not_found_text = (
+                    f"Category '{category}' not found. "
+                    f"Available categories: {', '.join(category_names)}."
+                )
+            else:
+                not_found_text = (
+                    "No tools or categories are currently registered. "
+                    "The tool catalog is empty."
+                )
             return not_found_text, not_found_text
 
         # Content for the LLM (no scoring details)
