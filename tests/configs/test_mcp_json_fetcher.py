@@ -50,9 +50,10 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugin_async("all-employees")
+            result, error = await fetcher.fetch_plugin_async("all-employees")
 
         assert result is not None
+        assert error is None
         assert "google-drive" in result.mcpServers
         assert result.mcpServers["google-drive"].url == "https://mcp.example.com/drive/"
         session.call_tool.assert_awaited_once_with(
@@ -68,12 +69,13 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugin_async("empty-plugin")
+            result, error = await fetcher.fetch_plugin_async("empty-plugin")
 
         assert result is None
+        assert error is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_connection_error(self) -> None:
+    async def test_returns_error_on_connection_error(self) -> None:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         @asynccontextmanager
@@ -85,12 +87,15 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_failing_session(),
         ):
-            result = await fetcher.fetch_plugin_async("broken")
+            result, error = await fetcher.fetch_plugin_async("broken")
 
         assert result is None
+        assert error is not None
+        assert "ConnectionError" in error
+        assert "refused" in error
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_invalid_json(self) -> None:
+    async def test_returns_error_on_invalid_json(self) -> None:
         session = AsyncMock()
         session.initialize = AsyncMock()
         session.call_tool = AsyncMock(
@@ -104,12 +109,14 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugin_async("bad-json")
+            result, error = await fetcher.fetch_plugin_async("bad-json")
 
         assert result is None
+        assert error is not None
+        assert "Failed to parse" in error
 
     @pytest.mark.asyncio
-    async def test_returns_none_on_no_text_content(self) -> None:
+    async def test_returns_error_on_no_text_content(self) -> None:
         session = AsyncMock()
         session.initialize = AsyncMock()
         session.call_tool = AsyncMock(return_value=CallToolResult(content=[]))
@@ -119,9 +126,11 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugin_async("no-content")
+            result, error = await fetcher.fetch_plugin_async("no-content")
 
         assert result is None
+        assert error is not None
+        assert "returned no text" in error
 
     @pytest.mark.asyncio
     async def test_applies_env_var_substitution(self, monkeypatch: Any) -> None:
@@ -135,9 +144,10 @@ class TestFetchPluginAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugin_async("all-employees")
+            result, error = await fetcher.fetch_plugin_async("all-employees")
 
         assert result is not None
+        assert error is None
         assert (
             result.mcpServers["google-drive"].url
             == "https://resolved.example.com/drive/"
@@ -167,15 +177,18 @@ class TestFetchPluginsAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             side_effect=lambda _: _mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugins_async(["plugin-a", "plugin-b"])
+            configs, errors = await fetcher.fetch_plugins_async(
+                ["plugin-a", "plugin-b"]
+            )
 
-        assert len(result) == 2
-        assert "plugin-a" in result
-        assert "plugin-b" in result
+        assert len(configs) == 2
+        assert "plugin-a" in configs
+        assert "plugin-b" in configs
         assert (
-            result["plugin-a"].mcpServers["server-plugin-a"].url
+            configs["plugin-a"].mcpServers["server-plugin-a"].url
             == "https://plugin-a.example.com/"
         )
+        assert errors == []
 
     @pytest.mark.asyncio
     async def test_omits_failed_plugins(self) -> None:
@@ -197,16 +210,17 @@ class TestFetchPluginsAsync:
             "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
             side_effect=lambda _: _mock_session_ctx(session),
         ):
-            result = await fetcher.fetch_plugins_async(["good", "bad"])
+            configs, errors = await fetcher.fetch_plugins_async(["good", "bad"])
 
-        assert len(result) == 1
-        assert "good" in result
-        assert "bad" not in result
+        assert len(configs) == 1
+        assert "good" in configs
+        assert "bad" not in configs
 
     @pytest.mark.asyncio
-    async def test_returns_empty_dict_for_empty_list(self) -> None:
+    async def test_returns_empty_for_empty_list(self) -> None:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
-        result = await fetcher.fetch_plugins_async([])
+        configs, errors = await fetcher.fetch_plugins_async([])
 
-        assert result == {}
+        assert configs == {}
+        assert errors == []

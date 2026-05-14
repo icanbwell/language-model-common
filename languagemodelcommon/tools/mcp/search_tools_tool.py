@@ -196,17 +196,18 @@ class SearchToolsTool(BaseTool):
                     f"The following servers are registered in the {category} "
                     f"category but their tools have not been resolved yet: "
                     f"{', '.join(server_names)}. "
-                    f"This may indicate the servers are unreachable. "
-                    f"Try again shortly or use call_tool with a specific tool name."
+                    f"They may require authentication or be unreachable."
                 )
                 return pending_text, pending_text
             # Category doesn't exist at all — list available categories
             all_categories = self.catalog.get_categories()
             if all_categories:
-                category_names = [
-                    c.get("description") or c.get("name", "unknown")
-                    for c in all_categories
-                ]
+                category_names = list(
+                    dict.fromkeys(
+                        c.get("description") or c.get("name", "unknown")
+                        for c in all_categories
+                    )
+                )
                 not_found_text = (
                     f"Category '{category}' not found. "
                     f"Available categories: {', '.join(category_names)}."
