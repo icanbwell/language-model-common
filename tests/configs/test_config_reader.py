@@ -546,8 +546,9 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher._url = "http://localhost:5000/plugin-marketplace/"
     fetcher.fetch_plugins_async = AsyncMock(
-        return_value={"all-employees": _mcp_json_config()}
+        return_value=({"all-employees": _mcp_json_config()}, [])
     )
 
     reader = ConfigReader(
@@ -592,8 +593,9 @@ async def test_first_request_always_resolves_mcp(
     }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
+    fetcher._url = "http://localhost:5000/plugin-marketplace/"
     fetcher.fetch_plugins_async = AsyncMock(
-        return_value={"all-employees": _mcp_json_config()}
+        return_value=({"all-employees": _mcp_json_config()}, [])
     )
 
     reader = ConfigReader(
@@ -623,7 +625,8 @@ async def test_retry_still_fails_gracefully(
     }
 
     fetcher = MagicMock(spec=McpJsonFetcher)
-    fetcher.fetch_plugins_async = AsyncMock(return_value={})
+    fetcher._url = "http://localhost:5000/plugin-marketplace/"
+    fetcher.fetch_plugins_async = AsyncMock(return_value=({}, []))
 
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
