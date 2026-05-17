@@ -1,7 +1,5 @@
 """Tests for UrlParser utilities."""
 
-from __future__ import annotations
-
 import pytest
 
 from languagemodelcommon.utilities.url_parser import UrlParser

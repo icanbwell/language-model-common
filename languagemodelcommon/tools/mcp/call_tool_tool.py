@@ -4,8 +4,6 @@ Proxies tool invocations to the correct MCP server. The LLM calls this
 after discovering tools via search_tools.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Literal, Type
 

@@ -1,7 +1,5 @@
 """Tests for McpJsonFetcher per-plugin MCP config fetching."""
 
-from __future__ import annotations
-
 import json
 from contextlib import asynccontextmanager
 from typing import Any

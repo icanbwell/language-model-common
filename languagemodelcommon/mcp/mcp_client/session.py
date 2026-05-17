@@ -1,7 +1,5 @@
 """MCP session management — creating and connecting to MCP servers."""
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

@@ -1,7 +1,5 @@
 """Tests for mcp_client — session management, interceptor chain, content conversion."""
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 

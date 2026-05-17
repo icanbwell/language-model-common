@@ -1,8 +1,5 @@
 """Tests for the TokenReducer utility."""
 
-from __future__ import annotations
-
-
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
 

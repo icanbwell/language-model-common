@@ -7,8 +7,6 @@ interval.  Config-path environment variables in docker-compose should
 point at local subdirectories within the cache folder.
 """
 
-from __future__ import annotations
-
 import asyncio
 import io
 import logging

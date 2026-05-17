@@ -5,8 +5,6 @@ in their metadata.  After a tool call, the UI resource can be fetched
 and sent to the client as an HTML embed rendered in a sandboxed iframe.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from typing import cast, Literal, Any, TYPE_CHECKING
 
@@ -7,21 +5,21 @@ import boto3
 from boto3 import Session
 from botocore.config import Config
 
-from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
-from types_boto3_s3.client import S3Client
-from types_boto3_textract.client import TextractClient
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 
 if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
+    from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
+    from types_boto3_s3.client import S3Client
+    from types_boto3_textract.client import TextractClient
 
 
 class AwsClientFactory:
     def __init__(
         self,
         *,
-        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
     ) -> None:
         self._environment_variables = environment_variables
 
@@ -46,7 +44,7 @@ class AwsClientFactory:
             return default
 
     # noinspection PyMethodMayBeStatic
-    def create_bedrock_client(self) -> BedrockRuntimeClient:
+    def create_bedrock_client(self) -> "BedrockRuntimeClient":
         """Create and return a Bedrock client"""
         max_attempts = self._get_int_env(
             name="AWS_BEDROCK_MAX_ATTEMPTS",
@@ -96,7 +94,7 @@ class AwsClientFactory:
         return bedrock_client
 
     # noinspection PyMethodMayBeStatic
-    def create_s3_client(self) -> S3Client:
+    def create_s3_client(self) -> "S3Client":
         aws_credentials_profile = (
             self._environment_variables.aws_credentials_profile
             if self._environment_variables
@@ -110,7 +108,7 @@ class AwsClientFactory:
         return s3_client
 
     # noinspection PyMethodMayBeStatic
-    def create_textract_client(self) -> TextractClient:
+    def create_textract_client(self) -> "TextractClient":
         aws_credentials_profile = (
             self._environment_variables.aws_credentials_profile
             if self._environment_variables

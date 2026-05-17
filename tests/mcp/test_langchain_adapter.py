@@ -1,7 +1,5 @@
 """Tests for mcp_client.langchain_adapter — MCP metadata propagation."""
 
-from __future__ import annotations
-
 import pytest
 from mcp.types import Tool as MCPTool, ToolAnnotations
 

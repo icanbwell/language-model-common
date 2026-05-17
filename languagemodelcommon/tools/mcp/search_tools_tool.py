@@ -9,8 +9,6 @@ category, the tool fetches the server's tools via the resolver before
 searching.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re

@@ -1,15 +1,17 @@
 import logging
-from typing import Optional, Generator, override
+from typing import Optional, Generator, override, TYPE_CHECKING
 
 from botocore.exceptions import ClientError
 from starlette.responses import Response, StreamingResponse
-from types_boto3_s3.client import S3Client
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
 from languagemodelcommon.file_managers.file_manager import FileManager
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.s3_url import S3Url
 from languagemodelcommon.utilities.url_parser import UrlParser
+
+if TYPE_CHECKING:
+    from types_boto3_s3.client import S3Client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.FILES)

@@ -1,12 +1,10 @@
 """MCP session pooling — reuse sessions per server URL within a request scope."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Self
 
 from mcp import ClientSession
 
@@ -139,7 +137,7 @@ class McpSessionPool:
         sorted_items = sorted(headers.items())
         return f"{url}|{sorted_items}"
 
-    async def __aenter__(self) -> McpSessionPool:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(
