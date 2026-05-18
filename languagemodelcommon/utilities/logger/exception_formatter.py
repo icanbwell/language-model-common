@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 
 EXCEPTION_TYPE_CODES: dict[type[BaseException], str] = {

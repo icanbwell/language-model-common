@@ -1,7 +1,5 @@
 """Tool list caching and listing — avoids redundant MCP list_tools round-trips."""
 
-from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass

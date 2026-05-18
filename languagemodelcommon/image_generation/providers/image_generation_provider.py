@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import base64
 import logging
 import os
 import time
-from typing import Dict, List, Literal, Optional, Union, override, TYPE_CHECKING
+from typing import Dict, List, Literal, Optional, Union, override
 from uuid import uuid4
 
 from openai import NotGiven
@@ -27,13 +25,11 @@ from languagemodelcommon.image_generation.providers.base_image_generation_provid
 from languagemodelcommon.schema.openai.image_generation import (
     ImageGenerationRequest,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
-
-if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
@@ -45,7 +41,7 @@ class ImageGenerationProvider(BaseImageGenerationProvider):
         *,
         image_generator_factory: ImageGeneratorFactory,
         file_manager_factory: FileManagerFactory,
-        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
     ) -> None:
         self._environment_variables = environment_variables
         self.image_generator_factory: ImageGeneratorFactory = image_generator_factory

@@ -8,23 +8,18 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 ``https://github.com/`` URLs are converted to ``github://`` before download.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import tempfile
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.url_parser import UrlParser
-
-if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)

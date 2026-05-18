@@ -1,19 +1,15 @@
-from __future__ import annotations
-
 import os
 import re
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.url_parser import UrlParser
-
-if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
 
 
 @dataclass(frozen=True)
@@ -28,7 +24,7 @@ class FileWriter:
         self,
         *,
         file_manager_factory: FileManagerFactory,
-        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
     ) -> None:
         self._environment_variables = environment_variables
         self.file_manager_factory = file_manager_factory

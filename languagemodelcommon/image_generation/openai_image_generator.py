@@ -1,9 +1,7 @@
-from __future__ import annotations
-
 import base64
 import logging
 import os
-from typing import override, Literal, Optional, TYPE_CHECKING
+from typing import override, Literal, Optional
 
 from openai import AsyncOpenAI
 from openai.types import ImagesResponse
@@ -11,12 +9,10 @@ from openai.types import ImagesResponse
 from languagemodelcommon.image_generation.image_generator import (
     ImageGenerator,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
-
-if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.IMAGE_GENERATION)
@@ -26,7 +22,7 @@ class OpenAIImageGenerator(ImageGenerator):
     def __init__(
         self,
         *,
-        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
     ) -> None:
         self._environment_variables = environment_variables
 

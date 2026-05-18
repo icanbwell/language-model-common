@@ -10,8 +10,6 @@ This subclass intercepts messages before serialization and replaces invalid
 characters in tool_use names with underscores.
 """
 
-from __future__ import annotations
-
 import re
 import logging
 from typing import Any, Iterator, List

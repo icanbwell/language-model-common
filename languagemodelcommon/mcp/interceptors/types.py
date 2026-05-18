@@ -3,16 +3,12 @@
 Replaces the types previously imported from langchain-mcp-adapters.
 """
 
-from __future__ import annotations
-
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 from mcp.types import CallToolResult
 from typing_extensions import NotRequired, TypedDict, Unpack
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 # Result type — matches what interceptors and handlers return.
 MCPToolCallResult = CallToolResult
@@ -42,9 +38,7 @@ class MCPToolCallRequest:
     server_name: str
     headers: dict[str, Any] | None = None
 
-    def override(
-        self, **overrides: Unpack[_MCPToolCallRequestOverrides]
-    ) -> MCPToolCallRequest:
+    def override(self, **overrides: Unpack[_MCPToolCallRequestOverrides]) -> Self:
         return replace(self, **overrides)
 
 

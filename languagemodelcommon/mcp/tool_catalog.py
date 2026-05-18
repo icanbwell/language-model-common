@@ -8,8 +8,6 @@ and their tools are fetched on-demand when a search matches the server's
 category.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import math

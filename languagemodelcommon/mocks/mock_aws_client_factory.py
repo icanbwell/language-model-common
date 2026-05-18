@@ -1,10 +1,12 @@
-from typing import override, cast
+from typing import override, cast, TYPE_CHECKING
 
 from botocore.client import BaseClient
 
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
-from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
-from types_boto3_s3.client import S3Client
+
+if TYPE_CHECKING:
+    from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
+    from types_boto3_s3.client import S3Client
 
 
 class MockAwsClientFactory(AwsClientFactory):
@@ -13,9 +15,9 @@ class MockAwsClientFactory(AwsClientFactory):
         assert self.aws_client is not None
 
     @override
-    def create_bedrock_client(self) -> BedrockRuntimeClient:
-        return cast(BedrockRuntimeClient, self.aws_client)
+    def create_bedrock_client(self) -> "BedrockRuntimeClient":
+        return cast("BedrockRuntimeClient", self.aws_client)
 
     @override
-    def create_s3_client(self) -> S3Client:
-        return cast(S3Client, self.aws_client)
+    def create_s3_client(self) -> "S3Client":
+        return cast("S3Client", self.aws_client)

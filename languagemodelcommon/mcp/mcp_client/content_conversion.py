@@ -1,7 +1,5 @@
 """Content conversion between MCP and LangChain content block formats."""
 
-from __future__ import annotations
-
 from langchain_core.messages.content import (
     FileContentBlock,
     ImageContentBlock,

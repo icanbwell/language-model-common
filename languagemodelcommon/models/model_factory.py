@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -14,19 +12,19 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
-from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 
 from languagemodelcommon.configs.schemas.config_schema import (
     ModelConfig,
     ModelParameterConfig,
     ChatModelConfig,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 if TYPE_CHECKING:
-    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-        LanguageModelCommonEnvironmentVariables,
-    )
+    from types_boto3_bedrock_runtime.client import BedrockRuntimeClient
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -36,7 +34,7 @@ class ModelFactory:
     def __init__(
         self,
         *,
-        environment_variables: "LanguageModelCommonEnvironmentVariables | None" = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
         aws_client_factory: AwsClientFactory | None = None,
     ) -> None:
         self._environment_variables = environment_variables
