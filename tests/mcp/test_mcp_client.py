@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.tools import ToolException
 from mcp.types import (
     CallToolResult,
     EmbeddedResource,
@@ -159,13 +158,15 @@ class TestConvertCallToolResult:
         blocks = convert_call_tool_result(result)
         assert len(blocks) == 2
 
-    def test_error_result_raises_tool_exception(self) -> None:
+    def test_error_result_returns_error_text(self) -> None:
         result = CallToolResult(
             content=[TextContent(type="text", text="Something went wrong")],
             isError=True,
         )
-        with pytest.raises(ToolException, match="Something went wrong"):
-            convert_call_tool_result(result)
+        blocks = convert_call_tool_result(result)
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+        assert blocks[0]["text"] == "Error: Something went wrong"
 
     def test_empty_content(self) -> None:
         result = CallToolResult(content=[])
