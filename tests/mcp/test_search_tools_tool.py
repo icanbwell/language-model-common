@@ -156,10 +156,12 @@ class TestSearchToolsTool:
         assert "No tools found" in content
 
     @pytest.mark.asyncio
-    async def test_oauth_server_skipped_when_query_does_not_match(self) -> None:
-        """OAuth servers are not resolved at all when the search query
-        does not match their metadata.  Resolution only happens when
-        the query specifically targets the server."""
+    async def test_oauth_server_skipped_when_no_category_and_query_does_not_match(
+        self,
+    ) -> None:
+        """OAuth servers are not resolved when category is None (broad search)
+        and the search query does not match their metadata.  The query-match
+        filter only applies to cross-category searches."""
         from languagemodelcommon.configs.schemas.config_schema import McpOAuthConfig
 
         catalog = ToolCatalog()
@@ -179,12 +181,43 @@ class TestSearchToolsTool:
 
         tool = SearchToolsTool(catalog=catalog, resolver=resolver)
         # "spreadsheet formulas" has no word overlap with "google_drive" / "Google Drive"
+        # and category=None means broad search — filter applies
         content, _artifact = await tool._arun(
-            query="spreadsheet formulas", category="Google Drive"
+            query="spreadsheet formulas", category=None
         )
         # Server should not have been resolved at all
         resolver.resolve_tools.assert_not_awaited()
-        assert "have not been resolved" in content
+
+    @pytest.mark.asyncio
+    async def test_oauth_server_resolved_when_category_explicitly_specified(
+        self,
+    ) -> None:
+        """OAuth servers are always resolved when the user explicitly
+        specifies a category — expressing intent to use that server."""
+        from languagemodelcommon.configs.schemas.config_schema import McpOAuthConfig
+
+        catalog = ToolCatalog()
+        oauth_config = AgentConfig(
+            name="google_drive",
+            url="https://example.com/mcp",
+            oauth=McpOAuthConfig(client_id="test-client-id"),
+        )
+        catalog.register_server(
+            server_name="google_drive",
+            category="Google Drive",
+            agent_config=oauth_config,
+        )
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(return_value=[])
+
+        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
+        # Even though "spreadsheet formulas" has no word overlap with metadata,
+        # specifying category="Google Drive" expresses user intent — resolve anyway
+        content, _artifact = await tool._arun(
+            query="spreadsheet formulas", category="Google Drive"
+        )
+        resolver.resolve_tools.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_auth_exception_raised_when_query_matches(self) -> None:
@@ -311,11 +344,11 @@ class TestOAuthSearchScenarios:
         resolver.resolve_tools.assert_awaited_once_with(agent_config=search_config)
 
     @pytest.mark.asyncio
-    async def test_oauth_server_skipped_when_query_does_not_match(self) -> None:
-        """Scenario 2: OAuth server is not resolved when the search query
-        has no token overlap with its metadata.  The non-OAuth server in
-        the same catalog is still resolved normally."""
-        catalog, _search_config, _github_config = self._build_mixed_catalog()
+    async def test_oauth_server_resolved_when_category_specified(self) -> None:
+        """Scenario 2: OAuth server is resolved when category is explicitly
+        specified, even if the query has no token overlap with metadata.
+        Specifying a category expresses intent to use that server."""
+        catalog, _search_config, github_config = self._build_mixed_catalog()
 
         resolver = AsyncMock()
         resolver.resolve_tools = AsyncMock(return_value=[])
@@ -325,10 +358,28 @@ class TestOAuthSearchScenarios:
             query="web content", category="GitHub repositories"
         )
 
-        # github is OAuth and "web content" has no overlap with
-        # "github" / "GitHub" / "GitHub repositories" → skipped
-        resolver.resolve_tools.assert_not_awaited()
-        assert "have not been resolved" in content
+        # Category is explicit — github should be resolved despite no query match
+        resolver.resolve_tools.assert_awaited_once_with(agent_config=github_config)
+
+    @pytest.mark.asyncio
+    async def test_oauth_server_skipped_in_broad_search_when_query_does_not_match(
+        self,
+    ) -> None:
+        """OAuth server is skipped in broad (category=None) searches when
+        the query has no token overlap with the server's metadata.
+        Non-OAuth servers are still resolved regardless of query match."""
+        catalog, search_config, _github_config = self._build_mixed_catalog()
+
+        resolver = AsyncMock()
+        resolver.resolve_tools = AsyncMock(return_value=[])
+
+        tool = SearchToolsTool(catalog=catalog, resolver=resolver)
+        content, _artifact = await tool._arun(query="weather forecast", category=None)
+
+        # category is None and "weather forecast" has no overlap with github's
+        # metadata — OAuth server (github) skipped.
+        # Non-OAuth server (google-search) is always resolved regardless.
+        resolver.resolve_tools.assert_awaited_once_with(agent_config=search_config)
 
     @pytest.mark.asyncio
     async def test_oauth_server_raises_auth_when_query_matches(self) -> None:

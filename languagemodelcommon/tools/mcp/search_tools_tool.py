@@ -74,7 +74,8 @@ class SearchToolsTool(BaseTool):
 
         Used to decide whether to surface a login link for a server that
         requires authentication.  Without tool schemas loaded we can only
-        match against the server name, category, and description.
+        match against the server name, category, description, and OAuth
+        provider display name.
         """
         query_tokens = set(_WORD_RE.findall(query.lower()))
         if not query_tokens:
@@ -90,17 +91,19 @@ class SearchToolsTool(BaseTool):
                 corpus_parts.append(server.agent_config.name)
             if server.agent_config.display_name:
                 corpus_parts.append(server.agent_config.display_name)
+            if server.agent_config.oauth and server.agent_config.oauth.display_name:
+                corpus_parts.append(server.agent_config.oauth.display_name)
 
         corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
         return bool(query_tokens & corpus_tokens)
 
-    def _run(self, query: str, category: str) -> str:
+    def _run(self, query: str, category: str | None = None) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
             "Use _arun instead."
         )
 
-    async def _arun(self, query: str, category: str) -> Tuple[str, str]:
+    async def _arun(self, query: str, category: str | None = None) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category.
         # OAuth servers are only resolved when the search query matches
         # their metadata.  When the query matches and auth is needed,
@@ -112,10 +115,14 @@ class SearchToolsTool(BaseTool):
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
-                # Skip OAuth servers whose metadata doesn't match the
-                # query — no point attempting auth for an unrelated search.
+                # When the user explicitly targets a category, they have
+                # expressed intent to use that server — always attempt
+                # resolution so login links are surfaced.  Only apply the
+                # query-match filter for broad/cross-category searches
+                # where we want to avoid prompting auth for unrelated servers.
                 if (
-                    server.agent_config.oauth is not None
+                    category is None
+                    and server.agent_config.oauth is not None
                     and not self._query_matches_server(query, server)
                 ):
                     continue
