@@ -577,10 +577,6 @@ class MCPToolProvider:
         if not discovered.display_name:
             discovered.display_name = tool_config.display_name or tool_config.name
 
-        # Enable app login by default for discovered servers so the user
-        # gets a login link even when DCR fails (no client_id for direct OAuth).
-        discovered.app_login_allowed = True
-
         provider_key = (
             f"oauth_{discovered.client_id}"
             if discovered.client_id

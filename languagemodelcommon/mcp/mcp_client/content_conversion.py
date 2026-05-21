@@ -8,7 +8,6 @@ from langchain_core.messages.content import (
     create_image_block,
     create_text_block,
 )
-from langchain_core.tools import ToolException
 from mcp.types import (
     AudioContent,
     BlobResourceContents,
@@ -64,18 +63,19 @@ def convert_call_tool_result(
 ) -> list[ToolMessageContentBlock]:
     """Convert a CallToolResult to LangChain content blocks.
 
-    Raises ToolException if the result indicates an error.
+    When the MCP server signals an error (isError=True), the error content is
+    returned as normal text blocks prefixed with "Error:" so the LLM can see
+    the failure reason and retry with corrected parameters.
     """
-    tool_content: list[ToolMessageContentBlock] = [
-        convert_mcp_content_to_lc_block(c) for c in result.content
-    ]
-
     if result.isError:
         error_parts = [
             block.text for block in result.content if isinstance(block, TextContent)
         ]
-        raise ToolException(
-            "\n".join(error_parts) if error_parts else str(tool_content)
-        )
+        error_text = "\n".join(error_parts) if error_parts else "Unknown tool error"
+        return [create_text_block(text=f"Error: {error_text}")]
+
+    tool_content: list[ToolMessageContentBlock] = [
+        convert_mcp_content_to_lc_block(c) for c in result.content
+    ]
 
     return tool_content

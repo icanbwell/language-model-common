@@ -423,7 +423,7 @@ class PassThroughTokenManager:
                 f"[Login to {login_display_name}]({authorization_url})"
             )
         app_login_allowed: bool = (
-            authentication_config.oauth.app_login_allowed
+            authentication_config.oauth.app_login is not None
             if authentication_config.oauth
             else False
         )

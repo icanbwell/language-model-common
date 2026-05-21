@@ -35,9 +35,9 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
 class SearchToolsInput(BaseModel):
-    category: str = Field(
-        ...,
-        description="Category to search within. Use one of the category names from the system message.",
+    category: str | None = Field(
+        default=None,
+        description="Optional category to filter the search. Omit for a broad cross-category search.",
     )
     query: str = Field(
         ...,
@@ -74,7 +74,8 @@ class SearchToolsTool(BaseTool):
 
         Used to decide whether to surface a login link for a server that
         requires authentication.  Without tool schemas loaded we can only
-        match against the server name, category, and description.
+        match against the server name, category, description, and OAuth
+        provider display name.
         """
         query_tokens = set(_WORD_RE.findall(query.lower()))
         if not query_tokens:
@@ -90,17 +91,19 @@ class SearchToolsTool(BaseTool):
                 corpus_parts.append(server.agent_config.name)
             if server.agent_config.display_name:
                 corpus_parts.append(server.agent_config.display_name)
+            if server.agent_config.oauth and server.agent_config.oauth.display_name:
+                corpus_parts.append(server.agent_config.oauth.display_name)
 
         corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
         return bool(query_tokens & corpus_tokens)
 
-    def _run(self, query: str, category: str) -> str:
+    def _run(self, query: str, category: str | None = None) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
             "Use _arun instead."
         )
 
-    async def _arun(self, query: str, category: str) -> Tuple[str, str]:
+    async def _arun(self, query: str, category: str | None = None) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category.
         # OAuth servers are only resolved when the search query matches
         # their metadata.  When the query matches and auth is needed,
@@ -112,10 +115,14 @@ class SearchToolsTool(BaseTool):
         if self.resolver is not None:
             unresolved = self.catalog.get_unresolved_servers(category)
             for server in unresolved:
-                # Skip OAuth servers whose metadata doesn't match the
-                # query — no point attempting auth for an unrelated search.
+                # When the user explicitly targets a category, they have
+                # expressed intent to use that server — always attempt
+                # resolution so login links are surfaced.  Only apply the
+                # query-match filter for broad/cross-category searches
+                # where we want to avoid prompting auth for unrelated servers.
                 if (
-                    server.agent_config.oauth is not None
+                    category is None
+                    and server.agent_config.oauth is not None
                     and not self._query_matches_server(query, server)
                 ):
                     continue
@@ -167,13 +174,16 @@ class SearchToolsTool(BaseTool):
             return error_text, error_text
 
         if not results:
+            scope = (
+                f"in the {category} category" if category else "across all categories"
+            )
             # List all tools in the category so the LLM knows what's available
             all_tools = self.catalog.list_tools(category=category)
             if all_tools:
                 tool_names = [t["name"] for t in all_tools]
                 no_match_text = (
                     f"No tools matched your search query, but the following "
-                    f"tools are available in {category} category:\n"
+                    f"tools are available {scope}:\n"
                     f"{', '.join(tool_names)}. "
                     f"Try searching with different keywords."
                 )
@@ -183,7 +193,7 @@ class SearchToolsTool(BaseTool):
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
                 error_text = (
-                    f"No tools found in {category}. "
+                    f"No tools found {scope}. "
                     f"Tool discovery failed for the following servers:\n"
                     f"{errors_detail}"
                 )
@@ -191,25 +201,31 @@ class SearchToolsTool(BaseTool):
             if registered_servers:
                 server_names = [s.server_name for s in registered_servers]
                 pending_text = (
-                    f"The following servers are registered in the {category} "
-                    f"category but their tools have not been resolved yet: "
+                    f"The following servers are registered {scope} "
+                    f"but their tools have not been resolved yet: "
                     f"{', '.join(server_names)}. "
                     f"They may require authentication or be unreachable."
                 )
                 return pending_text, pending_text
             # Category doesn't exist at all — list available categories
-            all_categories = self.catalog.get_categories()
-            if all_categories:
-                category_names = list(
-                    dict.fromkeys(
-                        c.get("description") or c.get("name", "unknown")
-                        for c in all_categories
+            if category is not None:
+                all_categories = self.catalog.get_categories()
+                if all_categories:
+                    category_names = list(
+                        dict.fromkeys(
+                            c.get("description") or c.get("name", "unknown")
+                            for c in all_categories
+                        )
                     )
-                )
-                not_found_text = (
-                    f"Category '{category}' not found. "
-                    f"Available categories: {', '.join(category_names)}."
-                )
+                    not_found_text = (
+                        f"Category '{category}' not found. "
+                        f"Available categories: {', '.join(category_names)}."
+                    )
+                else:
+                    not_found_text = (
+                        "No tools or categories are currently registered. "
+                        "The tool catalog is empty."
+                    )
             else:
                 not_found_text = (
                     "No tools or categories are currently registered. "
