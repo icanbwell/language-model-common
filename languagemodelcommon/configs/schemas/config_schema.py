@@ -105,6 +105,28 @@ class McpOAuthClientMetadata(BaseModel):
     )
 
 
+class McpOAuthAppLoginConfig(BaseModel):
+    """Configuration for credential-based app login (the 'Login to b.well App' flow).
+
+    When present, enables a direct username/password login option that POSTs
+    to the platform's /identity/account/login endpoint.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    api_gateway_base_url: str = Field(
+        ...,
+        alias="apiGatewayBaseUrl",
+        description="Base URL for the platform identity API (e.g., https://api.dev.icanbwell.com).",
+    )
+
+    client_keys: Dict[str, str] | None = Field(
+        None,
+        alias="clientKeys",
+        description="Map of display name to client key shown in the login form dropdown.",
+    )
+
+
 class McpOAuthConfig(BaseModel):
     """OAuth configuration from .mcp.json server entries.
 
@@ -200,10 +222,10 @@ class McpOAuthConfig(BaseModel):
         description="Client metadata for Dynamic Client Registration.",
     )
 
-    app_login_allowed: bool = Field(
-        False,
-        alias="appLoginAllowed",
-        description="When true, the 'Login to b.well App' option is shown alongside the OAuth login link.",
+    app_login: McpOAuthAppLoginConfig | None = Field(
+        None,
+        alias="appLogin",
+        description="Credential-based app login config. When present, enables the 'Login to b.well App' option.",
     )
 
     @property

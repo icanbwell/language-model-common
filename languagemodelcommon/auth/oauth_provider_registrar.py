@@ -131,6 +131,14 @@ class OAuthProviderRegistrar:
                 )
 
             # --- Build and register ---
+            app_login_dict: dict[str, str] | None = None
+            if oauth.app_login:
+                app_login_dict = {
+                    "api_gateway_base_url": oauth.app_login.api_gateway_base_url,
+                }
+                if oauth.app_login.client_keys:
+                    app_login_dict["client_keys"] = oauth.app_login.client_keys  # type: ignore[assignment]
+
             auth_config = AuthConfig(
                 auth_provider=auth_provider,
                 friendly_name=oauth.display_name or auth_provider,
@@ -140,6 +148,7 @@ class OAuthProviderRegistrar:
                 client_secret=client_secret,
                 well_known_uri=oauth.auth_server_metadata_url,
                 scope=oauth.scope_string,
+                app_login=app_login_dict,
                 authorization_endpoint=oauth.authorization_url,
                 token_endpoint=oauth.token_url,
                 use_pkce=oauth.use_pkce,
