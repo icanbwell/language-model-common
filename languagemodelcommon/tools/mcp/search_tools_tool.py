@@ -35,9 +35,9 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
 class SearchToolsInput(BaseModel):
-    category: str = Field(
-        ...,
-        description="Category to search within. Use one of the category names from the system message.",
+    category: str | None = Field(
+        default=None,
+        description="Optional category to filter the search. Omit for a broad cross-category search.",
     )
     query: str = Field(
         ...,
@@ -174,13 +174,16 @@ class SearchToolsTool(BaseTool):
             return error_text, error_text
 
         if not results:
+            scope = (
+                f"in the {category} category" if category else "across all categories"
+            )
             # List all tools in the category so the LLM knows what's available
             all_tools = self.catalog.list_tools(category=category)
             if all_tools:
                 tool_names = [t["name"] for t in all_tools]
                 no_match_text = (
                     f"No tools matched your search query, but the following "
-                    f"tools are available in {category} category:\n"
+                    f"tools are available {scope}:\n"
                     f"{', '.join(tool_names)}. "
                     f"Try searching with different keywords."
                 )
@@ -190,7 +193,7 @@ class SearchToolsTool(BaseTool):
             if resolution_errors:
                 errors_detail = "\n".join(resolution_errors)
                 error_text = (
-                    f"No tools found in {category}. "
+                    f"No tools found {scope}. "
                     f"Tool discovery failed for the following servers:\n"
                     f"{errors_detail}"
                 )
@@ -198,25 +201,31 @@ class SearchToolsTool(BaseTool):
             if registered_servers:
                 server_names = [s.server_name for s in registered_servers]
                 pending_text = (
-                    f"The following servers are registered in the {category} "
-                    f"category but their tools have not been resolved yet: "
+                    f"The following servers are registered {scope} "
+                    f"but their tools have not been resolved yet: "
                     f"{', '.join(server_names)}. "
                     f"They may require authentication or be unreachable."
                 )
                 return pending_text, pending_text
             # Category doesn't exist at all — list available categories
-            all_categories = self.catalog.get_categories()
-            if all_categories:
-                category_names = list(
-                    dict.fromkeys(
-                        c.get("description") or c.get("name", "unknown")
-                        for c in all_categories
+            if category is not None:
+                all_categories = self.catalog.get_categories()
+                if all_categories:
+                    category_names = list(
+                        dict.fromkeys(
+                            c.get("description") or c.get("name", "unknown")
+                            for c in all_categories
+                        )
                     )
-                )
-                not_found_text = (
-                    f"Category '{category}' not found. "
-                    f"Available categories: {', '.join(category_names)}."
-                )
+                    not_found_text = (
+                        f"Category '{category}' not found. "
+                        f"Available categories: {', '.join(category_names)}."
+                    )
+                else:
+                    not_found_text = (
+                        "No tools or categories are currently registered. "
+                        "The tool catalog is empty."
+                    )
             else:
                 not_found_text = (
                     "No tools or categories are currently registered. "

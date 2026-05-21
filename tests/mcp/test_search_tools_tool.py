@@ -261,6 +261,56 @@ class TestSearchToolsTool:
         assert login_url in exc_info.value.message
 
 
+class TestBroadSearchMessaging:
+    """Verify that category=None produces proper LLM-facing messages."""
+
+    @pytest.mark.asyncio
+    async def test_broad_search_no_results_message_does_not_contain_none(self) -> None:
+        """When category is None, fallback messages use 'across all categories'
+        instead of interpolating the literal string 'None'."""
+        catalog = ToolCatalog()
+        tool = SearchToolsTool(catalog=catalog)
+        content, _artifact = await tool._arun(query="anything", category=None)
+        assert "None" not in content
+        assert "catalog is empty" in content
+
+    @pytest.mark.asyncio
+    async def test_broad_search_unresolved_server_message(self) -> None:
+        """Unresolved server message uses 'across all categories' when
+        category is None."""
+        catalog = ToolCatalog()
+        catalog.register_server(
+            server_name="fhir",
+            category="Healthcare",
+            agent_config=_agent_config("fhir"),
+        )
+        tool = SearchToolsTool(catalog=catalog)
+        content, _artifact = await tool._arun(query="something", category=None)
+        assert "None" not in content
+        assert "across all categories" in content
+
+    @pytest.mark.asyncio
+    async def test_broad_search_with_resolved_tools_no_match(self) -> None:
+        """When tools exist but query doesn't match, message uses
+        'across all categories' for broad search."""
+        catalog = _build_catalog()
+        tool = SearchToolsTool(catalog=catalog)
+        content, _artifact = await tool._arun(query="zzzznonexistent", category=None)
+        assert "None" not in content
+        assert "across all categories" in content
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_broad_search_without_category(self) -> None:
+        """Validates that the public ainvoke interface accepts calls without
+        category — proving args_schema allows optional category."""
+        catalog = _build_catalog()
+        tool = SearchToolsTool(catalog=catalog)
+        result = await tool.ainvoke({"query": "patient"})
+        parsed = json.loads(result[0] if isinstance(result, tuple) else result)
+        assert len(parsed) > 0
+        assert parsed[0]["name"] == "search_patients"
+
+
 class TestOAuthSearchScenarios:
     """End-to-end scenarios for OAuth-aware search gating.
 
