@@ -26,7 +26,6 @@ dependencies = [
     "langchain-community>=0.4",
     "openai>=2.5.0",
     "langchain-openai>=1.1.6",
-    "langchain-core>=1.2.5",
     "langgraph>=1.0.0",
     "pydantic>=2.0,<3.0.0",
     "mcp>=1.11.0",
