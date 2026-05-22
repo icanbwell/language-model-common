@@ -772,11 +772,8 @@ class LangGraphStreamingManager:
             source="on_tool_error",
         )
 
-        # Write error output to file and provide download link (only on debug requests, same as _handle_on_tool_end)
-        if (
-            self.environment_variables.write_tool_output_to_file
-            and chat_request_wrapper.enable_debug_logging
-        ):
+        # Write error output to file and provide download link
+        if self.environment_variables.write_tool_output_to_file:
             error_content: str = (
                 f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
             )
