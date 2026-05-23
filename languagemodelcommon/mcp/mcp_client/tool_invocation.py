@@ -47,18 +47,80 @@ def build_interceptor_chain(
 
 
 def _server_supports_tool_tasks(session: Any) -> bool:
-    """Check whether the MCP server advertises task support for tool calls."""
+    """Check whether the MCP server advertises task support for tool calls.
+
+    Supports both spec versions:
+    - Old (experimental): capabilities.tasks.requests.tools.call
+    - New (extension): capabilities.extensions["io.modelcontextprotocol/tasks"]
+    """
     try:
         caps = session.get_server_capabilities()
-        return bool(
-            caps
-            and caps.tasks
-            and getattr(caps.tasks, "requests", None)
-            and getattr(caps.tasks.requests, "tools", None)
-            and getattr(caps.tasks.requests.tools, "call", None)
-        )
+        if not caps:
+            return False
+
+        # New spec: extension-based capability
+        extensions = getattr(caps, "extensions", None)
+        if extensions and "io.modelcontextprotocol/tasks" in extensions:
+            return True
+
+        # Old spec: nested capability hierarchy
+        tasks_cap = getattr(caps, "tasks", None)
+        if tasks_cap:
+            requests = getattr(tasks_cap, "requests", None)
+            if requests:
+                tools = getattr(requests, "tools", None)
+                if tools and getattr(tools, "call", None):
+                    return True
+
+        return False
     except Exception:
         return False
+
+
+def _extract_task_id_from_create_result(create_result: Any) -> str:
+    """Extract taskId from CreateTaskResult, handling both spec versions.
+
+    Old spec: result.task.taskId (nested under 'task' field)
+    New spec: result.taskId (flat, Result & Task merged)
+    """
+    # New spec: taskId directly on result
+    if hasattr(create_result, "taskId"):
+        return str(create_result.taskId)
+
+    # Old spec: nested under .task
+    if hasattr(create_result, "task"):
+        return str(create_result.task.taskId)
+
+    raise ValueError(f"Cannot extract taskId from {type(create_result)}")
+
+
+def _extract_result_from_task_status(task_status: Any) -> CallToolResult | None:
+    """Extract inline result from a terminal task status (new spec).
+
+    New spec: completed tasks carry result inline in tasks/get response.
+    Old spec: requires separate tasks/result call — returns None.
+    """
+    if hasattr(task_status, "result") and task_status.result is not None:
+        result = task_status.result
+        if isinstance(result, CallToolResult):
+            return result
+        # New spec may return raw dict — wrap it
+        if isinstance(result, dict):
+            return CallToolResult(**result)
+    return None
+
+
+def _get_poll_interval_ms(task_status: Any) -> int | None:
+    """Get poll interval from task status, handling both field names."""
+    # New spec field name
+    if hasattr(task_status, "pollIntervalMs"):
+        val = task_status.pollIntervalMs
+        return int(val) if val is not None else None
+    # Old spec field name
+    if hasattr(task_status, "pollInterval"):
+        val = task_status.pollInterval
+        return int(val) if val is not None else None
+    return None
 
 
 async def _execute_tool_as_task(
@@ -69,6 +131,11 @@ async def _execute_tool_as_task(
 ) -> CallToolResult:
     """Execute a tool via the MCP task protocol, polling until completion.
 
+    Supports both spec versions:
+    - Old (experimental): call_tool_as_task → poll_task → get_task_result
+    - New (extension): server returns resultType="task" → poll via
+      tasks/get → result inline in completed status
+
     Emits ``mcp_task_progress`` custom events via LangChain's
     ``adispatch_custom_event`` so the streaming manager can forward
     progress updates to the client.
@@ -78,7 +145,9 @@ async def _execute_tool_as_task(
     create_result = await session.experimental.call_tool_as_task(
         name, arguments, ttl=60000
     )
-    task_id = create_result.task.taskId
+    task_id = _extract_task_id_from_create_result(create_result)
+
+    inline_result: CallToolResult | None = None
 
     async for status in session.experimental.poll_task(task_id):
         try:
@@ -87,7 +156,7 @@ async def _execute_tool_as_task(
                 {
                     "task_id": task_id,
                     "status": status.status,
-                    "message": status.statusMessage,
+                    "message": getattr(status, "statusMessage", None),
                     "server_name": server_name,
                     "tool_name": name,
                 },
@@ -96,6 +165,14 @@ async def _execute_tool_as_task(
             # No parent run context (e.g. called outside LangGraph) — skip event
             pass
 
+        # New spec: result may be inline on terminal status
+        inline_result = _extract_result_from_task_status(status)
+
+    # If new spec provided result inline, use it
+    if inline_result is not None:
+        return inline_result
+
+    # Old spec: fetch result via separate tasks/result call
     result: CallToolResult = await session.experimental.get_task_result(
         task_id, CallToolResult
     )
