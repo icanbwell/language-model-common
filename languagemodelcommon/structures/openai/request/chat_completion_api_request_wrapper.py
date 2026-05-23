@@ -46,7 +46,11 @@ logger.setLevel(SRC_LOG_LEVELS.SSE)
 
 class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
     def __init__(
-        self, *, chat_request: ChatRequest, enable_debug_logging: bool
+        self,
+        *,
+        chat_request: ChatRequest,
+        enable_debug_logging: bool,
+        emit_task_progress: bool = False,
     ) -> None:
         """
         Wraps an OpenAI /chat/completions request to provide a consistent interface for different request types.
@@ -59,6 +63,7 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         )
 
         self._enable_debug_logging: bool = enable_debug_logging
+        self._emit_task_progress: bool = emit_task_progress
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
@@ -211,6 +216,25 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
             )
             if self._enable_debug_logging
             else None
+        )
+
+    @override
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        if not self._emit_task_progress:
+            return None
+        display = message or status
+        return self.create_sse_message(
+            request_id=request_id,
+            content=f"\n[Task progress: {display}]\n",
+            usage_metadata=None,
+            source="task_progress",
         )
 
     @override

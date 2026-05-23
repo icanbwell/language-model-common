@@ -208,6 +208,14 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("MONGO_DB_DCR_COLLECTION_NAME", "dcr_registrations")
 
     @property
+    def emit_task_progress_in_chat_completions(self) -> bool:
+        """When True, MCP task progress updates are emitted as content deltas
+        in the Chat Completions streaming format."""
+        return self.str2bool(
+            os.environ.get("EMIT_TASK_PROGRESS_IN_CHAT_COMPLETIONS", "false")
+        )
+
+    @property
     def mcp_tools_metadata_cache_ttl_seconds(self) -> int:
         """TTL for MCP tool list cache entries in seconds.
 

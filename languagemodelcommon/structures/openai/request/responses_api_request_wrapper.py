@@ -312,6 +312,24 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         }
         return f"data: {json.dumps(event)}\n\n"
 
+    @override
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        """Emit a structured ``task.progress`` SSE event."""
+        event: Dict[str, Any] = {
+            "type": "task.progress",
+            "task_id": task_id,
+            "status": status,
+            "message": message,
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
     @staticmethod
     def _convert_usage_to_response_usage(
         usages: list[UsageMetadata],

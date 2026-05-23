@@ -234,6 +234,14 @@ class LangGraphStreamingManager:
                     ):
                         if chunk:
                             yield chunk
+                case "on_custom_event":
+                    async for chunk in self._handle_on_custom_event(
+                        event=event,
+                        chat_request_wrapper=chat_request_wrapper,
+                        request_information=request_information,
+                    ):
+                        if chunk:
+                            yield chunk
                 case _:
                     logger.debug("Skipped event type: %s", event_type)
         except Exception:
@@ -804,6 +812,28 @@ class LangGraphStreamingManager:
                     usage_metadata=None,
                     source="on_tool_error",
                 )
+
+    async def _handle_on_custom_event(
+        self,
+        *,
+        event: StandardStreamEvent | CustomStreamEvent,
+        chat_request_wrapper: ChatRequestWrapper,
+        request_information: RequestInformation,
+    ) -> AsyncGenerator[str, None]:
+        """Route custom events emitted via adispatch_custom_event."""
+        name = event.get("name")
+        if name == "mcp_task_progress":
+            data: Dict[str, Any] = dict(event.get("data", {}))
+            chunk = chat_request_wrapper.create_task_progress_sse_event(
+                request_id=request_information.request_id,
+                task_id=data.get("task_id", ""),
+                status=data.get("status", ""),
+                message=data.get("message"),
+            )
+            if chunk:
+                yield chunk
+        else:
+            logger.debug("Skipped custom event: %s", name)
 
     @staticmethod
     def make_tool_key(

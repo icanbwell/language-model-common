@@ -1,5 +1,6 @@
 """Tool invocation — interceptor chain and raw MCP tool calls."""
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -16,6 +17,8 @@ from languagemodelcommon.mcp.mcp_client.session import (
     create_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
+
+logger = logging.getLogger(__name__)
 
 
 def build_interceptor_chain(
@@ -43,6 +46,62 @@ def build_interceptor_chain(
     return handler
 
 
+def _server_supports_tool_tasks(session: Any) -> bool:
+    """Check whether the MCP server advertises task support for tool calls."""
+    try:
+        caps = session.get_server_capabilities()
+        return bool(
+            caps
+            and caps.tasks
+            and getattr(caps.tasks, "requests", None)
+            and getattr(caps.tasks.requests, "tools", None)
+            and getattr(caps.tasks.requests.tools, "call", None)
+        )
+    except Exception:
+        return False
+
+
+async def _execute_tool_as_task(
+    session: Any,
+    name: str,
+    arguments: dict[str, Any],
+    server_name: str,
+) -> CallToolResult:
+    """Execute a tool via the MCP task protocol, polling until completion.
+
+    Emits ``mcp_task_progress`` custom events via LangChain's
+    ``adispatch_custom_event`` so the streaming manager can forward
+    progress updates to the client.
+    """
+    from langchain_core.callbacks.manager import adispatch_custom_event
+
+    create_result = await session.experimental.call_tool_as_task(
+        name, arguments, ttl=60000
+    )
+    task_id = create_result.task.taskId
+
+    async for status in session.experimental.poll_task(task_id):
+        try:
+            await adispatch_custom_event(
+                "mcp_task_progress",
+                {
+                    "task_id": task_id,
+                    "status": status.status,
+                    "message": status.statusMessage,
+                    "server_name": server_name,
+                    "tool_name": name,
+                },
+            )
+        except RuntimeError:
+            # No parent run context (e.g. called outside LangGraph) — skip event
+            pass
+
+    result: CallToolResult = await session.experimental.get_task_result(
+        task_id, CallToolResult
+    )
+    return result
+
+
 def _make_execute_tool(
     config: MCPConnectionConfig,
     mcp_callbacks: _MCPCallbacks,
@@ -55,6 +114,9 @@ def _make_execute_tool(
 
     When a ``session_pool`` is provided, sessions are reused across calls
     to the same MCP server URL within the pool's scope.
+
+    If the server advertises task support for tool calls, the tool is
+    executed via the MCP task protocol with polling and progress events.
     """
 
     async def execute_tool(request: MCPToolCallRequest) -> MCPToolCallResult:
@@ -71,6 +133,10 @@ def _make_execute_tool(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
+                if _server_supports_tool_tasks(session):
+                    return await _execute_tool_as_task(
+                        session, request.name, request.args, request.server_name
+                    )
                 return await session.call_tool(
                     request.name,
                     request.args,
@@ -87,11 +153,16 @@ def _make_execute_tool(
         ) as session:
             await session.initialize()
             try:
-                result = await session.call_tool(
-                    request.name,
-                    request.args,
-                    progress_callback=mcp_callbacks.progress_callback,
-                )
+                if _server_supports_tool_tasks(session):
+                    result = await _execute_tool_as_task(
+                        session, request.name, request.args, request.server_name
+                    )
+                else:
+                    result = await session.call_tool(
+                        request.name,
+                        request.args,
+                        progress_callback=mcp_callbacks.progress_callback,
+                    )
             except Exception as e:
                 captured_exception = e
 

@@ -239,6 +239,21 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        """Emit an SSE event for MCP task progress updates.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event in their respective SSE formats.
+        """
+        return None
+
     def create_tool_start_sse_event(
         self,
         *,
