@@ -231,6 +231,9 @@ class ChatRequestWrapper(abc.ABC):
         *,
         html: str,
         title: str | None = None,
+        csp: dict[str, Any] | None = None,
+        permissions: dict[str, Any] | None = None,
+        prefers_border: bool | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame carrying an MCP app HTML embed.
 

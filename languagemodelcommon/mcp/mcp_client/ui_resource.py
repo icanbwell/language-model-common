@@ -20,12 +20,22 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
 @dataclass
+class McpAppUiMeta:
+    """CSP and permissions metadata from a UI resource response."""
+
+    csp: dict[str, Any] | None = None
+    permissions: dict[str, Any] | None = None
+    prefers_border: bool | None = None
+
+
+@dataclass
 class McpAppEmbed:
     """An MCP app HTML embed ready to be sent to the client."""
 
     html: str
     title: str | None = None
     tool_name: str | None = None
+    ui_meta: McpAppUiMeta | None = None
 
 
 def _to_dict(obj: Any) -> dict[str, Any]:
@@ -68,14 +78,51 @@ def extract_ui_resource_uri(tool: MCPTool) -> str | None:
     return None
 
 
+def is_tool_visible_to_model(tool: MCPTool) -> bool:
+    """Check whether a tool should be exposed to the LLM.
+
+    Per MCP Apps spec, tools with ``_meta.ui.visibility: ["app"]`` are
+    only callable by the rendered UI iframe, not by the model.
+    Default visibility (when unspecified) is ``["model", "app"]``.
+    """
+    meta = getattr(tool, "meta", None)
+    if meta is None:
+        return True
+
+    meta_dict = _to_dict(meta)
+    if not meta_dict:
+        return True
+
+    ui_meta = meta_dict.get("ui", {})
+    if not isinstance(ui_meta, dict):
+        return True
+
+    visibility = ui_meta.get("visibility")
+    if visibility is None:
+        return True
+
+    if isinstance(visibility, list):
+        return "model" in visibility
+
+    return True
+
+
+@dataclass
+class UiResourceFetchResult:
+    """Result of fetching a UI resource, including HTML and metadata."""
+
+    html: str
+    ui_meta: McpAppUiMeta | None = None
+
+
 async def fetch_ui_resource(
     session: ClientSession,
     uri: str,
-) -> str | None:
-    """Fetch HTML content from a ``ui://`` resource URI.
+) -> UiResourceFetchResult | None:
+    """Fetch HTML content and metadata from a ``ui://`` resource URI.
 
-    Returns the HTML string, or ``None`` if the resource is empty or
-    the fetch fails.
+    Returns a ``UiResourceFetchResult`` with HTML and any CSP/permissions
+    metadata, or ``None`` if the resource is empty or the fetch fails.
     """
     try:
         result = await session.read_resource(AnyUrl(uri))
@@ -86,10 +133,38 @@ async def fetch_ui_resource(
     if result and getattr(result, "contents", None):
         for item in result.contents:
             text = getattr(item, "text", None)
-            if text:
-                return str(text)
+            if not text:
+                continue
+
+            ui_meta = _extract_ui_meta_from_content(item)
+            return UiResourceFetchResult(html=str(text), ui_meta=ui_meta)
 
     return None
+
+
+def _extract_ui_meta_from_content(content_item: Any) -> McpAppUiMeta | None:
+    """Extract CSP and permissions from a resource content item's _meta.ui."""
+    meta = getattr(content_item, "_meta", None) or getattr(content_item, "meta", None)
+    if meta is None:
+        return None
+
+    meta_dict = _to_dict(meta)
+    ui = meta_dict.get("ui")
+    if not isinstance(ui, dict):
+        return None
+
+    csp = ui.get("csp")
+    permissions = ui.get("permissions")
+    prefers_border = ui.get("prefersBorder")
+
+    if csp is None and permissions is None and prefers_border is None:
+        return None
+
+    return McpAppUiMeta(
+        csp=csp if isinstance(csp, dict) else None,
+        permissions=permissions if isinstance(permissions, dict) else None,
+        prefers_border=bool(prefers_border) if prefers_border is not None else None,
+    )
 
 
 def inject_tool_data_into_html(

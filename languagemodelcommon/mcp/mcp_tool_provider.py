@@ -61,6 +61,7 @@ from languagemodelcommon.mcp.mcp_client.ui_resource import (
     extract_ui_resource_uri,
     fetch_ui_resource,
     inject_tool_data_into_html,
+    is_tool_visible_to_model,
 )
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
@@ -883,6 +884,9 @@ class MCPToolProvider:
             tool_names = tool_config.tools.split(",")
             mcp_tools = [t for t in mcp_tools if t.name in tool_names]
 
+        # Filter out app-only tools (visibility: ["app"]) per MCP Apps spec
+        mcp_tools = [t for t in mcp_tools if is_tool_visible_to_model(t)]
+
         return mcp_tools
 
     def create_tool_resolver(
@@ -1005,17 +1009,17 @@ class MCPToolProvider:
         tool_result_text: str,
     ) -> McpAppEmbed | None:
         """Fetch the UI resource and inject tool data into the HTML."""
-        html = await fetch_ui_resource(session, ui_uri)
-        if not html:
+        fetch_result = await fetch_ui_resource(session, ui_uri)
+        if not fetch_result:
             return None
 
         html = inject_tool_data_into_html(
-            html,
+            fetch_result.html,
             tool_name=tool_name,
             tool_args=tool_args,
             tool_result_text=tool_result_text,
         )
-        return McpAppEmbed(html=html, tool_name=tool_name)
+        return McpAppEmbed(html=html, tool_name=tool_name, ui_meta=fetch_result.ui_meta)
 
 
 class _BoundToolResolver:

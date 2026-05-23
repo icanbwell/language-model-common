@@ -479,10 +479,18 @@ class LangGraphStreamingManager:
                 mcp_app_embed = artifact["mcp_app_embed"]
                 embed_html = getattr(mcp_app_embed, "html", None)
                 embed_title = getattr(mcp_app_embed, "title", None)
+                ui_meta = getattr(mcp_app_embed, "ui_meta", None)
                 if embed_html:
                     mcp_app_event = chat_request_wrapper.create_mcp_app_sse_event(
                         html=embed_html,
                         title=embed_title,
+                        csp=getattr(ui_meta, "csp", None) if ui_meta else None,
+                        permissions=getattr(ui_meta, "permissions", None)
+                        if ui_meta
+                        else None,
+                        prefers_border=getattr(ui_meta, "prefers_border", None)
+                        if ui_meta
+                        else None,
                     )
                     if mcp_app_event:
                         yield mcp_app_event

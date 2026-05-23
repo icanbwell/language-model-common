@@ -299,11 +299,20 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         *,
         html: str,
         title: str | None = None,
+        csp: dict[str, Any] | None = None,
+        permissions: dict[str, Any] | None = None,
+        prefers_border: bool | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
-        payload = {"html": html}
+        payload: dict[str, Any] = {"html": html}
         if title:
             payload["title"] = title
+        if csp:
+            payload["csp"] = csp
+        if permissions:
+            payload["permissions"] = permissions
+        if prefers_border is not None:
+            payload["prefersBorder"] = prefers_border
         return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override
