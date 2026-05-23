@@ -259,6 +259,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         csp: dict[str, Any] | None = None,
         permissions: dict[str, Any] | None = None,
         prefers_border: bool | None = None,
+        display_mode: str | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
         payload: Dict[str, Any] = {"html": html}
@@ -270,6 +271,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             payload["permissions"] = permissions
         if prefers_border is not None:
             payload["prefersBorder"] = prefers_border
+        if display_mode:
+            payload["displayMode"] = display_mode
         return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override

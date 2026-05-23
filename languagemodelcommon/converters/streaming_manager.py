@@ -491,6 +491,9 @@ class LangGraphStreamingManager:
                         prefers_border=getattr(ui_meta, "prefers_border", None)
                         if ui_meta
                         else None,
+                        display_mode=getattr(ui_meta, "display_mode", None)
+                        if ui_meta
+                        else None,
                     )
                     if mcp_app_event:
                         yield mcp_app_event

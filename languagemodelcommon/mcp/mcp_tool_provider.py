@@ -944,6 +944,8 @@ class MCPToolProvider:
         tool_result_text: str,
         agent_config: AgentConfig,
         session_pool: McpSessionPool | None = None,
+        proxy_base_url: str | None = None,
+        session_token: str | None = None,
     ) -> McpAppEmbed | None:
         """Fetch an MCP app UI resource for a tool, if one is declared.
 
@@ -970,7 +972,6 @@ class MCPToolProvider:
                     config, mcp_callbacks=mcp_callbacks
                 )
             else:
-                # One-shot session fallback — not ideal but functional
                 async with create_mcp_session(
                     config, mcp_callbacks=mcp_callbacks
                 ) as session:
@@ -981,6 +982,8 @@ class MCPToolProvider:
                         tool_name=tool_name,
                         tool_args=tool_args,
                         tool_result_text=tool_result_text,
+                        proxy_base_url=proxy_base_url,
+                        session_token=session_token,
                     )
 
             return await self._fetch_and_build_embed(
@@ -989,6 +992,8 @@ class MCPToolProvider:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_result_text=tool_result_text,
+                proxy_base_url=proxy_base_url,
+                session_token=session_token,
             )
         except Exception as e:
             logger.warning(
@@ -1007,6 +1012,8 @@ class MCPToolProvider:
         tool_name: str,
         tool_args: Dict[str, Any],
         tool_result_text: str,
+        proxy_base_url: str | None = None,
+        session_token: str | None = None,
     ) -> McpAppEmbed | None:
         """Fetch the UI resource and inject tool data into the HTML."""
         fetch_result = await fetch_ui_resource(session, ui_uri)
@@ -1018,6 +1025,8 @@ class MCPToolProvider:
             tool_name=tool_name,
             tool_args=tool_args,
             tool_result_text=tool_result_text,
+            proxy_base_url=proxy_base_url,
+            session_token=session_token,
         )
         return McpAppEmbed(html=html, tool_name=tool_name, ui_meta=fetch_result.ui_meta)
 

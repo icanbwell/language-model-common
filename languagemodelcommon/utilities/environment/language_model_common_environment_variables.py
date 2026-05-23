@@ -333,3 +333,14 @@ class LanguageModelCommonEnvironmentVariables(
         instead of reading a local ``.mcp.json`` file.
         """
         return os.environ.get("PLUGINS_MCP_SERVER")
+
+    @property
+    def mcp_app_proxy_base_url(self) -> Optional[str]:
+        """Base URL for the MCP Apps proxy endpoint.
+
+        When set, the injected bridge JavaScript in MCP App iframes can
+        proxy ``tools/call`` and ``resources/read`` requests through this
+        URL back to the MCP server.  Typically points to the gateway's
+        own base URL (e.g., ``http://localhost:5000``).
+        """
+        return os.environ.get("MCP_APP_PROXY_BASE_URL")
