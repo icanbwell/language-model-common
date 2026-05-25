@@ -50,12 +50,16 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         *,
         chat_request: ChatRequest,
         enable_debug_logging: bool,
-        emit_task_progress: bool = False,
+        emit_task_progress: bool | None = None,
     ) -> None:
         """
         Wraps an OpenAI /chat/completions request to provide a consistent interface for different request types.
 
         """
+        from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+            LanguageModelCommonEnvironmentVariables,
+        )
+
         self.request: ChatRequest = chat_request
 
         self._messages: list[ChatMessageWrapper] = self.convert_from_chat_messages(
@@ -63,7 +67,11 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         )
 
         self._enable_debug_logging: bool = enable_debug_logging
-        self._emit_task_progress: bool = emit_task_progress
+        self._emit_task_progress: bool = (
+            emit_task_progress
+            if emit_task_progress is not None
+            else LanguageModelCommonEnvironmentVariables().emit_task_progress_in_chat_completions
+        )
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:

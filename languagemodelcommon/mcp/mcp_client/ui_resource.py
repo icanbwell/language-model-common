@@ -207,7 +207,11 @@ def inject_tool_data_into_html(
     """
     import json
 
-    bridge_config = json.dumps(
+    def _safe_json(value: Any) -> str:
+        """Escape </script> sequences so the HTML parser cannot close the tag early."""
+        return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
+
+    bridge_config = _safe_json(
         {
             "toolName": tool_name,
             "toolArgs": tool_args,
@@ -215,14 +219,13 @@ def inject_tool_data_into_html(
             "proxyBaseUrl": proxy_base_url,
             "sessionToken": session_token,
         },
-        ensure_ascii=False,
     )
 
     bridge_script = (
         "<script>\n"
-        f"window.__MCP_TOOL_RESULT__ = {json.dumps(tool_result_text)};\n"
-        f"window.__MCP_TOOL_ARGS__ = {json.dumps(tool_args, ensure_ascii=False)};\n"
-        f"window.__MCP_TOOL_NAME__ = {json.dumps(tool_name)};\n"
+        f"window.__MCP_TOOL_RESULT__ = {_safe_json(tool_result_text)};\n"
+        f"window.__MCP_TOOL_ARGS__ = {_safe_json(tool_args)};\n"
+        f"window.__MCP_TOOL_NAME__ = {_safe_json(tool_name)};\n"
         f"window.__MCP_BRIDGE_CONFIG__ = {bridge_config};\n"
         "</script>\n"
         "<script>\n" + _MCP_APP_BRIDGE_JS + "\n</script>\n"
@@ -477,8 +480,16 @@ _MCP_APP_BRIDGE_JS = """\
         configurable: true
       });
     } catch(e) {
-      // Fallback: intercept via message event listener for apps that
-      // use window.addEventListener('message', ...) directly
+      console.error('MCP bridge: window.parent override failed, using postMessage monkey-patch fallback', e);
+      // Fallback: monkey-patch postMessage on the real parent to intercept JSON-RPC frames
+      var origPostMessage = window.parent.postMessage.bind(window.parent);
+      window.parent.postMessage = function(msg, origin) {
+        if (msg && typeof msg === 'object' && msg.jsonrpc === '2.0' && msg.method) {
+          _handleJsonRpcMessage(msg);
+        } else {
+          origPostMessage(msg, origin || '*');
+        }
+      };
     }
   }
 

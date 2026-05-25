@@ -110,19 +110,6 @@ def _extract_result_from_task_status(task_status: Any) -> CallToolResult | None:
     return None
 
 
-def _get_poll_interval_ms(task_status: Any) -> int | None:
-    """Get poll interval from task status, handling both field names."""
-    # New spec field name
-    if hasattr(task_status, "pollIntervalMs"):
-        val = task_status.pollIntervalMs
-        return int(val) if val is not None else None
-    # Old spec field name
-    if hasattr(task_status, "pollInterval"):
-        val = task_status.pollInterval
-        return int(val) if val is not None else None
-    return None
-
-
 async def _execute_tool_as_task(
     session: Any,
     name: str,
@@ -161,9 +148,13 @@ async def _execute_tool_as_task(
                     "tool_name": name,
                 },
             )
-        except RuntimeError:
-            # No parent run context (e.g. called outside LangGraph) — skip event
-            pass
+        except RuntimeError as e:
+            logger.debug(
+                "Skipping mcp_task_progress event dispatch: %s (task_id=%s, tool=%s)",
+                e,
+                task_id,
+                name,
+            )
 
         # New spec: result may be inline on terminal status
         inline_result = _extract_result_from_task_status(status)
