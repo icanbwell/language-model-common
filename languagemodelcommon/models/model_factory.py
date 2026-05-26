@@ -109,40 +109,34 @@ class ModelFactory:
                 else os.environ.get("AWS_REGION", "us-east-1")
             )
 
-            bedrock_client: BedrockRuntimeClient = (
-                self._aws_client_factory.create_bedrock_client()
-            )
-
-            # Extract thinking config if present — it must be passed via
-            # additional_model_request_fields, not as a top-level kwarg.
-            additional_fields: Dict[str, Any] = {}
+            # Extract thinking config if present
             thinking_budget: int | None = None
             raw_budget = model_parameters_dict.pop("thinking_budget_tokens", None)
             if raw_budget is not None:
                 thinking_budget = int(raw_budget)
-            if thinking_budget and thinking_budget > 0:
-                additional_fields["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget,
-                }
-                logger.info(
-                    "Extended thinking enabled for %s with budget_tokens=%d",
-                    model_name,
-                    thinking_budget,
-                )
 
-            if additional_fields:
-                model_parameters_dict["additional_model_request_fields"] = (
-                    additional_fields
-                )
-
-            llm = ChatBedrockConverse(
-                client=bedrock_client,
-                provider="anthropic",
-                credentials_profile_name=aws_credentials_profile,
-                region_name=aws_region_name,
-                **model_parameters_dict,
+            use_anthropic_client: bool = (
+                self._environment_variables.bedrock_use_anthropic_client
+                if self._environment_variables
+                else os.environ.get("BEDROCK_USE_ANTHROPIC_CLIENT", "").lower()
+                in ("1", "true", "yes")
             )
+
+            if use_anthropic_client and self._is_anthropic_model(model_name):
+                llm = self._create_anthropic_bedrock_model(
+                    model_name=model_name,
+                    aws_region_name=aws_region_name,
+                    thinking_budget=thinking_budget,
+                    model_parameters_dict=model_parameters_dict,
+                )
+            else:
+                llm = self._create_converse_bedrock_model(
+                    model_name=model_name,
+                    aws_credentials_profile=aws_credentials_profile,
+                    aws_region_name=aws_region_name,
+                    thinking_budget=thinking_budget,
+                    model_parameters_dict=model_parameters_dict,
+                )
         elif model_config.provider == "openai":
             llm = ChatOpenAI(**model_parameters_dict)
         else:
@@ -151,6 +145,72 @@ class ModelFactory:
             )
 
         return llm
+
+    @staticmethod
+    def _is_anthropic_model(model_name: str) -> bool:
+        return model_name.startswith(("anthropic.", "us.anthropic."))
+
+    def _create_anthropic_bedrock_model(
+        self,
+        *,
+        model_name: str,
+        aws_region_name: str,
+        thinking_budget: int | None,
+        model_parameters_dict: Dict[str, Any],
+    ) -> "BaseChatModel":
+        from langchain_aws import ChatAnthropicBedrock
+
+        if thinking_budget and thinking_budget > 0:
+            model_parameters_dict["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": thinking_budget,
+            }
+            logger.info(
+                "Extended thinking enabled (Anthropic client) for %s with budget_tokens=%d",
+                model_name,
+                thinking_budget,
+            )
+
+        return ChatAnthropicBedrock(
+            region_name=aws_region_name,
+            **model_parameters_dict,
+        )
+
+    def _create_converse_bedrock_model(
+        self,
+        *,
+        model_name: str,
+        aws_credentials_profile: str | None,
+        aws_region_name: str,
+        thinking_budget: int | None,
+        model_parameters_dict: Dict[str, Any],
+    ) -> "BaseChatModel":
+        bedrock_client: "BedrockRuntimeClient" = (
+            self._aws_client_factory.create_bedrock_client()
+        )
+
+        additional_fields: Dict[str, Any] = {}
+        if thinking_budget and thinking_budget > 0:
+            additional_fields["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": thinking_budget,
+            }
+            logger.info(
+                "Extended thinking enabled for %s with budget_tokens=%d",
+                model_name,
+                thinking_budget,
+            )
+
+        if additional_fields:
+            model_parameters_dict["additional_model_request_fields"] = additional_fields
+
+        return ChatBedrockConverse(
+            client=bedrock_client,
+            provider="anthropic",
+            credentials_profile_name=aws_credentials_profile,
+            region_name=aws_region_name,
+            **model_parameters_dict,
+        )
 
     def get_google_credentials(self) -> Credentials:
         service_account_json = (

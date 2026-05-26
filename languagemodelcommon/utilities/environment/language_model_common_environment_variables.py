@@ -273,6 +273,14 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("AWS_REGION", "us-east-1")
 
     @property
+    def bedrock_use_anthropic_client(self) -> bool:
+        return os.environ.get("BEDROCK_USE_ANTHROPIC_CLIENT", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    @property
     def default_model_provider(self) -> str:
         return os.environ.get("DEFAULT_MODEL_PROVIDER", "bedrock")
 
