@@ -281,19 +281,6 @@ class LanguageModelCommonEnvironmentVariables(
         )
 
     @property
-    def prompt_cache_enabled(self) -> bool:
-        """Whether Bedrock prompt caching is enabled. Defaults to True."""
-        return self.str2bool(os.environ.get("PROMPT_CACHE_ENABLED", "true"))
-
-    @property
-    def prompt_cache_ttl(self) -> str:
-        """Bedrock prompt caching TTL. Valid: '5m' or '1h'. Defaults to '5m'."""
-        val = os.environ.get("PROMPT_CACHE_TTL", "5m")
-        if val in ("5m", "1h"):
-            return val
-        return "5m"
-
-    @property
     def default_model_provider(self) -> str:
         return os.environ.get("DEFAULT_MODEL_PROVIDER", "bedrock")
 

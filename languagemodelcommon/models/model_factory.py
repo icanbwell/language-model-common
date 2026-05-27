@@ -144,7 +144,7 @@ class ModelFactory:
                 f"Unsupported model vendor: {model_vendor} and model_provider: {model_config.provider} for {model_name}"
             )
 
-        return self._apply_prompt_caching(llm, model_config.provider)
+        return llm
 
     @staticmethod
     def _is_anthropic_model(model_name: str) -> bool:
@@ -211,44 +211,6 @@ class ModelFactory:
             region_name=aws_region_name,
             **model_parameters_dict,
         )
-
-    def _apply_prompt_caching(self, llm: BaseChatModel, provider: str) -> BaseChatModel:
-        """Apply Bedrock prompt caching via .bind(cache_control=...) if enabled.
-
-        Adds explicit cachePoint blocks to system messages, tool definitions,
-        and the last message on each API call. Only applies to Bedrock models.
-        """
-        if provider != "bedrock":
-            return llm
-
-        prompt_cache_enabled: bool = (
-            self._environment_variables.prompt_cache_enabled
-            if self._environment_variables
-            else self._str2bool(os.environ.get("PROMPT_CACHE_ENABLED", "true"))
-        )
-        if not prompt_cache_enabled:
-            return llm
-
-        prompt_cache_ttl: str = (
-            self._environment_variables.prompt_cache_ttl
-            if self._environment_variables
-            else os.environ.get("PROMPT_CACHE_TTL", "5m")
-        )
-        if prompt_cache_ttl not in ("5m", "1h"):
-            prompt_cache_ttl = "5m"
-
-        logger.info(
-            "Prompt caching enabled with TTL=%s for model %s",
-            prompt_cache_ttl,
-            getattr(llm, "model_id", getattr(llm, "model", "unknown")),
-        )
-        return llm.bind(cache_control={"type": "ephemeral", "ttl": prompt_cache_ttl})  # type: ignore[return-value]
-
-    @staticmethod
-    def _str2bool(value: str | None) -> bool:
-        if not value:
-            return False
-        return value.lower() in ("1", "true", "yes")
 
     def get_google_credentials(self) -> Credentials:
         service_account_json = (
