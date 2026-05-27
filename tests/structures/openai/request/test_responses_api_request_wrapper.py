@@ -2,6 +2,7 @@
 
 import json
 from typing import Any, List, cast
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, AnyMessage
@@ -10,6 +11,12 @@ from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
     ResponsesApiRequestWrapper,
 )
+
+
+def _make_env() -> MagicMock:
+    env = MagicMock()
+    env.debug_prefixes = ("DEBUG:", "/debug ")
+    return env
 
 
 def _make_wrapper(
@@ -44,6 +51,7 @@ def _make_wrapper(
     return ResponsesApiRequestWrapper(
         chat_request=request,
         enable_debug_logging=enable_debug_logging,
+        environment_variables=_make_env(),
     )
 
 

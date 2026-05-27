@@ -43,24 +43,26 @@ class ConfigReader:
         *,
         cache: ConfigExpiringCache | None = None,
         prompt_library_manager: PromptLibraryManager,
-        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
         mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
         snapshot_cache_store: BaseStore | None = None,
+        file_config_reader: FileConfigReader | None = None,
+        s3_config_reader: S3ConfigReader | None = None,
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._mcp_resolved_once: bool = False
         self._prompt_library_manager = prompt_library_manager
-        self._environment_variables = (
-            environment_variables or LanguageModelCommonEnvironmentVariables()
-        )
+        self._environment_variables = environment_variables
         self._github_directory_helper = (
             github_directory_helper
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
         self._mcp_json_fetcher = mcp_json_fetcher
         self._snapshot_cache_store = snapshot_cache_store
+        self._file_config_reader = file_config_reader or FileConfigReader()
+        self._s3_config_reader = s3_config_reader or S3ConfigReader()
         self._snapshot_cache_collection = (
             self._environment_variables.snapshot_cache_model_configs_collection
         )
@@ -285,7 +287,7 @@ class ConfigReader:
         models: List[ChatModelConfig]
         local_config_path: str = config_path
         if config_path.startswith("s3"):
-            models = await S3ConfigReader().read_model_configs(s3_url=config_path)
+            models = await self._s3_config_reader.read_model_configs(s3_url=config_path)
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from S3",
                 self._identifier,
@@ -294,7 +296,7 @@ class ConfigReader:
         elif GitHubDirectoryHelper.is_github_path(config_path):
             resolved = self._github_directory_helper.resolve_github_path(config_path)
             local_config_path = str(resolved)
-            models = FileConfigReader().read_model_configs(
+            models = self._file_config_reader.read_model_configs(
                 config_path=local_config_path,
                 exclude_dirs=exclude_dirs,
             )
@@ -304,7 +306,7 @@ class ConfigReader:
                 len(models),
             )
         else:
-            models = FileConfigReader().read_model_configs(
+            models = self._file_config_reader.read_model_configs(
                 config_path=config_path,
                 exclude_dirs=exclude_dirs,
             )

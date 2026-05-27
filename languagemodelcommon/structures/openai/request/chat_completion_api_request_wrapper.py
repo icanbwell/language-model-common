@@ -1,7 +1,22 @@
 import json
 import logging
 import time
-from typing import AsyncIterator, Literal, cast, override, Any, List, Dict, Optional
+from typing import (
+    AsyncIterator,
+    Literal,
+    cast,
+    override,
+    Any,
+    List,
+    Dict,
+    Optional,
+    TYPE_CHECKING,
+)
+
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
 
 from langchain_core.messages import (
     AIMessage,
@@ -50,16 +65,13 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         *,
         chat_request: ChatRequest,
         enable_debug_logging: bool,
+        environment_variables: "LanguageModelCommonEnvironmentVariables",
         emit_task_progress: bool | None = None,
     ) -> None:
         """
         Wraps an OpenAI /chat/completions request to provide a consistent interface for different request types.
 
         """
-        from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-            LanguageModelCommonEnvironmentVariables,
-        )
-
         self.request: ChatRequest = chat_request
 
         self._messages: list[ChatMessageWrapper] = self.convert_from_chat_messages(
@@ -70,12 +82,13 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         self._emit_task_progress: bool = (
             emit_task_progress
             if emit_task_progress is not None
-            else LanguageModelCommonEnvironmentVariables().emit_task_progress_in_chat_completions
+            else environment_variables.emit_task_progress_in_chat_completions
         )
+        self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefixes = ("DEBUG:", "/debug ")
+        debug_prefixes = self._debug_prefixes
         for message in self._messages:
             if message.role != "user":
                 continue

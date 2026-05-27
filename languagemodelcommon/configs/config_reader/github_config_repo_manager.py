@@ -43,9 +43,9 @@ class GithubConfigRepoManager:
     def __init__(
         self,
         *,
-        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
-        _env = environment_variables or LanguageModelCommonEnvironmentVariables()
+        _env = environment_variables
         self._repo_url: str | None = _env.github_config_repo_url
         cache_folder = _env.github_cache_folder
         self._cache_dir = Path(

@@ -20,6 +20,7 @@ See Also:
 """
 
 import copy  # For deepcopy
+from datetime import datetime, timezone
 import json
 import logging
 import time
@@ -688,10 +689,12 @@ class LangGraphStreamingManager:
             request_id=str(request_information.request_id),
         )
         # append all the messages into content_text
+        event_name: str = event.get("name", "unknown")
+        event_time: str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""
-            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
+            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} | event: {event_name} | {event_time} ---\n"
             content_text += f"{self._format_message_content(input_message.content)}\n"
             if isinstance(input_message, AIMessage) and input_message.tool_calls:
                 for tool_call in input_message.tool_calls:

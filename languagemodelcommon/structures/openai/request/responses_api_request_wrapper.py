@@ -12,7 +12,13 @@ from typing import (
     List,
     Any,
     cast,
+    TYPE_CHECKING,
 )
+
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
 
 from langchain_core.messages import AnyMessage
 from langchain_core.messages.ai import UsageMetadata
@@ -54,7 +60,11 @@ logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def __init__(
-        self, *, chat_request: ResponsesRequest, enable_debug_logging: bool
+        self,
+        *,
+        chat_request: ResponsesRequest,
+        enable_debug_logging: bool,
+        environment_variables: "LanguageModelCommonEnvironmentVariables",
     ) -> None:
         """
         Wraps an OpenAI /responses API request and provides a unified interface so the code can use it
@@ -66,10 +76,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             input_=self.request.input
         )
         self._enable_debug_logging: bool = enable_debug_logging
+        self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefixes = ("DEBUG:", "/debug ")
+        debug_prefixes = self._debug_prefixes
         for index, message in enumerate(self._messages):
             if message.role != "user":
                 continue

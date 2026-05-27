@@ -21,6 +21,9 @@ from languagemodelcommon.configs.schemas.mcp_json_schema import (
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 
 
 class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
@@ -55,10 +58,21 @@ def prompt_library_manager(tmp_path: Path) -> PromptLibraryManager:
 
 
 @pytest.fixture
+def environment_variables() -> LanguageModelCommonEnvironmentVariables:
+    return LanguageModelCommonEnvironmentVariables()
+
+
+@pytest.fixture
 def config_reader(
-    cache_mock: AsyncMock, prompt_library_manager: PromptLibraryManager
+    cache_mock: AsyncMock,
+    prompt_library_manager: PromptLibraryManager,
+    environment_variables: LanguageModelCommonEnvironmentVariables,
 ) -> ConfigReader:
-    return ConfigReader(cache=cache_mock, prompt_library_manager=prompt_library_manager)
+    return ConfigReader(
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=environment_variables,
+    )
 
 
 @pytest.mark.asyncio
@@ -75,6 +89,7 @@ async def test_snapshot_cache_hit(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
@@ -88,7 +103,9 @@ async def test_env_var_missing(
     if "MODELS_OFFICIAL_PATH" in os.environ:
         del os.environ["MODELS_OFFICIAL_PATH"]
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     with pytest.raises(ValueError):
         await reader.read_model_configs_async()
@@ -107,7 +124,9 @@ async def test_read_from_file(
         ChatModelConfig(id="1", name="FileModel", description="")
     ]
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "FileModel"
@@ -127,7 +146,9 @@ async def test_read_from_s3(
         return_value=[ChatModelConfig(id="2", name="S3Model", description="")]
     )
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "S3Model"
@@ -149,7 +170,9 @@ async def test_disabled_models_filtered(
             ChatModelConfig(id="2", name="Disabled", description="", disabled=True),
         ]
         reader = ConfigReader(
-            cache=cache_mock, prompt_library_manager=prompt_library_manager
+            cache=cache_mock,
+            prompt_library_manager=prompt_library_manager,
+            environment_variables=LanguageModelCommonEnvironmentVariables(),
         )
         result = await reader.read_model_configs_async()
         assert all(not m.disabled for m in result)
@@ -174,7 +197,9 @@ async def test_client_override_merges_with_default(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     configs = await reader.read_model_configs_async(client_id="client-a")
 
@@ -208,6 +233,7 @@ async def test_prompt_name_resolves_from_library(
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(str(prompt_library))
         ),
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     configs = await reader.read_model_configs_async()
 
@@ -236,7 +262,9 @@ async def test_override_does_not_clobber_default_fields(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     configs = await reader.read_model_configs_async(client_id="client-b")
 
@@ -269,6 +297,7 @@ async def test_prompt_auto_discovered_from_prompts_folder(
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(None)
         ),
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     configs = await reader.read_model_configs_async()
 
@@ -290,7 +319,9 @@ async def test_inline_prompt_content_still_works(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock, prompt_library_manager=prompt_library_manager
+        cache=cache_mock,
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
     configs = await reader.read_model_configs_async()
 
@@ -322,6 +353,7 @@ async def test_snapshot_cache_hit_short_circuits_disk(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
 
@@ -355,6 +387,7 @@ async def test_snapshot_cache_returns_none_falls_through(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
@@ -381,6 +414,7 @@ async def test_snapshot_cache_get_error_propagates(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     with pytest.raises(ConnectionError, match="MongoDB unavailable"):
@@ -407,6 +441,7 @@ async def test_snapshot_cache_deserialization_error_propagates(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     with pytest.raises(Exception):
@@ -434,6 +469,7 @@ async def test_snapshot_cache_put_error_propagates(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     with pytest.raises(TimeoutError, match="MongoDB write timeout"):
@@ -457,6 +493,7 @@ async def test_snapshot_cache_none_store_skips_entirely(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=None,
     )
     result = await reader.read_model_configs_async()
@@ -475,6 +512,7 @@ async def test_clear_cache_deletes_snapshot_entry(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     await reader.clear_cache()
@@ -494,6 +532,7 @@ async def test_clear_cache_without_snapshot_store(
     reader = ConfigReader(
         cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=None,
     )
     await reader.clear_cache()
@@ -554,6 +593,7 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
@@ -601,6 +641,7 @@ async def test_first_request_always_resolves_mcp(
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     await reader.read_model_configs_async()
@@ -631,6 +672,7 @@ async def test_retry_still_fails_gracefully(
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     result = await reader.read_model_configs_async()
@@ -661,6 +703,7 @@ async def test_no_retry_when_no_mcp_refs(
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
     )
     await reader.read_model_configs_async()

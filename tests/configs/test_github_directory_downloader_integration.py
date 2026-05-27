@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
     McpServerEntry,
@@ -169,6 +172,7 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 
@@ -203,6 +207,7 @@ async def test_read_models_from_https_github_url(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 
@@ -257,6 +262,7 @@ async def test_github_uri_resolves_mcp_via_fetcher(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
         mcp_json_fetcher=mock_fetcher,
     )
@@ -294,6 +300,7 @@ async def test_read_model_configs_async_with_github_uri(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 

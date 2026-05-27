@@ -71,6 +71,11 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_STREAMING_BUFFERING", "true"))
 
     @property
+    def debug_prefixes(self) -> tuple[str, ...]:
+        raw = os.environ.get("DEBUG_PREFIXES", "DEBUG:,/debug ")
+        return tuple(p for p in raw.split(",") if p)
+
+    @property
     def client_ids_for_debug_output(self) -> set[str] | None:
         # read the CLIENT_IDS_FOR_DEBUG_OUTPUT environment variable and split it by commas
         client_ids = os.environ.get("CLIENT_IDS_FOR_DEBUG_OUTPUT", "aiden")
