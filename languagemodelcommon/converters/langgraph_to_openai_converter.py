@@ -83,6 +83,31 @@ class LangGraphToOpenAIConverter:
             or "Timeout" in cause_class_name
         )
 
+    _CREDENTIAL_ERROR_PATTERNS: tuple[str, ...] = (
+        "could not resolve credentials",
+        "unable to locate credentials",
+        "expired credentials",
+        "invalid identity token",
+    )
+
+    @staticmethod
+    def _is_credential_resolution_error(exception: BaseException) -> bool:
+        """Check if any exception in the cause chain is a credential resolution failure.
+
+        The Anthropic Bedrock SDK raises RuntimeError instead of
+        botocore.exceptions.TokenRetrievalError when AWS credentials
+        cannot be resolved from the session.
+        """
+        current: BaseException | None = exception
+        while current is not None:
+            msg = str(current).lower()
+            if any(
+                p in msg for p in LangGraphToOpenAIConverter._CREDENTIAL_ERROR_PATTERNS
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
     @staticmethod
     def _find_cause(
         exception: BaseException, target_type: type[BaseException]
@@ -646,6 +671,11 @@ class LangGraphToOpenAIConverter:
         except TokenRetrievalError:
             raise
         except Exception as e:
+            if self._is_credential_resolution_error(e):
+                raise TokenRetrievalError(
+                    provider="bedrock",
+                    error_msg=str(e),
+                ) from e
             if e.__class__.__name__ == "GraphRecursionError":
                 logger.warning(
                     "Graph recursion limit reached while streaming. request_id=%s message_count=%d recursion_limit=%s error=%s",
