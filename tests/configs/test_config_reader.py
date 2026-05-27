@@ -480,7 +480,7 @@ async def test_clear_cache_deletes_snapshot_entry(
     await reader.clear_cache()
 
     snapshot_store.delete.assert_awaited_once_with(
-        "model_configs",
+        "model_configs:v1",
         collection=None,
     )
 
