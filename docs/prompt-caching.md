@@ -6,45 +6,51 @@ Prompt caching reduces latency and cost by reusing previously computed KV-cache 
 
 ## Architecture
 
-Caching is managed at the **prompt layer**, not the model layer. System prompt content blocks declare their own `cache_control` markers, giving explicit control over what is cached.
+Caching is managed at the **prompt layer** via per-prompt configuration, not at the model layer. Each system prompt in the chat completion config declares whether it should be cached using the `cache` field.
 
 ### How it works
+
+Each `PromptConfig` in the agent's `system_prompts` array has an optional `cache` boolean:
+
+```json
+{
+  "system_prompts": [
+    {"role": "system", "name": "bailey_system_prompt", "cache": true},
+    {"role": "system", "name": "skills", "cache": true},
+    {"role": "system", "name": "datetime_context_message_format"}
+  ]
+}
+```
 
 The graph builder constructs a `SystemMessage` with structured content blocks:
 
 ```python
 SystemMessage(content=[
     {"type": "text", "text": "stable instructions...", "cache_control": {"type": "ephemeral"}},
-    {"type": "text", "text": "tenant: acme, user: alice"}  # no cache_control
+    {"type": "text", "text": "Today is Monday..."}  # no cache_control
 ])
 ```
 
-- Blocks **with** `cache_control` are cached by the provider (Bedrock/Anthropic)
-- Blocks **without** `cache_control` are processed normally on every request
+- Prompts with `"cache": true` get `cache_control: {"type": "ephemeral"}`
+- Prompts without `cache` (or `cache: false/null`) are processed normally on every request
 - User messages are **never** cached
+- Default is **opt-in**: prompts are NOT cached unless explicitly marked
 
 ### Cache boundary design
 
 ```
-[System block 1: stable instructions]  ← cache_control: ephemeral (shared across tenants)
-[System block 2: tenant/user context]  ← NOT cached (tenant-specific, changes per request)
+[System block 1: stable instructions]  ← cache: true → cache_control: ephemeral
+[System block 2: skills/tools list]    ← cache: true → cache_control: ephemeral
+[System block 3: datetime context]     ← cache: false → NOT cached (changes per request)
 [Tools]                                 ← cached by provider alongside stable prefix
 [Messages]                              ← NOT cached (per-conversation, per-user)
 ```
 
 This ensures:
-- The expensive stable prefix (instructions, few-shot examples) is computed once
-- Tenant-specific context never contaminates the shared cache
+- The expensive stable prefix (instructions, skills) is computed once
+- Per-request context (date/time, tenant info) never contaminates the shared cache
 - No risk of cross-tenant data leakage
-
-### Why not `.bind(cache_control=...)`?
-
-The previous approach used `model.bind(cache_control=...)` which told `langchain-aws` to add cache markers to system, tools, AND the last user message. This:
-1. Cached user messages — a potential cross-tenant cache sharing vector
-2. Gave no control over which system prompt blocks were cacheable
-3. Required `PROMPT_CACHE_ENABLED` / `PROMPT_CACHE_TTL` environment variables
-
-The new approach removes all of that in favor of explicit, per-block cache control.
+- Cache behavior is explicitly declared in config, not hardcoded
 
 ---
 
@@ -60,7 +66,9 @@ The new approach removes all of that in favor of explicit, per-block cache contr
 
 ## Configuration
 
-No environment variables. Caching behavior is controlled entirely by how system prompts are structured in the agent config. To adjust what gets cached, change which blocks get `cache_control` in the graph builder.
+Cache behavior is controlled per-prompt in the chat completion config JSON via the `cache` field on `PromptConfig`. No environment variables needed.
+
+To cache a prompt, add `"cache": true` to its entry in `system_prompts`. Prompts without this field (or with `cache: false`) are never cached.
 
 ---
 
