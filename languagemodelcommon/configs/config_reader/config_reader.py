@@ -143,7 +143,10 @@ class ConfigReader:
             await self._write_to_snapshot_cache(models)
             return models
 
-    _SNAPSHOT_CACHE_KEY = "model_configs"
+    @property
+    def _snapshot_cache_key(self) -> str:
+        version = self._environment_variables.snapshot_cache_schema_version
+        return f"model_configs:v{version}"
 
     async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
         """Load model configs from the snapshot cache.
@@ -155,7 +158,7 @@ class ConfigReader:
         if not self._snapshot_cache_store:
             return None
         data = await self._snapshot_cache_store.get(
-            self._SNAPSHOT_CACHE_KEY,
+            self._snapshot_cache_key,
             collection=self._snapshot_cache_collection,
         )
         if data is None:
@@ -180,7 +183,7 @@ class ConfigReader:
         data = {"models": [m.model_dump() for m in models]}
         ttl = self._environment_variables.snapshot_cache_ttl_seconds
         await self._snapshot_cache_store.put(
-            self._SNAPSHOT_CACHE_KEY,
+            self._snapshot_cache_key,
             data,
             ttl=ttl,
             collection=self._snapshot_cache_collection,
@@ -620,7 +623,7 @@ class ConfigReader:
     async def clear_cache(self) -> None:
         if self._snapshot_cache_store:
             await self._snapshot_cache_store.delete(
-                self._SNAPSHOT_CACHE_KEY,
+                self._snapshot_cache_key,
                 collection=self._snapshot_cache_collection,
             )
         logger.info(

@@ -180,6 +180,26 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("SNAPSHOT_CACHE_MODEL_CONFIGS_COLLECTION") or None
 
     @property
+    def snapshot_cache_schema_version(self) -> str:
+        """Schema version for snapshot cache entries.
+
+        Changing this value automatically obsoletes all existing cache
+        entries without migration — queries use the version as part of
+        the cache key, so old-version entries are never found.
+        """
+        return os.environ.get("SNAPSHOT_CACHE_SCHEMA_VERSION", "1")
+
+    @property
+    def token_cache_schema_version(self) -> str:
+        """Schema version for token cache entries.
+
+        Changing this value automatically obsoletes all existing token
+        cache entries without migration — queries filter by version,
+        so old-version entries are never matched.
+        """
+        return os.environ.get("TOKEN_CACHE_SCHEMA_VERSION", "1")
+
+    @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
 

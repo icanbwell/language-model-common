@@ -88,6 +88,9 @@ class TokenExchangeManager:
             raise ValueError(
                 "MONGO_DB_TOKEN_COLLECTION_NAME environment variable must be set."
             )
+        self.token_cache_schema_version: str = (
+            environment_variables.token_cache_schema_version
+        )
 
         self.token_reader: TokenReader = token_reader
         if self.token_reader is None:
@@ -126,6 +129,7 @@ class TokenExchangeManager:
             filter_dict={
                 "referring_subject": referring_subject,
                 "auth_provider": auth_provider.lower(),
+                "schema_version": self.token_cache_schema_version,
             },
         )
         if len(tokens) > 1:
@@ -433,6 +437,7 @@ class TokenExchangeManager:
             )
 
         now = datetime.now(UTC)
+        token_cache_item.schema_version = self.token_cache_schema_version
 
         def on_insert(item: TokenCacheItem) -> TokenCacheItem:
             item.created = now
@@ -451,6 +456,7 @@ class TokenExchangeManager:
             keys={
                 "referring_subject": token_cache_item.referring_subject,
                 "auth_provider": token_cache_item.auth_provider,
+                "schema_version": self.token_cache_schema_version,
             },
             model_class=TokenCacheItem,
             on_insert=on_insert,
@@ -611,6 +617,7 @@ class TokenExchangeManager:
             filter_dict={
                 "referring_subject": referring_subject,
                 "auth_provider": auth_provider.lower(),
+                "schema_version": self.token_cache_schema_version,
             },
         )
         for item in results:
@@ -626,6 +633,7 @@ class TokenExchangeManager:
             model_class=TokenCacheItem,
             filter_dict={
                 "referring_subject": referring_subject,
+                "schema_version": self.token_cache_schema_version,
             },
         )
         for item in results:
