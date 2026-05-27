@@ -125,6 +125,7 @@ class ModelFactory:
             if use_anthropic_client and self._is_anthropic_model(model_name):
                 llm = self._create_anthropic_bedrock_model(
                     model_name=model_name,
+                    aws_credentials_profile=aws_credentials_profile,
                     aws_region_name=aws_region_name,
                     thinking_budget=thinking_budget,
                     model_parameters_dict=model_parameters_dict,
@@ -154,11 +155,14 @@ class ModelFactory:
         self,
         *,
         model_name: str,
+        aws_credentials_profile: str | None,
         aws_region_name: str,
         thinking_budget: int | None,
         model_parameters_dict: Dict[str, Any],
     ) -> "BaseChatModel":
         from langchain_aws import ChatAnthropicBedrock
+        from pydantic import SecretStr
+        import boto3
 
         if thinking_budget and thinking_budget > 0:
             model_parameters_dict["thinking"] = {
@@ -171,8 +175,25 @@ class ModelFactory:
                 thinking_budget,
             )
 
+        credential_kwargs: Dict[str, Any] = {}
+        if aws_credentials_profile:
+            session = boto3.Session(profile_name=aws_credentials_profile)
+            credentials = session.get_credentials()
+            if credentials:
+                frozen = credentials.get_frozen_credentials()
+                if frozen.access_key and frozen.secret_key:
+                    credential_kwargs["aws_access_key_id"] = SecretStr(
+                        frozen.access_key
+                    )
+                    credential_kwargs["aws_secret_access_key"] = SecretStr(
+                        frozen.secret_key
+                    )
+                    if frozen.token:
+                        credential_kwargs["aws_session_token"] = SecretStr(frozen.token)
+
         return ChatAnthropicBedrock(
             region_name=aws_region_name,
+            **credential_kwargs,
             **model_parameters_dict,
         )
 
