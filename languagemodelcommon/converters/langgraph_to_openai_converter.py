@@ -231,8 +231,10 @@ class LangGraphToOpenAIConverter:
             # terminates the event stream early.  Write the messages log here
             # so that the debug download link is still available.
             if chat_request_wrapper.enable_debug_logging:
-                streamed_output = self.streaming_manager._pop_streamed_text(
-                    request_id=str(request_id),
+                streamed_output = (
+                    self.streaming_manager._stream_buffer_manager.pop_streamed_text(
+                        request_id=str(request_id),
+                    )
                 )
                 content_text = ""
                 if streamed_output:

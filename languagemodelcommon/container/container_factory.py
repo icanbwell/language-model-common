@@ -14,8 +14,10 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
-from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.converters.stream_buffer import StreamBufferManager
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
+from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
+from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
 from languagemodelcommon.image_generation.image_generator_factory import (
     ImageGeneratorFactory,
@@ -144,6 +146,30 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
+            StreamBufferManager,
+            lambda c: StreamBufferManager(
+                flush_interval_seconds=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).streaming_buffer_flush_interval_seconds,
+                enabled=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).enable_streaming_buffering,
+            ),
+        )
+
+        container.singleton(
+            ToolEventHandler,
+            lambda c: ToolEventHandler(
+                debug_file_writer=c.resolve(FileWriter),
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                tool_display_name_mapper=c.resolve(ToolDisplayNameMapper),
+                stream_buffer_manager=c.resolve(StreamBufferManager),
+            ),
+        )
+
+        container.singleton(
             LangGraphStreamingManager,
             lambda c: LangGraphStreamingManager(
                 environment_variables=c.resolve(
@@ -151,7 +177,8 @@ class LanguageModelCommonContainerFactory:
                 ),
                 debug_file_writer=c.resolve(FileWriter),
                 token_reducer=c.resolve(TokenReducer),
-                tool_display_name_mapper=c.resolve(ToolDisplayNameMapper),
+                tool_event_handler=c.resolve(ToolEventHandler),
+                stream_buffer_manager=c.resolve(StreamBufferManager),
             ),
         )
         container.singleton(
