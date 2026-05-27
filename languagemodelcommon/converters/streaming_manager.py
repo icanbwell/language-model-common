@@ -225,7 +225,7 @@ class LangGraphStreamingManager:
         if chunk is not None:
             content: str | list[str | dict[str, Any]] = chunk.content
             content_chunks = iter_message_content_text_chunks(
-                content,
+                content=content,
                 include_non_text_placeholders=False,
             )
             for content_text in content_chunks.text_chunks:
@@ -237,8 +237,8 @@ class LangGraphStreamingManager:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
                     self._stream_buffer_manager.append_streamed_text_fragment(
-                        str(request_information.request_id),
-                        content_text,
+                        request_id=str(request_information.request_id),
+                        text=content_text,
                     )
                     buffered_chunk = await self._stream_buffer_manager.buffer_content(
                         request_id=str(request_information.request_id),

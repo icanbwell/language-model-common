@@ -130,7 +130,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert config.tools[0].url == "https://mcp.example.com/drive/"
@@ -147,7 +147,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert config.tools[0].url == "https://new.example.com/drive/"
@@ -162,7 +162,7 @@ class TestResolveMcpServers:
             mcpServers={"google-drive": McpServerEntry(url="https://example.com/")}
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert config.tools[0].url == "https://fallback.example.com/"
@@ -175,7 +175,7 @@ class TestResolveMcpServers:
             mcpServers={"google-drive": McpServerEntry(url="https://new.example.com/")}
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert config.tools[0].url == "https://original.example.com/"
@@ -197,7 +197,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -232,7 +232,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -252,7 +252,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.agents is not None
         assert config.agents[0].url == "https://mcp.example.com/drive/"
@@ -273,7 +273,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -313,7 +313,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.oauth is not None
@@ -371,7 +371,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.oauth is not None
@@ -439,7 +439,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -479,7 +479,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -503,7 +503,7 @@ class TestResolveMcpServers:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -574,7 +574,7 @@ class TestFileConfigReaderMcpJsonIntegration:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         tool = config.tools[0]
@@ -606,7 +606,7 @@ class TestFileConfigReaderMcpJsonIntegration:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         tool = config.tools[0]  # type: ignore[index]
         assert tool.description == "New description from mcp.json"
@@ -624,7 +624,7 @@ class TestFileConfigReaderMcpJsonIntegration:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert len(config.tools) == 2
@@ -648,7 +648,7 @@ class TestFileConfigReaderMcpJsonIntegration:
             }
         )
 
-        resolve_mcp_servers([config], mcp)
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         assert config.tools is not None
         assert len(config.tools) == 2
@@ -676,7 +676,9 @@ class TestResolveMcpServersFromPlugins:
             ),
         }
 
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         assert config.tools[0].url == "https://mcp.example.com/drive/"
@@ -701,7 +703,9 @@ class TestResolveMcpServersFromPlugins:
             ),
         }
 
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         # google-drive is only in plugin-b which is not declared — should NOT resolve
@@ -730,7 +734,9 @@ class TestResolveMcpServersFromPlugins:
             ),
         }
 
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         assert config.tools[0].url == "https://a.example.com/"
@@ -756,7 +762,9 @@ class TestResolveMcpServersFromPlugins:
             ),
         }
 
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         assert len(config.tools) == 1
@@ -777,7 +785,9 @@ class TestResolveMcpServersFromPlugins:
             ),
         }
 
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         # No plugins declared — should NOT resolve
@@ -799,7 +809,9 @@ class TestResolveMcpServersFromPlugins:
         }
 
         # Should not raise, just warn
-        resolve_mcp_servers_from_plugins([config], plugin_configs)
+        resolve_mcp_servers_from_plugins(
+            configs=[config], plugin_configs=plugin_configs
+        )
 
         assert config.tools is not None
         assert config.tools[0].url is None

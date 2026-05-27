@@ -33,7 +33,7 @@ class TestBuildInterceptorChain:
         base = AsyncMock(
             return_value=CallToolResult(content=[TextContent(type="text", text="ok")])
         )
-        handler = build_interceptor_chain(base, None)
+        handler = build_interceptor_chain(base_handler=base, tool_interceptors=None)
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         result = await handler(request)
         base.assert_awaited_once_with(request)
@@ -57,7 +57,10 @@ class TestBuildInterceptorChain:
             call_order.append("interceptor_after")
             return result
 
-        handler = build_interceptor_chain(base, [interceptor])  # type: ignore[list-item]
+        handler = build_interceptor_chain(
+            base_handler=base,
+            tool_interceptors=[interceptor],  # type: ignore[list-item]
+        )
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         await handler(request)
         assert call_order == ["interceptor_before", "base", "interceptor_after"]
@@ -89,7 +92,10 @@ class TestBuildInterceptorChain:
             call_order.append("b_after")
             return result
 
-        handler = build_interceptor_chain(base, [interceptor_a, interceptor_b])  # type: ignore[list-item]
+        handler = build_interceptor_chain(
+            base_handler=base,
+            tool_interceptors=[interceptor_a, interceptor_b],  # type: ignore[list-item]
+        )
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         await handler(request)
         assert call_order == [
@@ -116,7 +122,10 @@ class TestBuildInterceptorChain:
             modified = req.override(args={**req.args, "key": "injected"})
             return await handler(modified)
 
-        handler = build_interceptor_chain(base, [add_arg_interceptor])  # type: ignore[list-item]
+        handler = build_interceptor_chain(
+            base_handler=base,
+            tool_interceptors=[add_arg_interceptor],  # type: ignore[list-item]
+        )
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         result = await handler(request)
         assert result.content[0].text == "injected"  # type: ignore[union-attr]

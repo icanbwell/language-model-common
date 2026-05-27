@@ -168,7 +168,26 @@ Use current language idioms for the repo's language version. Do not write legacy
 
 **Java:** Use records for data carriers, not POJOs with boilerplate getters/setters. Use sealed interfaces for closed type hierarchies. Use pattern matching where available. Use `var` for local variables when the type is obvious from the right side. Use streams and Optional appropriately, not for every operation.
 
-**Python:** Use dataclasses or Pydantic models, not manual dict manipulation. Use type hints everywhere. Use structural pattern matching (3.10+) where it improves clarity. Use `Protocol` for structural typing. Use `async`/`await` for IO-bound operations in async services. Always pass parameters by keyword, not by position — this applies to function calls, constructor invocations, and method calls. Positional arguments are fragile and break when signatures change.
+**Python:** Use dataclasses or Pydantic models, not manual dict manipulation. Use type hints everywhere. Use structural pattern matching (3.10+) where it improves clarity. Use `Protocol` for structural typing. Use `async`/`await` for IO-bound operations in async services.
+
+**Keyword arguments are mandatory in Python code.** This applies to both definitions and call sites:
+- **Definitions:** All public functions, methods, and constructors must use the `*` separator to enforce keyword-only arguments (after `self`/`cls` if present). The only exception is callback signatures required by frameworks (e.g., LangGraph `RunnableLambda` expects `func(state, config)` positionally).
+- **Call sites:** Always pass parameters by keyword, not by position — this applies to function calls, constructor invocations, and method calls. Positional arguments are fragile and break when signatures change.
+- **Tests:** Test code must also use keyword arguments when calling production code. No exceptions.
+
+```python
+# Good — definition enforces keyword-only
+def resolve_mcp_servers(*, configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
+
+# Good — call site uses keywords
+resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+# Bad — positional args at call site
+resolve_mcp_servers([config], mcp)
+
+# Bad — definition allows positional
+def resolve_mcp_servers(configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
+```
 
 **TypeScript:** Use discriminated unions for variant types, not type casting chains. Use strict mode. Use `readonly` and `as const` where appropriate. Use modern `satisfies` operator for type-safe object literals. Use optional chaining and nullish coalescing instead of manual null checks.
 

@@ -196,7 +196,7 @@ class GithubConfigRepoManager:
         return response.content
 
     @staticmethod
-    def _extract_zip(zip_bytes: bytes, target_dir: Path) -> Path:
+    def _extract_zip(*, zip_bytes: bytes, target_dir: Path) -> Path:
         """Extract a zipball and return the path to the repo root inside.
 
         GitHub zipballs contain a single top-level directory named

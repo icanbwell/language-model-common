@@ -23,6 +23,7 @@ class CallbackContext:
 class LoggingMessageCallback(Protocol):
     async def __call__(
         self,
+        *,
         params: LoggingMessageNotificationParams,
         context: CallbackContext,
     ) -> None: ...
@@ -32,6 +33,7 @@ class LoggingMessageCallback(Protocol):
 class ProgressCallback(Protocol):
     async def __call__(
         self,
+        *,
         progress: float,
         total: float | None,
         message: str | None,

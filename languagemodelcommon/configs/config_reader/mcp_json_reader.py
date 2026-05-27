@@ -64,7 +64,7 @@ class McpJsonReader:
         return McpJsonConfig(mcpServers=servers)
 
 
-def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
+def _compute_oauth_provider_key(*, server_key: str, oauth: McpOAuthConfig) -> str:
     """Compute normalized auth_provider key for token scoping.
 
     Tokens are scoped per authorization-server + client_id pair.
@@ -78,6 +78,7 @@ def _compute_oauth_provider_key(server_key: str, oauth: McpOAuthConfig) -> str:
 
 
 def resolve_mcp_servers_from_plugins(
+    *,
     configs: List[ChatModelConfig],
     plugin_configs: dict[str, McpJsonConfig],
 ) -> None:
@@ -106,10 +107,11 @@ def resolve_mcp_servers_from_plugins(
                 )
         if merged_servers:
             merged_config = McpJsonConfig(mcpServers=merged_servers)
-            resolve_mcp_servers([model], merged_config)
+            resolve_mcp_servers(configs=[model], mcp_config=merged_config)
 
 
 def resolve_mcp_servers(
+    *,
     configs: List[ChatModelConfig],
     mcp_config: McpJsonConfig,
 ) -> None:
@@ -178,7 +180,7 @@ def resolve_mcp_servers(
                 agent.oauth = entry.oauth
                 # Compute normalized auth_provider key for token scoping
                 provider_key = _compute_oauth_provider_key(
-                    agent.mcp_server, entry.oauth
+                    server_key=agent.mcp_server, oauth=entry.oauth
                 )
                 agent.auth = "jwt_token"
                 agent.auth_providers = [provider_key]

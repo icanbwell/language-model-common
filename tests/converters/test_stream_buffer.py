@@ -98,8 +98,8 @@ async def test_force_flush_empty_buffer_returns_none() -> None:
 class TestStreamedTextFragments:
     def test_append_and_pop(self) -> None:
         manager = StreamBufferManager(flush_interval_seconds=1.0, enabled=True)
-        manager.append_streamed_text_fragment("req", "hello ")
-        manager.append_streamed_text_fragment("req", "world")
+        manager.append_streamed_text_fragment(request_id="req", text="hello ")
+        manager.append_streamed_text_fragment(request_id="req", text="world")
         result = manager.pop_streamed_text("req")
         assert result == "hello world"
 
@@ -109,11 +109,11 @@ class TestStreamedTextFragments:
 
     def test_clear_removes_fragments(self) -> None:
         manager = StreamBufferManager(flush_interval_seconds=1.0, enabled=True)
-        manager.append_streamed_text_fragment("req", "text")
+        manager.append_streamed_text_fragment(request_id="req", text="text")
         manager.clear_request_streamed_text("req")
         assert manager.pop_streamed_text("req") is None
 
     def test_append_empty_string_is_noop(self) -> None:
         manager = StreamBufferManager(flush_interval_seconds=1.0, enabled=True)
-        manager.append_streamed_text_fragment("req", "")
+        manager.append_streamed_text_fragment(request_id="req", text="")
         assert manager.pop_streamed_text("req") is None

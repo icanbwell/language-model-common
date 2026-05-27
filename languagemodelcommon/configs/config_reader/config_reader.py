@@ -82,7 +82,8 @@ class ConfigReader:
         # and on subsequent requests if servers remain unresolved.
         if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
             await self._retry_mcp_resolution(
-                models=base_models, config_path=config_path
+                models=base_models,
+                config_path=config_path,
             )
             self._mcp_resolved_once = True
 
@@ -219,15 +220,15 @@ class ConfigReader:
         for attempt in range(max_retries + 1):
             try:
                 models = await self.read_models_from_path_async(
-                    default_config_path, exclude_dirs=base_exclude_dirs
+                    config_path=default_config_path, exclude_dirs=base_exclude_dirs
                 )
                 if not models and default_config_path != config_path:
                     models = await self.read_models_from_path_async(
-                        config_path, exclude_dirs=base_exclude_dirs
+                        config_path=config_path, exclude_dirs=base_exclude_dirs
                     )
                 if models_testing_path:
                     models_testing = await self.read_models_from_path_async(
-                        models_testing_path, exclude_dirs=base_exclude_dirs
+                        config_path=models_testing_path, exclude_dirs=base_exclude_dirs
                     )
                     if models_testing and len(models_testing) > 0:
                         models.append(
@@ -276,7 +277,7 @@ class ConfigReader:
         if override_path is None:
             return []
         try:
-            return await self.read_models_from_path_async(override_path)
+            return await self.read_models_from_path_async(config_path=override_path)
         except Exception as e:
             logger.warning(
                 "Failed to load client overrides from %s: %s", override_path, e
@@ -284,7 +285,7 @@ class ConfigReader:
             return []
 
     async def read_models_from_path_async(
-        self, config_path: str, *, exclude_dirs: set[str] | None = None
+        self, *, config_path: str, exclude_dirs: set[str] | None = None
     ) -> List[ChatModelConfig]:
         models: List[ChatModelConfig]
         local_config_path: str = config_path
@@ -320,12 +321,14 @@ class ConfigReader:
 
         # Resolve MCP server references from plugins or local .mcp.json
         await self._resolve_mcp_servers_async(
-            models=models, config_path=local_config_path
+            models=models,
+            config_path=local_config_path,
         )
         return models
 
     async def _resolve_mcp_servers_async(
         self,
+        *,
         models: List[ChatModelConfig],
         config_path: str,
     ) -> None:
@@ -408,7 +411,7 @@ class ConfigReader:
         return unresolved
 
     async def _retry_mcp_resolution(
-        self, models: List[ChatModelConfig], config_path: str
+        self, *, models: List[ChatModelConfig], config_path: str
     ) -> None:
         """Re-attempt MCP server resolution for models with unresolved refs.
 
@@ -454,7 +457,9 @@ class ConfigReader:
                 suffix=f"clients/{client_id}",
             )
         if config_path.startswith("s3"):
-            return ConfigReader._join_path(config_path, f"clients/{client_id}")
+            return ConfigReader._join_path(
+                base=config_path, suffix=f"clients/{client_id}"
+            )
         config_folder = Path(config_path)
         override_folder = config_folder.joinpath("clients", client_id)
         # Ensure the resolved path is within the config directory
@@ -478,7 +483,7 @@ class ConfigReader:
         return bool(re.match(r"^[a-zA-Z0-9_-]+$", client_id))
 
     @staticmethod
-    def _join_path(base: str, suffix: str) -> str:
+    def _join_path(*, base: str, suffix: str) -> str:
         if base.endswith("/"):
             return f"{base}{suffix}"
         return f"{base}/{suffix}"
@@ -522,7 +527,7 @@ class ConfigReader:
         return merged_models
 
     @staticmethod
-    def _deep_merge(base: object, override: object) -> object:
+    def _deep_merge(*, base: object, override: object) -> object:
         if isinstance(base, dict) and isinstance(override, dict):
             merged = dict(base)
             for key, value in override.items():
@@ -543,7 +548,7 @@ class ConfigReader:
 
     @staticmethod
     def _merge_list_of_dicts(
-        base: list[object], override: list[object]
+        *, base: list[object], override: list[object]
     ) -> list[object]:
         if not base:
             return list(override)

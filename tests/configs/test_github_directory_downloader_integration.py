@@ -177,7 +177,7 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     )
 
     models = await reader.read_models_from_path_async(
-        "github://org/repo/configs?ref=main"
+        config_path="github://org/repo/configs?ref=main"
     )
 
     assert len(models) == 1
@@ -212,7 +212,7 @@ async def test_read_models_from_https_github_url(
     )
 
     models = await reader.read_models_from_path_async(
-        "https://github.com/owner/repo/tree/main/configs"
+        config_path="https://github.com/owner/repo/tree/main/configs"
     )
 
     assert len(models) == 1
@@ -268,7 +268,7 @@ async def test_github_uri_resolves_mcp_via_fetcher(
     )
 
     models = await reader.read_models_from_path_async(
-        "github://org/repo/configs?ref=main"
+        config_path="github://org/repo/configs?ref=main"
     )
 
     assert len(models) == 1
@@ -328,13 +328,13 @@ def test_override_config_path_with_https_github_url() -> None:
 
 def test_join_path_preserves_github_query_params() -> None:
     result = GitHubDirectoryHelper.join_github_uri_path(
-        "github://org/repo/configs?ref=main", "clients/client-123"
+        base_uri="github://org/repo/configs?ref=main", suffix="clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123?ref=main"
 
 
 def test_join_path_works_without_query_params() -> None:
     result = GitHubDirectoryHelper.join_github_uri_path(
-        "github://org/repo/configs", "clients/client-123"
+        base_uri="github://org/repo/configs", suffix="clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123"

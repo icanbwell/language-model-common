@@ -604,7 +604,7 @@ class TokenExchangeManager:
         return token_cache_item
 
     @staticmethod
-    def _try_parse_token(raw: str | None, label: str) -> Token | None:
+    def _try_parse_token(*, raw: str | None, label: str) -> Token | None:
         if not raw:
             return None
         try:
@@ -614,7 +614,7 @@ class TokenExchangeManager:
             return None
 
     async def delete_token_async(
-        self, referring_subject: str, auth_provider: str
+        self, *, referring_subject: str, auth_provider: str
     ) -> None:
         # delete any matching tokens
         results: list[TokenCacheItem] = await self.token_repository.find_many(

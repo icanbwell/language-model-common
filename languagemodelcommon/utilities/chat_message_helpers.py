@@ -44,6 +44,7 @@ class ContentChunks:
 
 
 def iter_message_content_text_chunks(
+    *,
     content: str | list[str | Dict[str, Any]],
     include_non_text_placeholders: bool = True,
 ) -> ContentChunks:

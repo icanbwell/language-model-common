@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_interceptor_chain(
+    *,
     base_handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
     tool_interceptors: list[ToolCallInterceptor] | None,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
@@ -80,6 +81,7 @@ def _server_supports_tool_tasks(session: Any) -> bool:
 
 
 def _tool_supports_tasks(
+    *,
     session: Any,
     tool_name: str,
     tool_list_cache: ToolListCache | None = None,
@@ -152,6 +154,7 @@ class TaskProtocolError(Exception):
 
 
 async def _execute_tool_as_task(
+    *,
     session: Any,
     name: str,
     arguments: dict[str, Any],
@@ -220,6 +223,7 @@ async def _execute_tool_as_task(
 
 
 def _make_execute_tool(
+    *,
     config: MCPConnectionConfig,
     mcp_callbacks: _MCPCallbacks,
     session_pool: McpSessionPool | None = None,

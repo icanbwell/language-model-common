@@ -69,7 +69,7 @@ class SearchToolsTool(BaseTool):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @staticmethod
-    def _query_matches_server(query: str, server: ServerRegistration) -> bool:
+    def _query_matches_server(*, query: str, server: ServerRegistration) -> bool:
         """Check whether query terms overlap with the server's metadata.
 
         Used to decide whether to surface a login link for a server that
@@ -97,13 +97,15 @@ class SearchToolsTool(BaseTool):
         corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
         return bool(query_tokens & corpus_tokens)
 
-    def _run(self, query: str, category: str | None = None) -> str:
+    def _run(self, *, query: str, category: str | None = None) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
             "Use _arun instead."
         )
 
-    async def _arun(self, query: str, category: str | None = None) -> Tuple[str, str]:
+    async def _arun(
+        self, *, query: str, category: str | None = None
+    ) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category.
         # OAuth servers are only resolved when the search query matches
         # their metadata.  When the query matches and auth is needed,

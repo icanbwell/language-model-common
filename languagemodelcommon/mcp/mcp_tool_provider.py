@@ -158,6 +158,7 @@ class MCPToolProvider:
 
     @staticmethod
     def get_httpx_async_client(
+        *,
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
@@ -178,6 +179,7 @@ class MCPToolProvider:
 
     @staticmethod
     async def on_mcp_tool_logging(
+        *,
         params: LoggingMessageNotificationParams,
         context: CallbackContext,
     ) -> None:
@@ -188,6 +190,7 @@ class MCPToolProvider:
 
     @staticmethod
     async def on_mcp_tool_progress(
+        *,
         progress: float,
         total: float | None,
         message: str | None,

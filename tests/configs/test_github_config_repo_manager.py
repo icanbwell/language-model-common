@@ -62,7 +62,9 @@ class TestExtractZip:
             {"configs/model.json": '{"name": "test"}'},
             prefix="owner-repo-abc123",
         )
-        repo_root = GithubConfigRepoManager._extract_zip(zip_bytes, tmp_path)
+        repo_root = GithubConfigRepoManager._extract_zip(
+            zip_bytes=zip_bytes, target_dir=tmp_path
+        )
         assert repo_root.name == "owner-repo-abc123"
         assert (repo_root / "configs" / "model.json").exists()
 
@@ -71,7 +73,9 @@ class TestExtractZip:
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("../../etc/passwd", "malicious")
         with pytest.raises(ValueError, match="Path traversal"):
-            GithubConfigRepoManager._extract_zip(buf.getvalue(), tmp_path)
+            GithubConfigRepoManager._extract_zip(
+                zip_bytes=buf.getvalue(), target_dir=tmp_path
+            )
 
 
 class TestDownloadAndExtract:

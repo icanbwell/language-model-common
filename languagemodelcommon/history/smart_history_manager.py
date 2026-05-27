@@ -40,6 +40,7 @@ class SmartHistoryManager:
 
     def __init__(
         self,
+        *,
         checkpointer: Optional[BaseCheckpointSaver[Any]],
         history_manager: ConversationHistoryManager,
         llm: BaseChatModel,
@@ -116,7 +117,7 @@ class SmartHistoryManager:
         return managed_state
 
     async def _load_checkpoint(
-        self, config: RunnableConfig, thread_id: Optional[str]
+        self, *, config: RunnableConfig, thread_id: Optional[str]
     ) -> Any:
         """
         Attempt to load server checkpoint.
@@ -155,6 +156,7 @@ class SmartHistoryManager:
 
     async def _use_server_history(
         self,
+        *,
         state: MyMessagesState,
         client_messages: Sequence[BaseMessage],
         server_checkpoint: Any,
@@ -208,7 +210,7 @@ class SmartHistoryManager:
         return state
 
     def _use_client_history(
-        self, state: MyMessagesState, client_messages: Sequence[BaseMessage]
+        self, *, state: MyMessagesState, client_messages: Sequence[BaseMessage]
     ) -> MyMessagesState:
         """
         Bootstrap from client history.
@@ -231,6 +233,7 @@ class SmartHistoryManager:
 
     def _is_duplicate(
         self,
+        *,
         new_message: BaseMessage,
         existing_messages: Sequence[BaseMessage],
         check_last_n: int = 5,

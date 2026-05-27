@@ -31,6 +31,7 @@ class ConversationHistoryManager:
 
     def __init__(
         self,
+        *,
         max_messages: int = 20,
         max_tokens: int = 4000,
         summary_threshold: int = 15,
@@ -71,7 +72,7 @@ class ConversationHistoryManager:
         return sum(len(self.encoding.encode(str(msg.content))) for msg in messages)
 
     async def manage_history(
-        self, state: MyMessagesState, llm: BaseChatModel
+        self, *, state: MyMessagesState, llm: BaseChatModel
     ) -> MyMessagesState:
         """
         Manage conversation history with summarization and trimming.
@@ -139,7 +140,7 @@ class ConversationHistoryManager:
         return state
 
     async def _summarize_with_recent(
-        self, messages: Sequence[BaseMessage], llm: BaseChatModel
+        self, *, messages: Sequence[BaseMessage], llm: BaseChatModel
     ) -> list[BaseMessage]:
         """
         Summarize old messages while keeping recent ones intact.

@@ -67,7 +67,7 @@ class StreamBufferManager:
             self._stream_buffers.pop(request_id, None)
         return combined
 
-    def append_streamed_text_fragment(self, request_id: str, text: str) -> None:
+    def append_streamed_text_fragment(self, *, request_id: str, text: str) -> None:
         if not text:
             return
         fragments = self._streamed_text_fragments.setdefault(request_id, [])

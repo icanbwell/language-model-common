@@ -68,7 +68,7 @@ class GithubDirectoryDownloader:
         # workers may check this concurrently — that is fine; the worst
         # case is a few redundant downloads whose atomic swaps are harmless.
         if cache_ttl_seconds > 0 and self._is_cache_fresh(
-            target_dir, cache_ttl_seconds
+            target_dir=target_dir, ttl_seconds=cache_ttl_seconds
         ):
             logger.debug(
                 "Cache for %s is fresh — skipping download",
@@ -97,7 +97,7 @@ class GithubDirectoryDownloader:
         return target_dir.resolve()
 
     @staticmethod
-    def _is_cache_fresh(target_dir: Path, ttl_seconds: int) -> bool:
+    def _is_cache_fresh(*, target_dir: Path, ttl_seconds: int) -> bool:
         """Return True if the cache directory exists and was refreshed recently."""
         ts_file = target_dir.with_name(target_dir.name + ".ts")
         if not ts_file.exists() or not target_dir.is_dir():
