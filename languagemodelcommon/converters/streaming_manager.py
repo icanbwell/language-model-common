@@ -35,7 +35,7 @@ from typing import (
     cast,
 )
 
-from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.runnables.schema import (
     CustomStreamEvent,
     StandardStreamEvent,
@@ -382,6 +382,11 @@ class LangGraphStreamingManager:
                     usage_metadata=None,
                     source="on_tool_start",
                 )
+            if chat_request_wrapper.enable_debug_logging:
+                self._append_streamed_text_fragment(
+                    request_id=str(request_information.request_id),
+                    content_text=f"\n--- Tool Call: {tool_name} ---\n{json.dumps(tool_input_display, indent=2, default=str)}\n",
+                )
             debug_content_text: str = (
                 f"\n\n<details>\n<summary>Agent: {tool_name}</summary>\n\n"
                 f"```json\n{json.dumps(tool_input_display, indent=2, default=str)}\n```\n\n"
@@ -512,7 +517,7 @@ class LangGraphStreamingManager:
                     # Save to file and provide link
                     self._append_streamed_text_fragment(
                         request_id=str(request_information.request_id),
-                        content_text=tool_message_or_artifact_content,
+                        content_text=f"\n--- Tool Output: {tool_name} ({runtime_str}) ---\n{tool_message_or_artifact_content}\n",
                     )
 
                 tool_display_name: str = (
@@ -687,7 +692,10 @@ class LangGraphStreamingManager:
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""
             content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
-            content_text += f"{input_message.content}\n"
+            content_text += f"{self._format_message_content(input_message.content)}\n"
+            if isinstance(input_message, AIMessage) and input_message.tool_calls:
+                for tool_call in input_message.tool_calls:
+                    content_text += f"  Tool Call: {tool_call.get('name', 'unknown')}({json.dumps(tool_call.get('args', {}), default=str)})\n"
         if streamed_output:
             content_text += "--- Streamed assistant output ---\n"
             content_text += f"{streamed_output}\n"
@@ -798,7 +806,7 @@ class LangGraphStreamingManager:
             )
             self._append_streamed_text_fragment(
                 request_id=str(request_information.request_id),
-                content_text=error_content,
+                content_text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{error_message}\n",
             )
             tool_display_name: str = self.tool_display_name_mapper.get_name_for_tool(
                 tool_name=tool_name or "unknown",
@@ -982,6 +990,21 @@ class LangGraphStreamingManager:
 
     def _clear_request_streamed_text(self, *, request_id: str) -> None:
         self._streamed_text_fragments.pop(request_id, None)
+
+    @staticmethod
+    def _format_message_content(content: str | list[Any]) -> str:
+        """Extract text from message content, handling both string and multi-part list formats."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and "text" in block:
+                    parts.append(block["text"])
+            return "\n".join(parts)
+        return str(content)
 
     # noinspection PyMethodMayBeStatic
     async def _handle_non_text_content_debug(
