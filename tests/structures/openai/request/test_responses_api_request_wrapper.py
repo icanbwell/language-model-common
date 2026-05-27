@@ -99,6 +99,26 @@ class TestDebugPrefixToggle:
         assert wrapper.enable_debug_logging is True
         assert wrapper.messages[0].content == "Tell me something"
 
+    def test_slash_debug_prefix_enables_logging_and_strips_content(self) -> None:
+        wrapper = _make_wrapper(input_="/debug What is AI?", enable_debug_logging=False)
+        assert wrapper.enable_debug_logging is True
+        assert wrapper.messages[0].content == "What is AI?"
+        assert wrapper.request.input == "What is AI?"
+
+    def test_slash_debug_prefix_with_list_input(self) -> None:
+        wrapper = _make_wrapper(
+            input_=[
+                {
+                    "role": "user",
+                    "content": "/debug Tell me something",
+                    "type": "message",
+                },
+            ],
+            enable_debug_logging=False,
+        )
+        assert wrapper.enable_debug_logging is True
+        assert wrapper.messages[0].content == "Tell me something"
+
 
 class TestUserInput:
     """Tests for user_input property extraction."""

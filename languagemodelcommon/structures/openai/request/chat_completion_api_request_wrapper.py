@@ -75,17 +75,20 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefix = "DEBUG:"
+        debug_prefixes = ("DEBUG:", "/debug ")
         for message in self._messages:
             if message.role != "user":
                 continue
             content = message.content
             if not isinstance(content, str):
                 continue
-            if not content.startswith(debug_prefix):
+            matched_prefix = next(
+                (p for p in debug_prefixes if content.startswith(p)), None
+            )
+            if matched_prefix is None:
                 continue
             self._enable_debug_logging = True
-            stripped_content = content[len(debug_prefix) :].lstrip()
+            stripped_content = content[len(matched_prefix) :].lstrip()
             if isinstance(message, ChatCompletionApiMessageWrapper):
                 if isinstance(message.message, dict):
                     message.message["content"] = stripped_content
