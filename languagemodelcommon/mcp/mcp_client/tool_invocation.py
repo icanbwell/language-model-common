@@ -18,9 +18,7 @@ from languagemodelcommon.mcp.mcp_client.session import (
     create_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
-from languagemodelcommon.mcp.mcp_client.tool_task_support_cache import (
-    ToolTaskSupportCache,
-)
+from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +79,11 @@ def _server_supports_tool_tasks(session: Any) -> bool:
         return False
 
 
-async def _tool_supports_tasks(
+def _tool_supports_tasks(
     session: Any,
     tool_name: str,
-    server_url: str,
-    cache: ToolTaskSupportCache | None = None,
+    tool_list_cache: ToolListCache | None = None,
+    cache_key: str | None = None,
 ) -> bool:
     """Check whether a specific tool supports task-augmented execution.
 
@@ -93,35 +91,27 @@ async def _tool_supports_tasks(
     declares its own task support via execution.taskSupport in the tools/list
     response. Only tools with "optional" or "required" support tasks.
 
-    Results are cached per server URL to avoid repeated list_tools calls.
+    Reads from the existing ToolListCache (populated when tools are listed)
+    rather than making a redundant list_tools call.
     """
     if not _server_supports_tool_tasks(session):
         return False
 
-    if cache is None:
+    if tool_list_cache is None or cache_key is None:
         return False
 
-    cached = cache.get(server_url)
-    if cached is None:
-        try:
-            tools_result = await session.list_tools()
-            tool_map: dict[str, str | None] = {}
-            for tool in tools_result.tools:
-                task_support: str | None = None
-                if tool.execution is not None:
-                    task_support = getattr(tool.execution, "taskSupport", None)
-                tool_map[tool.name] = task_support
-            cache.put(server_url, tool_map)
-            cached = tool_map
-        except Exception:
-            logger.debug(
-                "Failed to fetch tool list for task support check on %s",
-                server_url,
-            )
+    tools = tool_list_cache.get(cache_key)
+    if tools is None:
+        return False
+
+    for tool in tools:
+        if tool.name == tool_name:
+            if tool.execution is not None:
+                task_support = getattr(tool.execution, "taskSupport", None)
+                return task_support in ("optional", "required")
             return False
 
-    tool_support = cached.get(tool_name)
-    return tool_support in ("optional", "required")
+    return False
 
 
 def _extract_task_id_from_create_result(create_result: Any) -> str:
@@ -233,7 +223,7 @@ def _make_execute_tool(
     config: MCPConnectionConfig,
     mcp_callbacks: _MCPCallbacks,
     session_pool: McpSessionPool | None = None,
-    task_support_cache: ToolTaskSupportCache | None = None,
+    tool_list_cache: ToolListCache | None = None,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -245,8 +235,9 @@ def _make_execute_tool(
 
     If the server and tool both advertise task support, the tool is
     executed via the MCP task protocol with polling and progress events.
-    Per-tool ``execution.taskSupport`` is checked so that tools with
-    ``"forbidden"`` (or no declaration) use normal call_tool.
+    Per-tool ``execution.taskSupport`` is checked from the already-cached
+    tool list so that tools with ``"forbidden"`` (or no declaration) use
+    normal call_tool.
     """
 
     async def execute_tool(request: MCPToolCallRequest) -> MCPToolCallResult:
@@ -259,14 +250,18 @@ def _make_execute_tool(
             effective_config = updated  # type: ignore[assignment]
 
         server_url = effective_config.get("url", "")
+        effective_headers = effective_config.get("headers") or {}
+        cache_key = ToolListCache.make_key(
+            server_url, auth_header=effective_headers.get("Authorization")
+        )
 
         if session_pool is not None:
             session = await session_pool.get_session(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
-                if await _tool_supports_tasks(
-                    session, request.name, server_url, cache=task_support_cache
+                if _tool_supports_tasks(
+                    session, request.name, tool_list_cache, cache_key
                 ):
                     try:
                         return await _execute_tool_as_task(
@@ -278,8 +273,8 @@ def _make_execute_tool(
                             request.name,
                             server_url,
                         )
-                        if task_support_cache is not None:
-                            task_support_cache.evict(server_url)
+                        if tool_list_cache is not None:
+                            tool_list_cache.invalidate(cache_key)
                 return await session.call_tool(
                     request.name,
                     request.args,
@@ -287,8 +282,8 @@ def _make_execute_tool(
                 )
             except Exception:
                 await session_pool.evict(effective_config)
-                if task_support_cache is not None:
-                    task_support_cache.evict(server_url)
+                if tool_list_cache is not None:
+                    tool_list_cache.invalidate(cache_key)
                 raise
 
         # Fallback: create a one-shot session (original behavior)
@@ -298,8 +293,8 @@ def _make_execute_tool(
         ) as session:
             await session.initialize()
             try:
-                if await _tool_supports_tasks(
-                    session, request.name, server_url, cache=task_support_cache
+                if _tool_supports_tasks(
+                    session, request.name, tool_list_cache, cache_key
                 ):
                     try:
                         result = await _execute_tool_as_task(
@@ -311,8 +306,8 @@ def _make_execute_tool(
                             request.name,
                             server_url,
                         )
-                        if task_support_cache is not None:
-                            task_support_cache.evict(server_url)
+                        if tool_list_cache is not None:
+                            tool_list_cache.invalidate(cache_key)
                         result = await session.call_tool(
                             request.name,
                             request.args,
@@ -343,7 +338,7 @@ async def call_mcp_tool_raw(
     callbacks: Callbacks | None = None,
     tool_interceptors: list[ToolCallInterceptor] | None = None,
     session_pool: McpSessionPool | None = None,
-    task_support_cache: ToolTaskSupportCache | None = None,
+    tool_list_cache: ToolListCache | None = None,
 ) -> CallToolResult:
     """Call an MCP tool and return the raw CallToolResult.
 
@@ -362,7 +357,7 @@ async def call_mcp_tool_raw(
         config,
         mcp_callbacks,
         session_pool=session_pool,
-        task_support_cache=task_support_cache,
+        tool_list_cache=tool_list_cache,
     )
     handler = build_interceptor_chain(execute_tool, tool_interceptors)
     request = MCPToolCallRequest(

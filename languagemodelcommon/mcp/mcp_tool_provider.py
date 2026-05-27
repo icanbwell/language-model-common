@@ -56,9 +56,6 @@ from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     list_all_tools,
     list_all_tools_cached,
 )
-from languagemodelcommon.mcp.mcp_client.tool_task_support_cache import (
-    ToolTaskSupportCache,
-)
 from languagemodelcommon.mcp.mcp_client.ui_resource import (
     McpAppEmbed,
     extract_ui_resource_uri,
@@ -154,11 +151,6 @@ class MCPToolProvider:
 
         self.auth_server_metadata_discovery = auth_server_metadata_discovery
         self.tool_list_cache = ToolListCache(
-            ttl_seconds=float(
-                environment_variables.mcp_tools_metadata_cache_ttl_seconds
-            ),
-        )
-        self.tool_task_support_cache = ToolTaskSupportCache(
             ttl_seconds=float(
                 environment_variables.mcp_tools_metadata_cache_ttl_seconds
             ),
@@ -273,7 +265,7 @@ class MCPToolProvider:
                     self.truncation_interceptor.get_tool_interceptor_truncation(),
                 ],
                 server_name=tool_config.name,
-                task_support_cache=self.tool_task_support_cache,
+                tool_list_cache=self.tool_list_cache,
             )
             tools.append(langchain_tool)
 
@@ -425,7 +417,7 @@ class MCPToolProvider:
                         tool_interceptors=tool_interceptors,
                         server_name=tool_config.name,
                         session_pool=session_pool,
-                        task_support_cache=self.tool_task_support_cache,
+                        tool_list_cache=self.tool_list_cache,
                     )
                     for mcp_tool in mcp_tools
                 ]
@@ -943,7 +935,7 @@ class MCPToolProvider:
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ],
             session_pool=session_pool,
-            task_support_cache=self.tool_task_support_cache,
+            tool_list_cache=self.tool_list_cache,
         )
 
     async def fetch_mcp_app_embed(

@@ -14,6 +14,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
+    SystemMessage,
     UsageMetadata,
 )
 from langchain_core.runnables import RunnableConfig
@@ -41,6 +42,7 @@ from typing import (
     cast,
 )
 
+from languagemodelcommon.configs.schemas.config_schema import PromptConfig
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
@@ -869,7 +871,7 @@ class LangGraphToOpenAIConverter:
         tools: Sequence[BaseTool],
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
-        system_prompts: List[str] | None = None,
+        system_prompts: List[PromptConfig] | None = None,
         tool_catalog: ToolCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
@@ -883,30 +885,42 @@ class LangGraphToOpenAIConverter:
             tools: List of tools available to the agent
             store: Optional store for persistence
             checkpointer: Optional checkpointer for state management
-            system_prompts: Optional list of system prompts to prepend to the agent
+            system_prompts: Optional list of PromptConfig objects. Each becomes a
+                separate content block in the system message. Blocks with cache=True
+                are marked for prompt caching (cache_control: ephemeral).
             tool_catalog: Optional tool catalog for tool discovery middleware
         """
-        # Build system prompt from config if provided
-        system_prompt: str | None = None
+        prompt: SystemMessage | None = None
         if system_prompts:
-            # Strip and filter empty prompts to avoid accidental separators
-            cleaned_prompts = [p.strip() for p in system_prompts if p and p.strip()]
-            if cleaned_prompts:
-                system_prompt = "\n\n".join(cleaned_prompts)
+            content_blocks: list[dict[str, Any]] = []
+            for p in system_prompts:
+                text = (p.content or "").strip()
+                if not text:
+                    continue
+                block: dict[str, Any] = {"type": "text", "text": text}
+                if p.cache is True:
+                    block["cache_control"] = {"type": "ephemeral"}
+                content_blocks.append(block)
+
+            if content_blocks:
+                prompt = SystemMessage(content=content_blocks)  # type: ignore[arg-type]
+                total_chars = sum(len(b["text"]) for b in content_blocks)
+                cached_count = sum(1 for b in content_blocks if "cache_control" in b)
                 logger.debug(
-                    "[GRAPH] %s Using system prompt from config (%s chars): %s )",
+                    "[GRAPH] %s Using %d system prompt blocks (%d chars, %d cached)",
                     uuid.uuid4(),
-                    len(system_prompt),
-                    system_prompt,
+                    len(content_blocks),
+                    total_chars,
+                    cached_count,
                 )
 
         logger.debug(
             "Creating LLM graph with tools: tools=%s, store=%s, checkpointer=%s, "
-            "system_prompt=%s",
+            "prompt=%s",
             tools,
             "provided" if store else "none",
             "provided" if checkpointer else "none",
-            "provided" if system_prompt else "none",
+            "provided" if prompt else "none",
         )
         # Create the react agent with optional system prompt
         middleware: list[AgentMiddleware] = []
@@ -920,7 +934,7 @@ class LangGraphToOpenAIConverter:
             context_schema=dict,  # type: ignore[misc]
             store=store,
             checkpointer=checkpointer,
-            system_prompt=system_prompt,
+            system_prompt=prompt,
             middleware=middleware,
         )
 

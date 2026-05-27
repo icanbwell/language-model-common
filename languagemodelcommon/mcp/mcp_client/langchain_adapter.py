@@ -21,9 +21,7 @@ from languagemodelcommon.mcp.mcp_client.tool_invocation import (
     _make_execute_tool,
     build_interceptor_chain,
 )
-from languagemodelcommon.mcp.mcp_client.tool_task_support_cache import (
-    ToolTaskSupportCache,
-)
+from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
 
 
 _INVALID_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
@@ -63,7 +61,7 @@ def mcp_tool_to_langchain_tool(
     tool_interceptors: list[ToolCallInterceptor] | None = None,
     server_name: str | None = None,
     session_pool: McpSessionPool | None = None,
-    task_support_cache: ToolTaskSupportCache | None = None,
+    tool_list_cache: ToolListCache | None = None,
 ) -> BaseTool:
     """Convert an MCP Tool to a LangChain BaseTool.
 
@@ -85,7 +83,7 @@ def mcp_tool_to_langchain_tool(
         connection,
         mcp_callbacks,
         session_pool=session_pool,
-        task_support_cache=task_support_cache,
+        tool_list_cache=tool_list_cache,
     )
     handler = build_interceptor_chain(execute_tool, tool_interceptors)
 
