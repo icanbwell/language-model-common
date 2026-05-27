@@ -20,6 +20,8 @@ from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 
 logger = logging.getLogger(__name__)
 
+_tool_task_support_cache: dict[str, dict[str, str | None]] = {}
+
 
 def build_interceptor_chain(
     base_handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
@@ -50,20 +52,20 @@ def _server_supports_tool_tasks(session: Any) -> bool:
     """Check whether the MCP server advertises task support for tool calls.
 
     Supports both spec versions:
-    - Old (experimental): capabilities.tasks.requests.tools.call
-    - New (extension): capabilities.extensions["io.modelcontextprotocol/tasks"]
+    - Old (2025-11-25): capabilities.tasks.requests.tools.call
+    - New (2026-07-28): capabilities.extensions["io.modelcontextprotocol/tasks"]
     """
     try:
         caps = session.get_server_capabilities()
         if not caps:
             return False
 
-        # New spec: extension-based capability
+        # New spec (2026-07-28): extension-based capability
         extensions = getattr(caps, "extensions", None)
         if extensions and "io.modelcontextprotocol/tasks" in extensions:
             return True
 
-        # Old spec: nested capability hierarchy
+        # Old spec (2025-11-25): nested capability hierarchy
         tasks_cap = getattr(caps, "tasks", None)
         if tasks_cap:
             requests = getattr(tasks_cap, "requests", None)
@@ -75,6 +77,40 @@ def _server_supports_tool_tasks(session: Any) -> bool:
         return False
     except Exception:
         return False
+
+
+async def _tool_supports_tasks(session: Any, tool_name: str, server_url: str) -> bool:
+    """Check whether a specific tool supports task-augmented execution.
+
+    Server-level task capability is necessary but not sufficient. Each tool
+    declares its own task support via execution.taskSupport in the tools/list
+    response. Only tools with "optional" or "required" support tasks.
+
+    Results are cached per server URL to avoid repeated list_tools calls.
+    """
+    if not _server_supports_tool_tasks(session):
+        return False
+
+    cache_key = server_url
+    if cache_key not in _tool_task_support_cache:
+        try:
+            tools_result = await session.list_tools()
+            tool_map: dict[str, str | None] = {}
+            for tool in tools_result.tools:
+                task_support: str | None = None
+                if tool.execution is not None:
+                    task_support = getattr(tool.execution, "taskSupport", None)
+                tool_map[tool.name] = task_support
+            _tool_task_support_cache[cache_key] = tool_map
+        except Exception:
+            logger.debug(
+                "Failed to fetch tool list for task support check on %s",
+                server_url,
+            )
+            return False
+
+    tool_support = _tool_task_support_cache.get(cache_key, {}).get(tool_name)
+    return tool_support in ("optional", "required")
 
 
 def _extract_task_id_from_create_result(create_result: Any) -> str:
@@ -183,8 +219,10 @@ def _make_execute_tool(
     When a ``session_pool`` is provided, sessions are reused across calls
     to the same MCP server URL within the pool's scope.
 
-    If the server advertises task support for tool calls, the tool is
+    If the server and tool both advertise task support, the tool is
     executed via the MCP task protocol with polling and progress events.
+    Per-tool ``execution.taskSupport`` is checked so that tools with
+    ``"forbidden"`` (or no declaration) use normal call_tool.
     """
 
     async def execute_tool(request: MCPToolCallRequest) -> MCPToolCallResult:
@@ -196,12 +234,14 @@ def _make_execute_tool(
             updated["headers"] = {**existing_headers, **modified_headers}
             effective_config = updated  # type: ignore[assignment]
 
+        server_url = effective_config.get("url", "")
+
         if session_pool is not None:
             session = await session_pool.get_session(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
-                if _server_supports_tool_tasks(session):
+                if await _tool_supports_tasks(session, request.name, server_url):
                     return await _execute_tool_as_task(
                         session, request.name, request.args, request.server_name
                     )
@@ -221,7 +261,7 @@ def _make_execute_tool(
         ) as session:
             await session.initialize()
             try:
-                if _server_supports_tool_tasks(session):
+                if await _tool_supports_tasks(session, request.name, server_url):
                     result = await _execute_tool_as_task(
                         session, request.name, request.args, request.server_name
                     )
