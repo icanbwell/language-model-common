@@ -117,7 +117,7 @@ class ConversationHistoryManager:
         managed_messages: list[BaseMessage]
         if len(conversation_messages) > self.summary_threshold:
             managed_messages = await self._summarize_with_recent(
-                conversation_messages, llm
+                messages=conversation_messages, llm=llm
             )
         else:
             managed_messages = list(conversation_messages)

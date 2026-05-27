@@ -275,7 +275,9 @@ class LangGraphToOpenAIConverter:
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
 
             # Check if a TokenRetrievalError is wrapped inside another exception
-            token_retrieval_error = self._find_cause(e, TokenRetrievalError)
+            token_retrieval_error = self._find_cause(
+                exception=e, target_type=TokenRetrievalError
+            )
             if token_retrieval_error is not None:
                 message = (
                     f"Token retrieval error: {token_retrieval_error}."

@@ -64,7 +64,7 @@ class Callbacks:
             async def _logging_cb(
                 params: LoggingMessageNotificationParams,
             ) -> None:
-                await on_logging_message(params, context)
+                await on_logging_message(params=params, context=context)
 
             mcp_logging_cb = _logging_cb
 
@@ -73,7 +73,9 @@ class Callbacks:
             async def _progress_cb(
                 progress: float, total: float | None, message: str | None
             ) -> None:
-                await on_progress(progress, total, message, context)
+                await on_progress(
+                    progress=progress, total=total, message=message, context=context
+                )
 
             mcp_progress_cb = _progress_cb
 

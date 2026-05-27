@@ -123,11 +123,13 @@ class SearchToolsTool(BaseTool):
                 if (
                     category is None
                     and server.agent_config.oauth is not None
-                    and not self._query_matches_server(query, server)
+                    and not self._query_matches_server(query=query, server=server)
                 ):
                     continue
                 try:
-                    await self.catalog.resolve_server(server.server_name, self.resolver)
+                    await self.catalog.resolve_server(
+                        server_name=server.server_name, resolver=self.resolver
+                    )
                 except AuthorizationNeededException as e:
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"

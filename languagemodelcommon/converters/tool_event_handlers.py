@@ -77,7 +77,7 @@ class ToolEventHandler:
             tool_input_display["state"] = "***"
         if tool_input_display and "runtime" in tool_input_display:
             tool_input_display.pop("runtime")
-        tool_key: str = make_tool_key(tool_name, tool_input)
+        tool_key: str = make_tool_key(tool_name=tool_name, tool_input=tool_input)
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
@@ -104,8 +104,8 @@ class ToolEventHandler:
                 )
             if chat_request_wrapper.enable_debug_logging:
                 self._stream_buffer_manager.append_streamed_text_fragment(
-                    str(request_information.request_id),
-                    f"\n--- Tool Call: {tool_name} ---\n{json.dumps(tool_input_display, indent=2, default=str)}\n",
+                    request_id=str(request_information.request_id),
+                    text=f"\n--- Tool Call: {tool_name} ---\n{json.dumps(tool_input_display, indent=2, default=str)}\n",
                 )
             debug_content_text: str = (
                 f"\n\n<details>\n<summary>Agent: {tool_name}</summary>\n\n"
@@ -145,7 +145,7 @@ class ToolEventHandler:
             tool_name: str = tool_message.name or event_name or "unknown"
             tool_input: Optional[Dict[str, Any]] = data.get("input")
 
-            tool_key: str = make_tool_key(tool_name, tool_input)
+            tool_key: str = make_tool_key(tool_name=tool_name, tool_input=tool_input)
             start_time: Optional[float] = tool_start_times.pop(tool_key, None)
             runtime_seconds: Optional[float] = None
             if start_time is not None:
@@ -218,8 +218,8 @@ class ToolEventHandler:
                 )
                 if chat_request_wrapper.enable_debug_logging:
                     self._stream_buffer_manager.append_streamed_text_fragment(
-                        str(request_information.request_id),
-                        f"\n--- Tool Output: {tool_name} ({runtime_str}) ---\n{tool_message_or_artifact_content}\n",
+                        request_id=str(request_information.request_id),
+                        text=f"\n--- Tool Output: {tool_name} ({runtime_str}) ---\n{tool_message_or_artifact_content}\n",
                     )
 
                 tool_display_name: str = (
@@ -311,7 +311,7 @@ class ToolEventHandler:
         error_message: Any = data.get("error") or str(event)
         tool_input: Optional[Dict[str, Any]] = data.get("input")
         runtime_str: str = ""
-        tool_key: str = make_tool_key(tool_name, tool_input)
+        tool_key: str = make_tool_key(tool_name=tool_name, tool_input=tool_input)
         start_time: Optional[float] = tool_start_times.pop(tool_key, None)
         if start_time is not None:
             elapsed: float = time.time() - start_time
@@ -340,8 +340,8 @@ class ToolEventHandler:
                 f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
             )
             self._stream_buffer_manager.append_streamed_text_fragment(
-                str(request_information.request_id),
-                f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{error_message}\n",
+                request_id=str(request_information.request_id),
+                text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{error_message}\n",
             )
             tool_display_name: str = self._tool_display_name_mapper.get_name_for_tool(
                 tool_name=tool_name or "unknown",

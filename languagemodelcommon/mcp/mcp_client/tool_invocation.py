@@ -261,11 +261,17 @@ def _make_execute_tool(
             )
             try:
                 if _tool_supports_tasks(
-                    session, request.name, tool_list_cache, cache_key
+                    session=session,
+                    tool_name=request.name,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
                 ):
                     try:
                         return await _execute_tool_as_task(
-                            session, request.name, request.args, request.server_name
+                            session=session,
+                            name=request.name,
+                            arguments=request.args,
+                            server_name=request.server_name,
                         )
                     except TaskProtocolError:
                         logger.warning(
@@ -294,11 +300,17 @@ def _make_execute_tool(
             await session.initialize()
             try:
                 if _tool_supports_tasks(
-                    session, request.name, tool_list_cache, cache_key
+                    session=session,
+                    tool_name=request.name,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
                 ):
                     try:
                         result = await _execute_tool_as_task(
-                            session, request.name, request.args, request.server_name
+                            session=session,
+                            name=request.name,
+                            arguments=request.args,
+                            server_name=request.server_name,
                         )
                     except TaskProtocolError:
                         logger.warning(
@@ -354,12 +366,14 @@ async def call_mcp_tool_raw(
     )
 
     execute_tool = _make_execute_tool(
-        config,
-        mcp_callbacks,
+        config=config,
+        mcp_callbacks=mcp_callbacks,
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
     )
-    handler = build_interceptor_chain(execute_tool, tool_interceptors)
+    handler = build_interceptor_chain(
+        base_handler=execute_tool, tool_interceptors=tool_interceptors
+    )
     request = MCPToolCallRequest(
         name=tool_name,
         args=arguments,

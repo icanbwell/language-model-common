@@ -518,12 +518,14 @@ class TokenExchangeManager:
             raise TypeError(f"TokenCacheItem must be of type {TokenCacheItem.__name__}")
 
         token_cache_item.access_token = self._try_parse_token(
-            access_token, "access_token"
+            raw=access_token, label="access_token"
         )
         token_cache_item.access_token_raw = access_token
-        token_cache_item.id_token = self._try_parse_token(id_token, "id_token")
+        token_cache_item.id_token = self._try_parse_token(
+            raw=id_token, label="id_token"
+        )
         token_cache_item.refresh_token = self._try_parse_token(
-            refresh_token, "refresh_token"
+            raw=refresh_token, label="refresh_token"
         )
         token_cache_item.refresh_token_raw = refresh_token
         token_cache_item.refreshed = datetime.now(tz=UTC)
@@ -549,11 +551,15 @@ class TokenExchangeManager:
 
         # Tokens may be opaque (non-JWT) for OAuth 2.0 providers (e.g., Atlassian).
         # Parse each token tolerantly — store the raw string regardless.
-        access_token_item = self._try_parse_token(access_token, "access_token")
+        access_token_item = self._try_parse_token(
+            raw=access_token, label="access_token"
+        )
         id_token_raw: str | None = token.get("id_token")
-        id_token_item = self._try_parse_token(id_token_raw, "id_token")
+        id_token_item = self._try_parse_token(raw=id_token_raw, label="id_token")
         refresh_token: str | None = token.get("refresh_token")
-        refresh_token_item = self._try_parse_token(refresh_token, "refresh_token")
+        refresh_token_item = self._try_parse_token(
+            raw=refresh_token, label="refresh_token"
+        )
 
         referring_email = state_decoded.get("referring_email")
         referring_subject = state_decoded.get("referring_subject")

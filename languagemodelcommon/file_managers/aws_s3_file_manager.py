@@ -77,7 +77,9 @@ class AwsS3FileManager(FileManager):
             raise ValueError("folder must not be empty or None")
         if not filename:
             raise ValueError("filename must not be empty or None")
-        s3_full_path = "s3://" + UrlParser.combine_path(folder, filename)
+        s3_full_path = "s3://" + UrlParser.combine_path(
+            prefix=folder, filename=filename
+        )
         return s3_full_path
 
     # noinspection PyMethodMayBeStatic
@@ -88,7 +90,7 @@ class AwsS3FileManager(FileManager):
             raise ValueError("filename must not be empty or None")
         if not folder.startswith("s3://"):
             folder = f"s3://{folder}"
-        full_path = UrlParser.combine_path(folder, filename=filename)
+        full_path = UrlParser.combine_path(prefix=folder, filename=filename)
         s3_url = S3Url(full_path)
         return s3_url
 

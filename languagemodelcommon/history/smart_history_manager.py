@@ -84,20 +84,26 @@ class SmartHistoryManager:
         )
 
         # Attempt to load server checkpoint
-        server_checkpoint = await self._load_checkpoint(config, thread_id)
+        server_checkpoint = await self._load_checkpoint(
+            config=config, thread_id=thread_id
+        )
 
         # Decision logic: server-first, client-fallback
         if server_checkpoint:
             selected_state = await self._use_server_history(
-                state, client_messages, server_checkpoint
+                state=state,
+                client_messages=client_messages,
+                server_checkpoint=server_checkpoint,
             )
         else:
-            selected_state = self._use_client_history(state, client_messages)
+            selected_state = self._use_client_history(
+                state=state, client_messages=client_messages
+            )
 
         # Manage/trim the selected history
         total_before = len(selected_state.get("messages", []))
         managed_state = await self.history_manager.manage_history(
-            selected_state, self.llm
+            state=selected_state, llm=self.llm
         )
         total_after = len(managed_state.get("messages", []))
 
@@ -168,7 +174,9 @@ class SmartHistoryManager:
         """
         if "messages" not in server_checkpoint.channel_values:
             logger.warning("[HISTORY_SELECT] Checkpoint has no messages, using client")
-            return self._use_client_history(state, client_messages)
+            return self._use_client_history(
+                state=state, client_messages=client_messages
+            )
 
         server_messages = server_checkpoint.channel_values["messages"]
         logger.info(
@@ -181,7 +189,9 @@ class SmartHistoryManager:
             new_message = client_messages[-1]
 
             # Check for duplicates
-            if self._is_duplicate(new_message, server_messages):
+            if self._is_duplicate(
+                new_message=new_message, existing_messages=server_messages
+            ):
                 logger.info("[HISTORY_SELECT] New message is duplicate, skipping")
                 state["messages"] = server_messages
             else:

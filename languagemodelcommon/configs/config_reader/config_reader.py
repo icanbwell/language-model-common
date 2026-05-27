@@ -81,7 +81,9 @@ class ConfigReader:
         # Re-resolve MCP servers on first request (snapshot may be stale)
         # and on subsequent requests if servers remain unresolved.
         if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
-            await self._retry_mcp_resolution(base_models, config_path)
+            await self._retry_mcp_resolution(
+                models=base_models, config_path=config_path
+            )
             self._mcp_resolved_once = True
 
         if client_id:
@@ -95,7 +97,7 @@ class ConfigReader:
                 )
 
         base_models = [model for model in base_models if not model.disabled]
-        self._resolve_prompt_library(base_models, config_path=config_path)
+        self._resolve_prompt_library(models=base_models, config_path=config_path)
         return base_models
 
     async def _read_base_models_async(
@@ -317,7 +319,9 @@ class ConfigReader:
             )
 
         # Resolve MCP server references from plugins or local .mcp.json
-        await self._resolve_mcp_servers_async(models, local_config_path)
+        await self._resolve_mcp_servers_async(
+            models=models, config_path=local_config_path
+        )
         return models
 
     async def _resolve_mcp_servers_async(
@@ -369,7 +373,9 @@ class ConfigReader:
                 fetch_errors,
             )
         if plugin_configs:
-            resolve_mcp_servers_from_plugins(models, plugin_configs)
+            resolve_mcp_servers_from_plugins(
+                configs=models, plugin_configs=plugin_configs
+            )
         else:
             logger.warning(
                 "McpJsonFetcher returned no configs for plugins %s from %s "
@@ -412,7 +418,7 @@ class ConfigReader:
         cache so subsequent reads get the resolved data.
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
-        await self._resolve_mcp_servers_async(models, config_path)
+        await self._resolve_mcp_servers_async(models=models, config_path=config_path)
         await self._write_to_snapshot_cache(models)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
@@ -444,7 +450,8 @@ class ConfigReader:
             return None
         if GitHubDirectoryHelper.is_github_path(config_path):
             return GitHubDirectoryHelper.join_github_uri_path(
-                GitHubDirectoryHelper.to_github_uri(config_path), f"clients/{client_id}"
+                base_uri=GitHubDirectoryHelper.to_github_uri(config_path),
+                suffix=f"clients/{client_id}",
             )
         if config_path.startswith("s3"):
             return ConfigReader._join_path(config_path, f"clients/{client_id}")
@@ -505,8 +512,8 @@ class ConfigReader:
             merged_payload = cast(
                 dict[str, Any],
                 ConfigReader._deep_merge(
-                    base_model.model_dump(),
-                    override.model_dump(exclude_none=True, exclude_unset=True),
+                    base=base_model.model_dump(),
+                    override=override.model_dump(exclude_none=True, exclude_unset=True),
                 ),
             )
             merged_models[match_index] = ChatModelConfig(**merged_payload)
@@ -524,12 +531,14 @@ class ConfigReader:
                     and isinstance(merged[key], dict)
                     and isinstance(value, dict)
                 ):
-                    merged[key] = ConfigReader._deep_merge(merged[key], value)
+                    merged[key] = ConfigReader._deep_merge(
+                        base=merged[key], override=value
+                    )
                 else:
                     merged[key] = value
             return merged
         if isinstance(base, list) and isinstance(override, list):
-            return ConfigReader._merge_list_of_dicts(base, override)
+            return ConfigReader._merge_list_of_dicts(base=base, override=override)
         return override
 
     @staticmethod
@@ -565,7 +574,7 @@ class ConfigReader:
                 base_item = merged_list[index_by_key[override_key]]
                 if isinstance(base_item, dict):
                     merged_list[index_by_key[override_key]] = ConfigReader._deep_merge(
-                        base_item, override_item
+                        base=base_item, override=override_item
                     )
                 else:
                     merged_list[index_by_key[override_key]] = override_item
@@ -596,7 +605,8 @@ class ConfigReader:
             )
 
             prompts_uri = GitHubDirectoryHelper.join_github_uri_path(
-                GitHubDirectoryHelper.to_github_uri(config_path), PROMPTS_FOLDER_NAME
+                base_uri=GitHubDirectoryHelper.to_github_uri(config_path),
+                suffix=PROMPTS_FOLDER_NAME,
             )
             try:
                 local_path = self._github_directory_helper.resolve_github_path(

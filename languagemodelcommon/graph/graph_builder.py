@@ -207,16 +207,17 @@ class GraphBuilder:
 
         # Add smart history selection node
         workflow.add_node(
-            "select_history", RunnableLambda(smart_history_manager.select_history)
+            "select_history",
+            action=RunnableLambda(smart_history_manager.select_history),
         )
 
         # Add react agent node
-        workflow.add_node("react_agent", react_agent_runnable)
+        workflow.add_node("react_agent", action=react_agent_runnable)
 
         # Define flow
         workflow.set_entry_point("select_history")
-        workflow.add_edge("select_history", "react_agent")
-        workflow.add_edge("react_agent", END)
+        workflow.add_edge(start_key="select_history", end_key="react_agent")
+        workflow.add_edge(start_key="react_agent", end_key=END)
 
         logger.debug("Workflow graph constructed")
 

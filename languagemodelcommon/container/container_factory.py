@@ -54,12 +54,12 @@ class LanguageModelCommonContainerFactory:
     ) -> SimpleContainer:
 
         container.singleton(
-            LanguageModelCommonEnvironmentVariables,
-            lambda c: LanguageModelCommonEnvironmentVariables(),
+            service_type=LanguageModelCommonEnvironmentVariables,
+            factory=lambda c: LanguageModelCommonEnvironmentVariables(),
         )
         container.singleton(
-            GitHubDirectoryHelper,
-            lambda c: GitHubDirectoryHelper(
+            service_type=GitHubDirectoryHelper,
+            factory=lambda c: GitHubDirectoryHelper(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
@@ -67,16 +67,16 @@ class LanguageModelCommonContainerFactory:
         )
         # we want only one instance of the cache so we use singleton
         container.singleton(
-            ConfigExpiringCache,
-            lambda c: ConfigExpiringCache(
+            service_type=ConfigExpiringCache,
+            factory=lambda c: ConfigExpiringCache(
                 ttl_seconds=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).config_cache_timeout_seconds,
             ),
         )
         container.singleton(
-            PromptLibraryManager,
-            lambda c: PromptLibraryManager(
+            service_type=PromptLibraryManager,
+            factory=lambda c: PromptLibraryManager(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
@@ -88,10 +88,12 @@ class LanguageModelCommonContainerFactory:
             url = c.resolve(LanguageModelCommonEnvironmentVariables).plugins_mcp_server
             return McpJsonFetcher(plugins_mcp_server_url=url) if url else None
 
-        container.singleton(McpJsonFetcher, _create_mcp_json_fetcher)
         container.singleton(
-            KeyValueBaseStore,
-            lambda c: create_cache_store(
+            service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
+        )
+        container.singleton(
+            service_type=KeyValueBaseStore,
+            factory=lambda c: create_cache_store(
                 cache_type=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).snapshot_cache_type,
@@ -114,8 +116,8 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            ConfigReader,
-            lambda c: ConfigReader(
+            service_type=ConfigReader,
+            factory=lambda c: ConfigReader(
                 cache=c.resolve(ConfigExpiringCache),
                 prompt_library_manager=c.resolve(PromptLibraryManager),
                 environment_variables=c.resolve(
@@ -127,8 +129,8 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            LangGraphToOpenAIConverter,
-            lambda c: LangGraphToOpenAIConverter(
+            service_type=LangGraphToOpenAIConverter,
+            factory=lambda c: LangGraphToOpenAIConverter(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
@@ -137,8 +139,8 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            TokenReducer,
-            lambda c: TokenReducer(
+            service_type=TokenReducer,
+            factory=lambda c: TokenReducer(
                 model=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).default_llm_model,
@@ -146,8 +148,8 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
-            StreamBufferManager,
-            lambda c: StreamBufferManager(
+            service_type=StreamBufferManager,
+            factory=lambda c: StreamBufferManager(
                 flush_interval_seconds=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).streaming_buffer_flush_interval_seconds,
@@ -158,8 +160,8 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
-            ToolEventHandler,
-            lambda c: ToolEventHandler(
+            service_type=ToolEventHandler,
+            factory=lambda c: ToolEventHandler(
                 debug_file_writer=c.resolve(FileWriter),
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
@@ -170,8 +172,8 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
-            LangGraphStreamingManager,
-            lambda c: LangGraphStreamingManager(
+            service_type=LangGraphStreamingManager,
+            factory=lambda c: LangGraphStreamingManager(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
@@ -182,8 +184,8 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            FileWriter,
-            lambda c: FileWriter(
+            service_type=FileWriter,
+            factory=lambda c: FileWriter(
                 file_manager_factory=c.resolve(FileManagerFactory),
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
@@ -191,15 +193,15 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            FileManagerFactory,
-            lambda c: FileManagerFactory(
+            service_type=FileManagerFactory,
+            factory=lambda c: FileManagerFactory(
                 aws_client_factory=c.resolve(AwsClientFactory),
             ),
         )
 
         container.singleton(
-            AwsClientFactory,
-            lambda c: AwsClientFactory(
+            service_type=AwsClientFactory,
+            factory=lambda c: AwsClientFactory(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
@@ -207,8 +209,8 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
-            ImageGeneratorFactory,
-            lambda c: ImageGeneratorFactory(
+            service_type=ImageGeneratorFactory,
+            factory=lambda c: ImageGeneratorFactory(
                 aws_client_factory=c.resolve(AwsClientFactory),
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
@@ -217,8 +219,8 @@ class LanguageModelCommonContainerFactory:
         )
 
         container.singleton(
-            ImageGenerationProvider,
-            lambda c: ImageGenerationProvider(
+            service_type=ImageGenerationProvider,
+            factory=lambda c: ImageGenerationProvider(
                 image_generator_factory=c.resolve(ImageGeneratorFactory),
                 file_manager_factory=c.resolve(FileManagerFactory),
                 environment_variables=c.resolve(
@@ -227,22 +229,22 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
-            ImageGenerationManager,
-            lambda c: ImageGenerationManager(
+            service_type=ImageGenerationManager,
+            factory=lambda c: ImageGenerationManager(
                 image_generation_provider=c.resolve(ImageGenerationProvider)
             ),
         )
 
         container.singleton(
-            PersistenceFactory,
-            lambda c: PersistenceFactory(
+            service_type=PersistenceFactory,
+            factory=lambda c: PersistenceFactory(
                 environment_variables=c.resolve(LanguageModelCommonEnvironmentVariables)
             ),
         )
 
         container.singleton(
-            OCRExtractorFactory,
-            lambda c: OCRExtractorFactory(
+            service_type=OCRExtractorFactory,
+            factory=lambda c: OCRExtractorFactory(
                 aws_client_factory=c.resolve(AwsClientFactory),
                 file_manager_factory=c.resolve(FileManagerFactory),
             ),

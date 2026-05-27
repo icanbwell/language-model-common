@@ -1019,7 +1019,7 @@ class MCPToolProvider:
         session_token: str | None = None,
     ) -> McpAppEmbed | None:
         """Fetch the UI resource and inject tool data into the HTML."""
-        fetch_result = await fetch_ui_resource(session, ui_uri)
+        fetch_result = await fetch_ui_resource(session=session, uri=ui_uri)
         if not fetch_result:
             return None
 

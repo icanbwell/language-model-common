@@ -136,7 +136,7 @@ class GithubConfigRepoManager:
         if extract_dir.exists():
             shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True, exist_ok=True)
-        repo_root = self._extract_zip(zip_bytes, extract_dir)
+        repo_root = self._extract_zip(zip_bytes=zip_bytes, target_dir=extract_dir)
 
         # Flatten: move the single top-level {owner-repo-sha}/ directory
         # up so that paths are stable across refreshes
