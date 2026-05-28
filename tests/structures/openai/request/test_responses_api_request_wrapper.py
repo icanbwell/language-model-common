@@ -255,6 +255,25 @@ class TestConvertMessageContent:
         assert hasattr(result[0], "text") and result[0].text == "Hello"
         assert hasattr(result[1], "text") and result[1].text == "World"
 
+    def test_list_of_dicts_with_text_type(self) -> None:
+        result = ResponsesApiRequestWrapper.convert_message_content(
+            input_content=[{"text": "Hello from LLM", "type": "text"}]
+        )
+        assert len(result) == 1
+        assert result[0].type == "output_text"
+        assert result[0].text == "Hello from LLM"
+        assert result[0].annotations == []
+
+    def test_list_of_dicts_with_output_text_type(self) -> None:
+        result = ResponsesApiRequestWrapper.convert_message_content(
+            input_content=[
+                {"text": "Already correct", "type": "output_text", "annotations": []}
+            ]
+        )
+        assert len(result) == 1
+        assert result[0].type == "output_text"
+        assert result[0].text == "Already correct"
+
     def test_unsupported_type_returns_empty(self) -> None:
         result = ResponsesApiRequestWrapper.convert_message_content(
             input_content=123  # type: ignore[arg-type]

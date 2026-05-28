@@ -446,7 +446,15 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                         )
                     )
                 elif isinstance(item, dict):
-                    output_texts.append(ResponseOutputText(**item))
+                    text = item.get("text", "")
+                    annotations = item.get("annotations", [])
+                    output_texts.append(
+                        ResponseOutputText(
+                            text=text,
+                            type="output_text",
+                            annotations=annotations,
+                        )
+                    )
             return output_texts
         else:
             return []
