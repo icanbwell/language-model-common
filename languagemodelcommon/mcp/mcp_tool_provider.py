@@ -54,7 +54,6 @@ from languagemodelcommon.mcp.mcp_client.tool_invocation import call_mcp_tool_raw
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
     ToolListStoreProtocol,
-    list_all_tools,
     list_all_tools_cached,
 )
 from languagemodelcommon.mcp.mcp_client.ui_resource import (
@@ -392,12 +391,29 @@ class MCPToolProvider:
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ]
 
+            tool_url = tool_config.url or "unknown"
+            cache_key = ToolListCache.make_key(tool_url)
+
+            cached = await self.tool_list_cache.get_async(key=cache_key)
             try:
-                async with create_mcp_session(
-                    discovery_config, mcp_callbacks=mcp_callbacks
-                ) as session:
-                    await session.initialize()
-                    mcp_tools = await list_all_tools(session)
+                if cached is not None:
+                    mcp_tools = cached
+                    logger.info(
+                        "Tool list cache hit for '%s' (%d tools)",
+                        tool_config.name,
+                        len(mcp_tools),
+                    )
+                else:
+                    async with create_mcp_session(
+                        discovery_config, mcp_callbacks=mcp_callbacks
+                    ) as session:
+                        await session.initialize()
+                        mcp_tools = await list_all_tools_cached(
+                            session,
+                            url=tool_url,
+                            cache=self.tool_list_cache,
+                            cache_key=cache_key,
+                        )
 
                 logger.info(
                     "MCP tools discovered from '%s': %s",
@@ -428,7 +444,8 @@ class MCPToolProvider:
                     for mcp_tool in mcp_tools
                 ]
             except BaseException as e:
-                tool_url = tool_config.url or "unknown"
+                if self._contains_http_auth_error(e):
+                    await self.tool_list_cache.invalidate_async(key=cache_key)
 
                 if (
                     self._contains_http_auth_error(e)

@@ -39,6 +39,10 @@ def _make_provider(
     mock_discovery = MagicMock()
     mock_discovery.discover = AsyncMock(return_value=discovery_result)
     provider.auth_server_metadata_discovery = mock_discovery
+
+    from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
+
+    provider.tool_list_cache = ToolListCache(ttl_seconds=300.0)
     return provider
 
 
