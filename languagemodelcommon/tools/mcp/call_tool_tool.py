@@ -80,6 +80,8 @@ class CallToolTool(BaseTool):
     mcp_tool_provider: MCPToolProvider
     auth_interceptor: AuthMcpCallInterceptor
     session_pool: McpSessionPool | None = None
+    proxy_base_url: str | None = None
+    session_token: str | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -109,7 +111,6 @@ class CallToolTool(BaseTool):
             )
             text = _call_tool_result_to_text(result)
 
-            # Best-effort: fetch MCP app UI resource if the tool declares one
             app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
                 tool=entry.tool,
                 tool_name=name,
@@ -117,6 +118,8 @@ class CallToolTool(BaseTool):
                 tool_result_text=text,
                 agent_config=entry.agent_config,
                 session_pool=self.session_pool,
+                proxy_base_url=self.proxy_base_url,
+                session_token=self.session_token,
             )
 
             artifact: dict[str, Any] | None = None

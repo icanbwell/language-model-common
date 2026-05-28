@@ -12,9 +12,15 @@ from typing import (
     List,
     Any,
     cast,
+    TYPE_CHECKING,
 )
 
-from langchain_core.messages import AnyMessage
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
+
+from langchain_core.messages import AnyMessage, AIMessage, ToolMessage
 from langchain_core.messages.ai import UsageMetadata
 from openai.types.responses import (
     ResponseInputParam,
@@ -54,7 +60,11 @@ logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def __init__(
-        self, *, chat_request: ResponsesRequest, enable_debug_logging: bool
+        self,
+        *,
+        chat_request: ResponsesRequest,
+        enable_debug_logging: bool,
+        environment_variables: "LanguageModelCommonEnvironmentVariables",
     ) -> None:
         """
         Wraps an OpenAI /responses API request and provides a unified interface so the code can use it
@@ -66,20 +76,24 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             input_=self.request.input
         )
         self._enable_debug_logging: bool = enable_debug_logging
+        self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefix = "DEBUG:"
+        debug_prefixes = self._debug_prefixes
         for index, message in enumerate(self._messages):
             if message.role != "user":
                 continue
             content = message.content
             if not isinstance(content, str):
                 continue
-            if not content.startswith(debug_prefix):
+            matched_prefix = next(
+                (p for p in debug_prefixes if content.startswith(p)), None
+            )
+            if matched_prefix is None:
                 continue
             self._enable_debug_logging = True
-            stripped_content = content[len(debug_prefix) :].lstrip()
+            stripped_content = content[len(matched_prefix) :].lstrip()
             if isinstance(message, ResponsesApiMessageWrapper):
                 self._set_message_input_text(message=message, content=stripped_content)
             self._update_request_input(index=index, content=stripped_content)
@@ -256,11 +270,23 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         *,
         html: str,
         title: str | None = None,
+        csp: dict[str, Any] | None = None,
+        permissions: dict[str, Any] | None = None,
+        prefers_border: bool | None = None,
+        display_mode: str | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
-        payload = {"html": html}
+        payload: Dict[str, Any] = {"html": html}
         if title:
             payload["title"] = title
+        if csp:
+            payload["csp"] = csp
+        if permissions:
+            payload["permissions"] = permissions
+        if prefers_border is not None:
+            payload["prefersBorder"] = prefers_border
+        if display_mode:
+            payload["displayMode"] = display_mode
         return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override
@@ -309,6 +335,24 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "arguments": json.dumps(tool_input) if tool_input else "",
                 "status": "completed",
             },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        """Emit a structured ``task.progress`` SSE event."""
+        event: Dict[str, Any] = {
+            "type": "task.progress",
+            "task_id": task_id,
+            "status": status,
+            "message": message,
         }
         return f"data: {json.dumps(event)}\n\n"
 
@@ -402,7 +446,15 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                         )
                     )
                 elif isinstance(item, dict):
-                    output_texts.append(ResponseOutputText(**item))
+                    text = item.get("text", "")
+                    annotations = item.get("annotations", [])
+                    output_texts.append(
+                        ResponseOutputText(
+                            text=text,
+                            type="output_text",
+                            annotations=annotations,
+                        )
+                    )
             return output_texts
         else:
             return []
@@ -415,9 +467,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         json_output_requested: Optional[bool],
         responses: List[AnyMessage],
     ) -> dict[str, Any]:
-        # Build a non-streaming response dict
+        # Build a non-streaming response dict (only AI and Tool messages)
+        ai_messages = [m for m in responses if isinstance(m, (AIMessage, ToolMessage))]
         output: list[ResponseOutputItem] = []
-        for idx, msg in enumerate(responses):
+        for idx, msg in enumerate(ai_messages):
             content: str | list[str | dict[str, Any]] = msg.content
             output.append(
                 ResponseOutputMessage(
@@ -516,9 +569,12 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 source="stream_response",
             )
 
-            # Collect usage from all messages for the final event
+            # Only stream AI and Tool messages (skip System/Human input messages)
+            ai_tool_messages = [
+                m for m in response_messages1 if isinstance(m, (AIMessage, ToolMessage))
+            ]
             accumulated_usage: UsageMetadata | None = None
-            for response_message in response_messages1:
+            for response_message in ai_tool_messages:
                 message_content: str = convert_message_content_to_string(
                     response_message.content
                 )

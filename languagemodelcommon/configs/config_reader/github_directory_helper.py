@@ -116,7 +116,7 @@ class GitHubDirectoryHelper:
         raise ValueError(f"Not a GitHub path: {path}")
 
     @staticmethod
-    def join_github_uri_path(base_uri: str, suffix: str) -> str:
+    def join_github_uri_path(*, base_uri: str, suffix: str) -> str:
         """Join a path suffix onto a ``github://`` URI, preserving query params."""
         parts = urlsplit(base_uri)
         new_path = parts.path.rstrip("/") + "/" + suffix.strip("/")

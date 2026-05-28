@@ -43,9 +43,9 @@ class GithubConfigRepoManager:
     def __init__(
         self,
         *,
-        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
     ) -> None:
-        _env = environment_variables or LanguageModelCommonEnvironmentVariables()
+        _env = environment_variables
         self._repo_url: str | None = _env.github_config_repo_url
         cache_folder = _env.github_cache_folder
         self._cache_dir = Path(
@@ -136,7 +136,7 @@ class GithubConfigRepoManager:
         if extract_dir.exists():
             shutil.rmtree(extract_dir, ignore_errors=True)
         extract_dir.mkdir(parents=True, exist_ok=True)
-        repo_root = self._extract_zip(zip_bytes, extract_dir)
+        repo_root = self._extract_zip(zip_bytes=zip_bytes, target_dir=extract_dir)
 
         # Flatten: move the single top-level {owner-repo-sha}/ directory
         # up so that paths are stable across refreshes
@@ -196,7 +196,7 @@ class GithubConfigRepoManager:
         return response.content
 
     @staticmethod
-    def _extract_zip(zip_bytes: bytes, target_dir: Path) -> Path:
+    def _extract_zip(*, zip_bytes: bytes, target_dir: Path) -> Path:
         """Extract a zipball and return the path to the repo root inside.
 
         GitHub zipballs contain a single top-level directory named

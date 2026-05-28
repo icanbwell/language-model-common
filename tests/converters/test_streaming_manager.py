@@ -1,20 +1,18 @@
 from collections.abc import Callable
-from typing import Generator, Any, Optional, cast
+from typing import Any, Optional, cast
+from unittest.mock import AsyncMock
 
-import boto3
 import pytest
-from boto3 import Session
-from botocore.client import BaseClient
 from langchain_core.messages import AIMessageChunk
 from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
-from moto import mock_aws
-from types_boto3_s3.client import S3Client
 
-from languagemodelcommon.aws.aws_client_factory import AwsClientFactory
-from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
-from languagemodelcommon.file_managers.aws_s3_file_manager import AwsS3FileManager
-from languagemodelcommon.file_managers.file_manager_factory import FileManagerFactory
+from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
+from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
@@ -23,10 +21,7 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.request_information import RequestInformation
-from languagemodelcommon.mocks.mock_aws_client_factory import MockAwsClientFactory
-from languagemodelcommon.utilities.tool_display_name_mapper import (
-    ToolDisplayNameMapper,
-)
+from languagemodelcommon.utilities.tool_display_name_mapper import ToolDisplayNameMapper
 
 
 class _FakeChatRequestWrapper:
@@ -63,144 +58,45 @@ class _FakeChatRequestWrapper:
         return "final"
 
 
-class _FakeClock:
-    def __init__(self) -> None:
-        self._current = 0.0
-
-    def advance(self, delta: float) -> None:
-        self._current += delta
-
-    def monotonic(self) -> float:
-        return self._current
-
-
-@pytest.fixture
-def mock_s3() -> Generator[S3Client, Any, None]:
-    """Create a mock S3 client using moto."""
-    with mock_aws():
-        session: Session = boto3.Session()
-        s3_client: S3Client = session.client(
-            service_name="s3",
-            region_name="us-east-1",
-        )
-        yield s3_client
-
-
-@pytest.fixture
-def aws_client_factory(mock_s3: BaseClient) -> AwsClientFactory:
-    """Create a mock AWS client factory."""
-    return MockAwsClientFactory(aws_client=mock_s3)
-
-
-@pytest.fixture
-def aws_s3_file_manager(aws_client_factory: AwsClientFactory) -> AwsS3FileManager:
-    """Create an instance of AwsS3FileManager for testing."""
-    return AwsS3FileManager(aws_client_factory=aws_client_factory)
-
-
 @pytest.fixture()
 def streaming_manager_factory(
     monkeypatch: pytest.MonkeyPatch,
-    aws_client_factory: AwsClientFactory,
-) -> Callable[[float], LangGraphStreamingManager]:
-    def _factory(interval_seconds: float) -> LangGraphStreamingManager:
-        monkeypatch.setenv("BUFFER_FLUSH_INTERVAL_SECONDS", str(interval_seconds))
+) -> Callable[[], LangGraphStreamingManager]:
+    def _factory() -> LangGraphStreamingManager:
+        monkeypatch.setenv("BUFFER_FLUSH_INTERVAL_SECONDS", "10.0")
+        monkeypatch.setenv("WRITE_TOOL_OUTPUT_TO_FILE", "false")
         environment_variables = LanguageModelCommonEnvironmentVariables()
-        file_manager_factory = FileManagerFactory(
-            aws_client_factory=aws_client_factory,
+        mock_file_writer = AsyncMock(spec=FileWriter)
+        mock_file_writer.write_to_file_async = AsyncMock(return_value=None)
+        stream_buffer_manager = StreamBufferManager(
+            flush_interval_seconds=10.0,
+            enabled=True,
+        )
+        stream_debug_output_manager = StreamDebugOutputManager()
+        tool_event_handler = ToolEventHandler(
+            debug_file_writer=mock_file_writer,
+            environment_variables=environment_variables,
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+            stream_buffer_manager=stream_buffer_manager,
+            stream_debug_output_manager=stream_debug_output_manager,
         )
         return LangGraphStreamingManager(
             token_reducer=TokenReducer(),
             environment_variables=environment_variables,
-            debug_file_writer=FileWriter(
-                file_manager_factory=file_manager_factory,
-            ),
-            tool_display_name_mapper=ToolDisplayNameMapper(),
+            debug_file_writer=mock_file_writer,
+            tool_event_handler=tool_event_handler,
+            stream_buffer_manager=stream_buffer_manager,
+            stream_debug_output_manager=stream_debug_output_manager,
         )
 
     return _factory
 
 
 @pytest.mark.asyncio
-async def test_buffer_flushes_on_newline(
-    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
-) -> None:
-    manager = streaming_manager_factory(10.0)
-
-    assert (
-        await manager._buffer_stream_content(
-            request_id="req",
-            content_text="Hello",
-        )
-        is None
-    )
-
-    flushed = await manager._buffer_stream_content(
-        request_id="req",
-        content_text=" world\n",
-    )
-
-    assert flushed == "Hello world\n"
-
-
-@pytest.mark.asyncio
-async def test_buffer_flushes_after_interval(
-    monkeypatch: pytest.MonkeyPatch,
-    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
-) -> None:
-    fake_clock = _FakeClock()
-    monkeypatch.setattr(
-        "languagemodelcommon.converters.streaming_manager.time.monotonic",
-        fake_clock.monotonic,
-    )
-
-    manager = streaming_manager_factory(0.05)
-
-    assert (
-        await manager._buffer_stream_content(
-            request_id="req",
-            content_text="a",
-        )
-        is None
-    )
-
-    fake_clock.advance(0.051)
-
-    flushed = await manager._buffer_stream_content(
-        request_id="req",
-        content_text="b",
-    )
-
-    assert flushed == "ab"
-
-
-@pytest.mark.asyncio
-async def test_buffer_is_disabled_when_buffering_env_flag_is_false(
-    monkeypatch: pytest.MonkeyPatch,
-    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
-) -> None:
-    monkeypatch.setenv("ENABLE_STREAMING_BUFFERING", "false")
-    manager = streaming_manager_factory(10.0)
-
-    first_chunk = await manager._buffer_stream_content(
-        request_id="req",
-        content_text="Hello",
-    )
-    second_chunk = await manager._buffer_stream_content(
-        request_id="req",
-        content_text=" world",
-    )
-
-    assert first_chunk == "Hello"
-    assert second_chunk == " world"
-    assert "req" not in manager._stream_buffers
-
-
-@pytest.mark.asyncio
 async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
-    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
 ) -> None:
-    manager = streaming_manager_factory(10.0)
+    manager = streaming_manager_factory()
     request_information = RequestInformation(request_id="req-1")
     chat_request_wrapper = cast(
         ChatRequestWrapper,
@@ -244,14 +140,13 @@ async def test_chat_model_end_includes_streamed_text_when_debug_enabled(
     assert len(debug_chunks) == 1
     assert "Streamed assistant output" in debug_chunks[0]
     assert "Hello world" in debug_chunks[0]
-    assert "req-1" not in manager._streamed_text_fragments
 
 
 @pytest.mark.asyncio
 async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
-    streaming_manager_factory: Callable[[float], LangGraphStreamingManager],
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
 ) -> None:
-    manager = streaming_manager_factory(10.0)
+    manager = streaming_manager_factory()
     request_information = RequestInformation(request_id="req-2")
     chat_request_wrapper = cast(
         ChatRequestWrapper,
@@ -273,7 +168,6 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
             request_information=request_information,
         )
     ]
-    assert "req-2" in manager._streamed_text_fragments
 
     chain_end_event: StandardStreamEvent | CustomStreamEvent = cast(
         StandardStreamEvent,
@@ -291,4 +185,5 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
         )
     ]
 
-    assert "req-2" not in manager._streamed_text_fragments
+    # Verify debug output was cleared
+    assert manager._stream_debug_output_manager.pop_text() is None

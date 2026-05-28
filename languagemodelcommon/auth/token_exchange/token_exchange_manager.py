@@ -88,6 +88,9 @@ class TokenExchangeManager:
             raise ValueError(
                 "MONGO_DB_TOKEN_COLLECTION_NAME environment variable must be set."
             )
+        self.token_cache_schema_version: str = (
+            environment_variables.token_cache_schema_version
+        )
 
         self.token_reader: TokenReader = token_reader
         if self.token_reader is None:
@@ -126,6 +129,7 @@ class TokenExchangeManager:
             filter_dict={
                 "referring_subject": referring_subject,
                 "auth_provider": auth_provider.lower(),
+                "schema_version": self.token_cache_schema_version,
             },
         )
         if len(tokens) > 1:
@@ -433,6 +437,7 @@ class TokenExchangeManager:
             )
 
         now = datetime.now(UTC)
+        token_cache_item.schema_version = self.token_cache_schema_version
 
         def on_insert(item: TokenCacheItem) -> TokenCacheItem:
             item.created = now
@@ -451,6 +456,7 @@ class TokenExchangeManager:
             keys={
                 "referring_subject": token_cache_item.referring_subject,
                 "auth_provider": token_cache_item.auth_provider,
+                "schema_version": self.token_cache_schema_version,
             },
             model_class=TokenCacheItem,
             on_insert=on_insert,
@@ -512,12 +518,14 @@ class TokenExchangeManager:
             raise TypeError(f"TokenCacheItem must be of type {TokenCacheItem.__name__}")
 
         token_cache_item.access_token = self._try_parse_token(
-            access_token, "access_token"
+            raw=access_token, label="access_token"
         )
         token_cache_item.access_token_raw = access_token
-        token_cache_item.id_token = self._try_parse_token(id_token, "id_token")
+        token_cache_item.id_token = self._try_parse_token(
+            raw=id_token, label="id_token"
+        )
         token_cache_item.refresh_token = self._try_parse_token(
-            refresh_token, "refresh_token"
+            raw=refresh_token, label="refresh_token"
         )
         token_cache_item.refresh_token_raw = refresh_token
         token_cache_item.refreshed = datetime.now(tz=UTC)
@@ -543,11 +551,15 @@ class TokenExchangeManager:
 
         # Tokens may be opaque (non-JWT) for OAuth 2.0 providers (e.g., Atlassian).
         # Parse each token tolerantly — store the raw string regardless.
-        access_token_item = self._try_parse_token(access_token, "access_token")
+        access_token_item = self._try_parse_token(
+            raw=access_token, label="access_token"
+        )
         id_token_raw: str | None = token.get("id_token")
-        id_token_item = self._try_parse_token(id_token_raw, "id_token")
+        id_token_item = self._try_parse_token(raw=id_token_raw, label="id_token")
         refresh_token: str | None = token.get("refresh_token")
-        refresh_token_item = self._try_parse_token(refresh_token, "refresh_token")
+        refresh_token_item = self._try_parse_token(
+            raw=refresh_token, label="refresh_token"
+        )
 
         referring_email = state_decoded.get("referring_email")
         referring_subject = state_decoded.get("referring_subject")
@@ -592,7 +604,7 @@ class TokenExchangeManager:
         return token_cache_item
 
     @staticmethod
-    def _try_parse_token(raw: str | None, label: str) -> Token | None:
+    def _try_parse_token(*, raw: str | None, label: str) -> Token | None:
         if not raw:
             return None
         try:
@@ -602,7 +614,7 @@ class TokenExchangeManager:
             return None
 
     async def delete_token_async(
-        self, referring_subject: str, auth_provider: str
+        self, *, referring_subject: str, auth_provider: str
     ) -> None:
         # delete any matching tokens
         results: list[TokenCacheItem] = await self.token_repository.find_many(
@@ -611,6 +623,7 @@ class TokenExchangeManager:
             filter_dict={
                 "referring_subject": referring_subject,
                 "auth_provider": auth_provider.lower(),
+                "schema_version": self.token_cache_schema_version,
             },
         )
         for item in results:
@@ -626,6 +639,7 @@ class TokenExchangeManager:
             model_class=TokenCacheItem,
             filter_dict={
                 "referring_subject": referring_subject,
+                "schema_version": self.token_cache_schema_version,
             },
         )
         for item in results:

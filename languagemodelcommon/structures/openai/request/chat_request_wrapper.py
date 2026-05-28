@@ -231,11 +231,30 @@ class ChatRequestWrapper(abc.ABC):
         *,
         html: str,
         title: str | None = None,
+        csp: dict[str, Any] | None = None,
+        permissions: dict[str, Any] | None = None,
+        prefers_border: bool | None = None,
+        display_mode: str | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame carrying an MCP app HTML embed.
 
         The default implementation returns None (no-op).  Subclasses override
         to emit the event so the downstream pipe can render it in an iframe.
+        """
+        return None
+
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        """Emit an SSE event for MCP task progress updates.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event in their respective SSE formats.
         """
         return None
 

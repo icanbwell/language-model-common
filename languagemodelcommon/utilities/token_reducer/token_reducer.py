@@ -12,6 +12,7 @@ class TokenReducer:
 
     def __init__(
         self,
+        *,
         model: str = "cl100k_base",
         truncation_strategy: TOKEN_REDUCER_STRATEGY = "end",
     ):
@@ -32,7 +33,7 @@ class TokenReducer:
         self.truncation_strategy = truncation_strategy
 
     def reduce_tokens(
-        self, text: str, max_tokens: int, preserve_start: Optional[int] = None
+        self, *, text: str, max_tokens: int, preserve_start: Optional[int] = None
     ) -> str:
         """
         Reduce text to the specified maximum number of tokens.

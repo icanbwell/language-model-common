@@ -9,6 +9,15 @@ import pytest
 from languagemodelcommon.configs.config_reader.github_config_repo_manager import (
     GithubConfigRepoManager,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
+
+
+def _make_manager() -> GithubConfigRepoManager:
+    return GithubConfigRepoManager(
+        environment_variables=LanguageModelCommonEnvironmentVariables()
+    )
 
 
 def _make_zipball(files: dict[str, str], prefix: str = "owner-repo-abc123") -> bytes:
@@ -36,15 +45,15 @@ def manager_env(tmp_path: Path, monkeypatch: Any) -> Path:
 class TestIsEnabled:
     def test_enabled_when_url_set(self, monkeypatch: Any) -> None:
         monkeypatch.setenv("GITHUB_CONFIG_REPO_URL", "https://example.com/zip")
-        assert GithubConfigRepoManager().is_enabled is True
+        assert _make_manager().is_enabled is True
 
     def test_disabled_when_url_not_set(self, monkeypatch: Any) -> None:
         monkeypatch.delenv("GITHUB_CONFIG_REPO_URL", raising=False)
-        assert GithubConfigRepoManager().is_enabled is False
+        assert _make_manager().is_enabled is False
 
     def test_disabled_when_url_blank(self, monkeypatch: Any) -> None:
         monkeypatch.setenv("GITHUB_CONFIG_REPO_URL", "  ")
-        assert GithubConfigRepoManager().is_enabled is False
+        assert _make_manager().is_enabled is False
 
 
 class TestExtractZip:
@@ -53,7 +62,9 @@ class TestExtractZip:
             {"configs/model.json": '{"name": "test"}'},
             prefix="owner-repo-abc123",
         )
-        repo_root = GithubConfigRepoManager._extract_zip(zip_bytes, tmp_path)
+        repo_root = GithubConfigRepoManager._extract_zip(
+            zip_bytes=zip_bytes, target_dir=tmp_path
+        )
         assert repo_root.name == "owner-repo-abc123"
         assert (repo_root / "configs" / "model.json").exists()
 
@@ -62,7 +73,9 @@ class TestExtractZip:
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("../../etc/passwd", "malicious")
         with pytest.raises(ValueError, match="Path traversal"):
-            GithubConfigRepoManager._extract_zip(buf.getvalue(), tmp_path)
+            GithubConfigRepoManager._extract_zip(
+                zip_bytes=buf.getvalue(), target_dir=tmp_path
+            )
 
 
 class TestDownloadAndExtract:
@@ -82,7 +95,7 @@ class TestDownloadAndExtract:
             new_callable=AsyncMock,
             return_value=zip_bytes,
         ):
-            mgr = GithubConfigRepoManager()
+            mgr = _make_manager()
             await mgr._download_and_extract()
 
         # Files should be directly under cache_dir, not under owner-repo-sha/
@@ -113,7 +126,7 @@ class TestDownloadAndExtract:
             "_download_zipball",
             side_effect=mock_download,
         ):
-            mgr = GithubConfigRepoManager()
+            mgr = _make_manager()
             await mgr._download_and_extract()
             assert (
                 manager_env / "configs" / "mcp" / ".mcp.json"
@@ -133,7 +146,7 @@ class TestStartStop:
     @pytest.mark.asyncio
     async def test_start_skips_when_disabled(self, monkeypatch: Any) -> None:
         monkeypatch.delenv("GITHUB_CONFIG_REPO_URL", raising=False)
-        mgr = GithubConfigRepoManager()
+        mgr = _make_manager()
         await mgr.start()
         assert mgr._background_task is None
 
@@ -147,7 +160,7 @@ class TestStartStop:
             new_callable=AsyncMock,
             return_value=zip_bytes,
         ):
-            mgr = GithubConfigRepoManager()
+            mgr = _make_manager()
             await mgr.start()
             assert mgr._background_task is not None
             assert not mgr._background_task.done()

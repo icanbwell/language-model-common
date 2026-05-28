@@ -14,6 +14,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AnyMessage,
+    SystemMessage,
     UsageMetadata,
 )
 from langchain_core.runnables import RunnableConfig
@@ -41,6 +42,10 @@ from typing import (
     cast,
 )
 
+from languagemodelcommon.configs.schemas.config_schema import PromptConfig
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
@@ -81,6 +86,31 @@ class LangGraphToOpenAIConverter:
             or "Timeout" in cause_class_name
         )
 
+    _CREDENTIAL_ERROR_PATTERNS: tuple[str, ...] = (
+        "could not resolve credentials",
+        "unable to locate credentials",
+        "expired credentials",
+        "invalid identity token",
+    )
+
+    @staticmethod
+    def _is_credential_resolution_error(exception: BaseException) -> bool:
+        """Check if any exception in the cause chain is a credential resolution failure.
+
+        The Anthropic Bedrock SDK raises RuntimeError instead of
+        botocore.exceptions.TokenRetrievalError when AWS credentials
+        cannot be resolved from the session.
+        """
+        current: BaseException | None = exception
+        while current is not None:
+            msg = str(current).lower()
+            if any(
+                p in msg for p in LangGraphToOpenAIConverter._CREDENTIAL_ERROR_PATTERNS
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
     @staticmethod
     def _find_cause(
         exception: BaseException, target_type: type[BaseException]
@@ -99,6 +129,7 @@ class LangGraphToOpenAIConverter:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         token_reducer: TokenReducer,
         streaming_manager: LangGraphStreamingManager,
+        stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
         if environment_variables is None:
             raise ValueError("environment_variables must not be None")
@@ -127,6 +158,18 @@ class LangGraphToOpenAIConverter:
             raise TypeError(
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
             )
+
+        self._static_stream_debug_output_manager = stream_debug_output_manager
+
+    @property
+    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
+        if self._static_stream_debug_output_manager is not None:
+            return self._static_stream_debug_output_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_debug_output_manager,
+        )
+
+        return get_stream_debug_output_manager()
 
     async def _stream_resp_async_generator(
         self,
@@ -204,9 +247,7 @@ class LangGraphToOpenAIConverter:
             # terminates the event stream early.  Write the messages log here
             # so that the debug download link is still available.
             if chat_request_wrapper.enable_debug_logging:
-                streamed_output = self.streaming_manager._pop_streamed_text(
-                    request_id=str(request_id),
-                )
+                streamed_output = self._stream_debug_output_manager.pop_text()
                 content_text = ""
                 if streamed_output:
                     content_text += "--- Streamed assistant output ---\n"
@@ -246,7 +287,9 @@ class LangGraphToOpenAIConverter:
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
 
             # Check if a TokenRetrievalError is wrapped inside another exception
-            token_retrieval_error = self._find_cause(e, TokenRetrievalError)
+            token_retrieval_error = self._find_cause(
+                exception=e, target_type=TokenRetrievalError
+            )
             if token_retrieval_error is not None:
                 message = (
                     f"Token retrieval error: {token_retrieval_error}."
@@ -644,6 +687,11 @@ class LangGraphToOpenAIConverter:
         except TokenRetrievalError:
             raise
         except Exception as e:
+            if self._is_credential_resolution_error(e):
+                raise TokenRetrievalError(
+                    provider="bedrock",
+                    error_msg=str(e),
+                ) from e
             if e.__class__.__name__ == "GraphRecursionError":
                 logger.warning(
                     "Graph recursion limit reached while streaming. request_id=%s message_count=%d recursion_limit=%s error=%s",
@@ -869,7 +917,7 @@ class LangGraphToOpenAIConverter:
         tools: Sequence[BaseTool],
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
-        system_prompts: List[str] | None = None,
+        system_prompts: List[PromptConfig] | None = None,
         tool_catalog: ToolCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
@@ -883,30 +931,42 @@ class LangGraphToOpenAIConverter:
             tools: List of tools available to the agent
             store: Optional store for persistence
             checkpointer: Optional checkpointer for state management
-            system_prompts: Optional list of system prompts to prepend to the agent
+            system_prompts: Optional list of PromptConfig objects. Each becomes a
+                separate content block in the system message. Blocks with cache=True
+                are marked for prompt caching (cache_control: ephemeral).
             tool_catalog: Optional tool catalog for tool discovery middleware
         """
-        # Build system prompt from config if provided
-        system_prompt: str | None = None
+        prompt: SystemMessage | None = None
         if system_prompts:
-            # Strip and filter empty prompts to avoid accidental separators
-            cleaned_prompts = [p.strip() for p in system_prompts if p and p.strip()]
-            if cleaned_prompts:
-                system_prompt = "\n\n".join(cleaned_prompts)
+            content_blocks: list[dict[str, Any]] = []
+            for p in system_prompts:
+                text = (p.content or "").strip()
+                if not text:
+                    continue
+                block: dict[str, Any] = {"type": "text", "text": text}
+                if p.cache is True:
+                    block["cache_control"] = {"type": "ephemeral"}
+                content_blocks.append(block)
+
+            if content_blocks:
+                prompt = SystemMessage(content=content_blocks)  # type: ignore[arg-type]
+                total_chars = sum(len(b["text"]) for b in content_blocks)
+                cached_count = sum(1 for b in content_blocks if "cache_control" in b)
                 logger.debug(
-                    "[GRAPH] %s Using system prompt from config (%s chars): %s )",
+                    "[GRAPH] %s Using %d system prompt blocks (%d chars, %d cached)",
                     uuid.uuid4(),
-                    len(system_prompt),
-                    system_prompt,
+                    len(content_blocks),
+                    total_chars,
+                    cached_count,
                 )
 
         logger.debug(
             "Creating LLM graph with tools: tools=%s, store=%s, checkpointer=%s, "
-            "system_prompt=%s",
+            "prompt=%s",
             tools,
             "provided" if store else "none",
             "provided" if checkpointer else "none",
-            "provided" if system_prompt else "none",
+            "provided" if prompt else "none",
         )
         # Create the react agent with optional system prompt
         middleware: list[AgentMiddleware] = []
@@ -920,7 +980,7 @@ class LangGraphToOpenAIConverter:
             context_schema=dict,  # type: ignore[misc]
             store=store,
             checkpointer=checkpointer,
-            system_prompt=system_prompt,
+            system_prompt=prompt,
             middleware=middleware,
         )
 

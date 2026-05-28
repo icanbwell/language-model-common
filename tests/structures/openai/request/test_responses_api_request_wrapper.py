@@ -2,14 +2,21 @@
 
 import json
 from typing import Any, List, cast
+from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
 from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
     ResponsesApiRequestWrapper,
 )
+
+
+def _make_env() -> MagicMock:
+    env = MagicMock()
+    env.debug_prefixes = ("DEBUG:", "/debug ")
+    return env
 
 
 def _make_wrapper(
@@ -44,6 +51,7 @@ def _make_wrapper(
     return ResponsesApiRequestWrapper(
         chat_request=request,
         enable_debug_logging=enable_debug_logging,
+        environment_variables=_make_env(),
     )
 
 
@@ -91,6 +99,26 @@ class TestDebugPrefixToggle:
                 {
                     "role": "user",
                     "content": "DEBUG: Tell me something",
+                    "type": "message",
+                },
+            ],
+            enable_debug_logging=False,
+        )
+        assert wrapper.enable_debug_logging is True
+        assert wrapper.messages[0].content == "Tell me something"
+
+    def test_slash_debug_prefix_enables_logging_and_strips_content(self) -> None:
+        wrapper = _make_wrapper(input_="/debug What is AI?", enable_debug_logging=False)
+        assert wrapper.enable_debug_logging is True
+        assert wrapper.messages[0].content == "What is AI?"
+        assert wrapper.request.input == "What is AI?"
+
+    def test_slash_debug_prefix_with_list_input(self) -> None:
+        wrapper = _make_wrapper(
+            input_=[
+                {
+                    "role": "user",
+                    "content": "/debug Tell me something",
                     "type": "message",
                 },
             ],
@@ -198,6 +226,23 @@ class TestNonStreamingResponse:
         assert output_msg["status"] == "completed"
         assert output_msg["content"][0]["text"] == "Hello world"
 
+    def test_filters_out_system_and_human_messages(self) -> None:
+        wrapper = _make_wrapper()
+        response = wrapper.create_non_streaming_response(
+            request_id="req-2",
+            json_output_requested=False,
+            responses=[
+                SystemMessage(content="Current date and time: Thursday, May 28, 2026"),
+                HumanMessage(content="Write a story"),
+                AIMessage(content="I can only help with healthcare topics."),
+            ],
+        )
+        assert len(response["output"]) == 1
+        assert (
+            response["output"][0]["content"][0]["text"]
+            == "I can only help with healthcare topics."
+        )
+
     def test_empty_responses(self) -> None:
         wrapper = _make_wrapper()
         response = wrapper.create_non_streaming_response(
@@ -226,6 +271,25 @@ class TestConvertMessageContent:
         assert len(result) == 2
         assert hasattr(result[0], "text") and result[0].text == "Hello"
         assert hasattr(result[1], "text") and result[1].text == "World"
+
+    def test_list_of_dicts_with_text_type(self) -> None:
+        result = ResponsesApiRequestWrapper.convert_message_content(
+            input_content=[{"text": "Hello from LLM", "type": "text"}]
+        )
+        assert len(result) == 1
+        assert result[0].type == "output_text"
+        assert result[0].text == "Hello from LLM"
+        assert result[0].annotations == []
+
+    def test_list_of_dicts_with_output_text_type(self) -> None:
+        result = ResponsesApiRequestWrapper.convert_message_content(
+            input_content=[
+                {"text": "Already correct", "type": "output_text", "annotations": []}
+            ]
+        )
+        assert len(result) == 1
+        assert result[0].type == "output_text"
+        assert result[0].text == "Already correct"
 
     def test_unsupported_type_returns_empty(self) -> None:
         result = ResponsesApiRequestWrapper.convert_message_content(

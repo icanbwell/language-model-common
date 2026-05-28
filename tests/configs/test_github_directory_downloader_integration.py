@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 from languagemodelcommon.configs.schemas.mcp_json_schema import (
     McpJsonConfig,
     McpServerEntry,
@@ -169,11 +172,12 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 
     models = await reader.read_models_from_path_async(
-        "github://org/repo/configs?ref=main"
+        config_path="github://org/repo/configs?ref=main"
     )
 
     assert len(models) == 1
@@ -203,11 +207,12 @@ async def test_read_models_from_https_github_url(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 
     models = await reader.read_models_from_path_async(
-        "https://github.com/owner/repo/tree/main/configs"
+        config_path="https://github.com/owner/repo/tree/main/configs"
     )
 
     assert len(models) == 1
@@ -257,12 +262,13 @@ async def test_github_uri_resolves_mcp_via_fetcher(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
         mcp_json_fetcher=mock_fetcher,
     )
 
     models = await reader.read_models_from_path_async(
-        "github://org/repo/configs?ref=main"
+        config_path="github://org/repo/configs?ref=main"
     )
 
     assert len(models) == 1
@@ -294,6 +300,7 @@ async def test_read_model_configs_async_with_github_uri(
     reader = ConfigReader(
         cache=cache,
         prompt_library_manager=prompt_mgr,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
     )
 
@@ -321,13 +328,13 @@ def test_override_config_path_with_https_github_url() -> None:
 
 def test_join_path_preserves_github_query_params() -> None:
     result = GitHubDirectoryHelper.join_github_uri_path(
-        "github://org/repo/configs?ref=main", "clients/client-123"
+        base_uri="github://org/repo/configs?ref=main", suffix="clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123?ref=main"
 
 
 def test_join_path_works_without_query_params() -> None:
     result = GitHubDirectoryHelper.join_github_uri_path(
-        "github://org/repo/configs", "clients/client-123"
+        base_uri="github://org/repo/configs", suffix="clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123"

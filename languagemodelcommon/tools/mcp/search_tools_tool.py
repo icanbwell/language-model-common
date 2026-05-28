@@ -69,7 +69,7 @@ class SearchToolsTool(BaseTool):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @staticmethod
-    def _query_matches_server(query: str, server: ServerRegistration) -> bool:
+    def _query_matches_server(*, query: str, server: ServerRegistration) -> bool:
         """Check whether query terms overlap with the server's metadata.
 
         Used to decide whether to surface a login link for a server that
@@ -97,13 +97,15 @@ class SearchToolsTool(BaseTool):
         corpus_tokens = set(_WORD_RE.findall(" ".join(corpus_parts).lower()))
         return bool(query_tokens & corpus_tokens)
 
-    def _run(self, query: str, category: str | None = None) -> str:
+    def _run(self, *, query: str, category: str | None = None) -> str:
         raise NotImplementedError(
             "search_tools requires async execution for lazy tool resolution. "
             "Use _arun instead."
         )
 
-    async def _arun(self, query: str, category: str | None = None) -> Tuple[str, str]:
+    async def _arun(
+        self, *, query: str, category: str | None = None
+    ) -> Tuple[str, str]:
         # Lazily resolve any unresolved servers matching the category.
         # OAuth servers are only resolved when the search query matches
         # their metadata.  When the query matches and auth is needed,
@@ -123,11 +125,13 @@ class SearchToolsTool(BaseTool):
                 if (
                     category is None
                     and server.agent_config.oauth is not None
-                    and not self._query_matches_server(query, server)
+                    and not self._query_matches_server(query=query, server=server)
                 ):
                     continue
                 try:
-                    await self.catalog.resolve_server(server.server_name, self.resolver)
+                    await self.catalog.resolve_server(
+                        server_name=server.server_name, resolver=self.resolver
+                    )
                 except AuthorizationNeededException as e:
                     server_url = (
                         server.agent_config.url if server.agent_config else "unknown"

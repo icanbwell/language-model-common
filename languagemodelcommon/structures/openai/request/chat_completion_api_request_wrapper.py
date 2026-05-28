@@ -1,7 +1,22 @@
 import json
 import logging
 import time
-from typing import AsyncIterator, Literal, cast, override, Any, List, Dict, Optional
+from typing import (
+    AsyncIterator,
+    Literal,
+    cast,
+    override,
+    Any,
+    List,
+    Dict,
+    Optional,
+    TYPE_CHECKING,
+)
+
+if TYPE_CHECKING:
+    from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+        LanguageModelCommonEnvironmentVariables,
+    )
 
 from langchain_core.messages import (
     AIMessage,
@@ -46,7 +61,12 @@ logger.setLevel(SRC_LOG_LEVELS.SSE)
 
 class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
     def __init__(
-        self, *, chat_request: ChatRequest, enable_debug_logging: bool
+        self,
+        *,
+        chat_request: ChatRequest,
+        enable_debug_logging: bool,
+        environment_variables: "LanguageModelCommonEnvironmentVariables",
+        emit_task_progress: bool | None = None,
     ) -> None:
         """
         Wraps an OpenAI /chat/completions request to provide a consistent interface for different request types.
@@ -59,20 +79,29 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         )
 
         self._enable_debug_logging: bool = enable_debug_logging
+        self._emit_task_progress: bool = (
+            emit_task_progress
+            if emit_task_progress is not None
+            else environment_variables.emit_task_progress_in_chat_completions
+        )
+        self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefix = "DEBUG:"
+        debug_prefixes = self._debug_prefixes
         for message in self._messages:
             if message.role != "user":
                 continue
             content = message.content
             if not isinstance(content, str):
                 continue
-            if not content.startswith(debug_prefix):
+            matched_prefix = next(
+                (p for p in debug_prefixes if content.startswith(p)), None
+            )
+            if matched_prefix is None:
                 continue
             self._enable_debug_logging = True
-            stripped_content = content[len(debug_prefix) :].lstrip()
+            stripped_content = content[len(matched_prefix) :].lstrip()
             if isinstance(message, ChatCompletionApiMessageWrapper):
                 if isinstance(message.message, dict):
                     message.message["content"] = stripped_content
@@ -214,6 +243,25 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         )
 
     @override
+    def create_task_progress_sse_event(
+        self,
+        *,
+        request_id: str,
+        task_id: str,
+        status: str,
+        message: str | None,
+    ) -> str | None:
+        if not self._emit_task_progress:
+            return None
+        display = message or status
+        return self.create_sse_message(
+            request_id=request_id,
+            content=f"\n[Task progress: {display}]\n",
+            usage_metadata=None,
+            source="task_progress",
+        )
+
+    @override
     def create_non_streaming_response(
         self,
         *,
@@ -275,11 +323,23 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         *,
         html: str,
         title: str | None = None,
+        csp: dict[str, Any] | None = None,
+        permissions: dict[str, Any] | None = None,
+        prefers_border: bool | None = None,
+        display_mode: str | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
-        payload = {"html": html}
+        payload: dict[str, Any] = {"html": html}
         if title:
             payload["title"] = title
+        if csp:
+            payload["csp"] = csp
+        if permissions:
+            payload["permissions"] = permissions
+        if prefers_border is not None:
+            payload["prefersBorder"] = prefers_border
+        if display_mode:
+            payload["displayMode"] = display_mode
         return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override

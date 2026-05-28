@@ -1,6 +1,7 @@
 from typing import Any, AsyncGenerator
 
 import pytest
+from botocore.exceptions import TokenRetrievalError
 
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
@@ -167,3 +168,64 @@ async def test_stream_graph_maps_graph_recursion_error_to_bailey_exception(
                 state={"messages": []},  # type: ignore[arg-type]
             )
         ]
+
+
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "could not resolve credentials from session",
+        "Unable to locate credentials",
+        "Expired credentials",
+        "invalid identity token received",
+    ],
+)
+@pytest.mark.asyncio
+async def test_stream_graph_raises_token_retrieval_error_for_credential_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    error_message: str,
+) -> None:
+    converter = _build_converter(monkeypatch)
+    fake_graph = _FakeCompiledStateGraph(
+        error=RuntimeError(error_message),
+    )
+
+    with pytest.raises(TokenRetrievalError):
+        _ = [
+            event
+            async for event in converter._stream_graph_with_messages_async(
+                messages=[],
+                compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+                request_information=_request_information(),
+                config=None,
+                state={"messages": []},  # type: ignore[arg-type]
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_stream_graph_raises_token_retrieval_error_for_wrapped_credential_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converter = _build_converter(monkeypatch)
+    root_cause = RuntimeError("could not resolve credentials from session")
+    wrapper = ValueError("something went wrong")
+    wrapper.__cause__ = root_cause
+    fake_graph = _FakeCompiledStateGraph(error=wrapper)
+
+    with pytest.raises(TokenRetrievalError):
+        _ = [
+            event
+            async for event in converter._stream_graph_with_messages_async(
+                messages=[],
+                compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+                request_information=_request_information(),
+                config=None,
+                state={"messages": []},  # type: ignore[arg-type]
+            )
+        ]
+
+
+def test_is_credential_resolution_error_returns_false_for_unrelated_errors() -> None:
+    assert not LangGraphToOpenAIConverter._is_credential_resolution_error(
+        RuntimeError("something else entirely")
+    )

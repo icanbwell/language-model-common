@@ -105,6 +105,24 @@ Keep interfaces small and focused. If a consumer only needs read access, do not 
 ### Dependency Inversion
 Depend on abstractions at module and service boundaries. Inject dependencies through constructors. Never instantiate infrastructure inside business logic. Never use service locators when constructor injection is available.
 
+### IoC Container (`simple_container`)
+
+This project uses the `simple_container` library for inversion of control. All service registrations live in `languagemodelcommon/container/container_factory.py`.
+
+**Rules:**
+- Register new services as singletons in `LanguageModelCommonContainerFactory.register_services_in_container()` — do not instantiate services directly in calling code.
+- When creating a new service class, add its registration to `container_factory.py` and inject its dependencies from the container (not by constructing them inline).
+- Tests can override registrations by constructing a test container with mock implementations.
+
+### Environment Variables (`LanguageModelCommonEnvironmentVariables`)
+
+Access environment variables through the `LanguageModelCommonEnvironmentVariables` class (`languagemodelcommon/utilities/environment/language_model_common_environment_variables.py`), not via `os.environ` directly. This class is registered in the IoC container.
+
+**Rules:**
+- Add new environment variable access as `@property` methods on `LanguageModelCommonEnvironmentVariables`.
+- Inject the environment variables class via the container — do not instantiate it inline or call `os.environ.get()` in business logic.
+- Provide sensible defaults in the property when the variable is optional.
+
 ---
 
 ## Architectural Boundaries
@@ -151,6 +169,25 @@ Use current language idioms for the repo's language version. Do not write legacy
 **Java:** Use records for data carriers, not POJOs with boilerplate getters/setters. Use sealed interfaces for closed type hierarchies. Use pattern matching where available. Use `var` for local variables when the type is obvious from the right side. Use streams and Optional appropriately, not for every operation.
 
 **Python:** Use dataclasses or Pydantic models, not manual dict manipulation. Use type hints everywhere. Use structural pattern matching (3.10+) where it improves clarity. Use `Protocol` for structural typing. Use `async`/`await` for IO-bound operations in async services.
+
+**Keyword arguments are mandatory in Python code.** This applies to both definitions and call sites:
+- **Definitions:** All public functions, methods, and constructors must use the `*` separator to enforce keyword-only arguments (after `self`/`cls` if present). The only exception is callback signatures required by frameworks (e.g., LangGraph `RunnableLambda` expects `func(state, config)` positionally).
+- **Call sites:** Always pass parameters by keyword, not by position — this applies to function calls, constructor invocations, and method calls. Positional arguments are fragile and break when signatures change.
+- **Tests:** Test code must also use keyword arguments when calling production code. No exceptions.
+
+```python
+# Good — definition enforces keyword-only
+def resolve_mcp_servers(*, configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
+
+# Good — call site uses keywords
+resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+# Bad — positional args at call site
+resolve_mcp_servers([config], mcp)
+
+# Bad — definition allows positional
+def resolve_mcp_servers(configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
+```
 
 **TypeScript:** Use discriminated unions for variant types, not type casting chains. Use strict mode. Use `readonly` and `as const` where appropriate. Use modern `satisfies` operator for type-safe object literals. Use optional chaining and nullish coalescing instead of manual null checks.
 
@@ -268,7 +305,7 @@ Understand the constraints of the system you are working in. If branch protectio
 When a user tells you an action is blocked or explains a constraint, internalize it. Do not re-propose the same blocked action with different wording. If you are unsure whether a constraint applies, ask once. If the answer is "no, that won't work", do not ask again or try to find a loophole.
 
 ### Don't Guess Commands
-Find and use the repo's canonical build, test, and lint commands. Check the Makefile, package.json scripts, build.gradle, or Pipfile. If the commands are unclear, say so and point to where you looked. Do not invent commands.
+Find and use the repo's canonical build, test, and lint commands. Check the Makefile, package.json scripts, build.gradle, pyproject.toml, or uv.lock. This repo uses `uv` for Python dependency management (not pip/pipenv). If the commands are unclear, say so and point to where you looked. Do not invent commands.
 
 ### Don't Introduce Dependencies Casually
 Check `approved-tech.yaml` before adding any new dependency. If the dependency is not listed, flag it for review. Do not assume a library is approved because it is popular.

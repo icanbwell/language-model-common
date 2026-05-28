@@ -42,7 +42,9 @@ class TestAuthProviderNormalization:
         )
         agent_a = AgentConfig(name="tool-a", mcp_server="server-a")
         agent_b = AgentConfig(name="tool-b", mcp_server="server-b")
-        resolve_mcp_servers([_make_model([agent_a, agent_b])], mcp_config)
+        resolve_mcp_servers(
+            configs=[_make_model([agent_a, agent_b])], mcp_config=mcp_config
+        )
 
         assert agent_a.auth_providers == agent_b.auth_providers
         assert agent_a.auth_providers is not None
@@ -73,7 +75,9 @@ class TestAuthProviderNormalization:
         )
         agent_a = AgentConfig(name="tool-a", mcp_server="server-a")
         agent_b = AgentConfig(name="tool-b", mcp_server="server-b")
-        resolve_mcp_servers([_make_model([agent_a, agent_b])], mcp_config)
+        resolve_mcp_servers(
+            configs=[_make_model([agent_a, agent_b])], mcp_config=mcp_config
+        )
 
         assert agent_a.oauth is not None
         assert agent_a.oauth.scopes is not None
@@ -100,7 +104,9 @@ class TestAuthProviderNormalization:
         )
         agent_a = AgentConfig(name="tool-a", mcp_server="server-a")
         agent_b = AgentConfig(name="tool-b", mcp_server="server-b")
-        resolve_mcp_servers([_make_model([agent_a, agent_b])], mcp_config)
+        resolve_mcp_servers(
+            configs=[_make_model([agent_a, agent_b])], mcp_config=mcp_config
+        )
 
         assert agent_a.auth_providers != agent_b.auth_providers
 
@@ -119,7 +125,7 @@ class TestAuthProviderNormalization:
             }
         )
         agent = AgentConfig(name="tool-dcr", mcp_server="dcr-server")
-        resolve_mcp_servers([_make_model([agent])], mcp_config)
+        resolve_mcp_servers(configs=[_make_model([agent])], mcp_config=mcp_config)
 
         assert agent.auth_providers == ["dcr-server"]
         assert agent.auth == "jwt_token"

@@ -28,17 +28,21 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 
 class AuthMcpCallInterceptor:
-    """Resolves authentication tokens at MCP tool invocation time rather than
-    at tool registration time.  Created per-request with the request's auth
-    context so there is no shared mutable state between concurrent requests."""
+    """Resolves authentication tokens at MCP tool invocation time.
+
+    Can be constructed with explicit headers/auth_information (backward-compatible)
+    or without them, in which case the interceptor reads from the request-scoped
+    contextvar at access time. The contextvar approach allows this interceptor to
+    be a singleton shared across requests.
+    """
 
     def __init__(
         self,
         *,
         pass_through_token_manager: PassThroughTokenManager,
         tool_configs: list[AgentConfig],
-        auth_information: AuthInformation,
-        headers: Dict[str, str],
+        auth_information: AuthInformation | None = None,
+        headers: Dict[str, str] | None = None,
     ) -> None:
         self.pass_through_token_manager = pass_through_token_manager
         if self.pass_through_token_manager is None:
@@ -50,8 +54,24 @@ class AuthMcpCallInterceptor:
         self._tool_configs_by_server_name: Dict[str, AgentConfig] = {
             tc.name: tc for tc in tool_configs
         }
-        self._auth_information = auth_information
-        self._headers = headers
+        self._static_auth_information = auth_information
+        self._static_headers = headers
+
+    @property
+    def _headers(self) -> Dict[str, str]:
+        if self._static_headers is not None:
+            return self._static_headers
+        from languagemodelcommon.context.request_context import get_request_context
+
+        return get_request_context().headers
+
+    @property
+    def _auth_information(self) -> AuthInformation:
+        if self._static_auth_information is not None:
+            return self._static_auth_information
+        from languagemodelcommon.context.request_context import get_request_context
+
+        return get_request_context().auth_information
 
     async def resolve_auth_header_for_discovery(
         self, tool_config: AgentConfig

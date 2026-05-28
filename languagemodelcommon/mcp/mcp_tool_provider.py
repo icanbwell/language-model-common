@@ -53,7 +53,7 @@ from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_invocation import call_mcp_tool_raw
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
-    list_all_tools,
+    ToolListStoreProtocol,
     list_all_tools_cached,
 )
 from languagemodelcommon.mcp.mcp_client.ui_resource import (
@@ -61,6 +61,7 @@ from languagemodelcommon.mcp.mcp_client.ui_resource import (
     extract_ui_resource_uri,
     fetch_ui_resource,
     inject_tool_data_into_html,
+    is_tool_visible_to_model,
 )
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
@@ -94,6 +95,7 @@ class MCPToolProvider:
         tracing_interceptor: TracingMcpCallInterceptor,
         pass_through_token_manager: PassThroughTokenManager,
         auth_server_metadata_discovery: McpAuthServerDiscoveryProtocol,
+        tool_list_cache_store: "ToolListStoreProtocol | None" = None,
     ) -> None:
         """
         Initialize the MCPToolProvider with authentication and token management.
@@ -153,10 +155,12 @@ class MCPToolProvider:
             ttl_seconds=float(
                 environment_variables.mcp_tools_metadata_cache_ttl_seconds
             ),
+            store=tool_list_cache_store,
         )
 
     @staticmethod
     def get_httpx_async_client(
+        *,
         headers: dict[str, str] | None = None,
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
@@ -177,6 +181,7 @@ class MCPToolProvider:
 
     @staticmethod
     async def on_mcp_tool_logging(
+        *,
         params: LoggingMessageNotificationParams,
         context: CallbackContext,
     ) -> None:
@@ -187,6 +192,7 @@ class MCPToolProvider:
 
     @staticmethod
     async def on_mcp_tool_progress(
+        *,
         progress: float,
         total: float | None,
         message: str | None,
@@ -264,6 +270,7 @@ class MCPToolProvider:
                     self.truncation_interceptor.get_tool_interceptor_truncation(),
                 ],
                 server_name=tool_config.name,
+                tool_list_cache=self.tool_list_cache,
             )
             tools.append(langchain_tool)
 
@@ -277,7 +284,7 @@ class MCPToolProvider:
         self,
         *,
         tool_config: AgentConfig,
-        headers: Dict[str, str],
+        headers: Dict[str, str] | None = None,
         auth_interceptor: AuthMcpCallInterceptor,
         session_pool: McpSessionPool | None = None,
     ) -> List[BaseTool]:
@@ -287,11 +294,16 @@ class MCPToolProvider:
         Args:
             tool_config: An AgentConfig instance containing the tool's configuration.
             headers: A dictionary of headers to include in the request, such as Authorization.
+                If None, reads from request context contextvar.
             auth_interceptor: An AuthMcpCallInterceptor instance.
             session_pool: An optional session pool instance.
         Returns:
             A list of BaseTool instances retrieved from the MCP.
         """
+        if headers is None:
+            from languagemodelcommon.context.request_context import get_request_context
+
+            headers = get_request_context().headers
         if tool_config.lazy_load:
             return self.get_lazy_tools(
                 tool_config=tool_config,
@@ -384,12 +396,29 @@ class MCPToolProvider:
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ]
 
+            tool_url = tool_config.url or "unknown"
+            cache_key = ToolListCache.make_key(tool_url)
+
+            cached = await self.tool_list_cache.get_async(key=cache_key)
             try:
-                async with create_mcp_session(
-                    discovery_config, mcp_callbacks=mcp_callbacks
-                ) as session:
-                    await session.initialize()
-                    mcp_tools = await list_all_tools(session)
+                if cached is not None:
+                    mcp_tools = cached
+                    logger.info(
+                        "Tool list cache hit for '%s' (%d tools)",
+                        tool_config.name,
+                        len(mcp_tools),
+                    )
+                else:
+                    async with create_mcp_session(
+                        discovery_config, mcp_callbacks=mcp_callbacks
+                    ) as session:
+                        await session.initialize()
+                        mcp_tools = await list_all_tools_cached(
+                            session,
+                            url=tool_url,
+                            cache=self.tool_list_cache,
+                            cache_key=cache_key,
+                        )
 
                 logger.info(
                     "MCP tools discovered from '%s': %s",
@@ -415,11 +444,13 @@ class MCPToolProvider:
                         tool_interceptors=tool_interceptors,
                         server_name=tool_config.name,
                         session_pool=session_pool,
+                        tool_list_cache=self.tool_list_cache,
                     )
                     for mcp_tool in mcp_tools
                 ]
             except BaseException as e:
-                tool_url = tool_config.url or "unknown"
+                if self._contains_http_auth_error(e):
+                    await self.tool_list_cache.invalidate_async(key=cache_key)
 
                 if (
                     self._contains_http_auth_error(e)
@@ -633,11 +664,15 @@ class MCPToolProvider:
         self,
         *,
         tools: list[AgentConfig],
-        headers: Dict[str, str],
+        headers: Dict[str, str] | None = None,
         auth_interceptor: AuthMcpCallInterceptor,
         session_pool: McpSessionPool | None = None,
     ) -> list[BaseTool]:
         """Fetch tools from all configured MCP servers concurrently."""
+        if headers is None:
+            from languagemodelcommon.context.request_context import get_request_context
+
+            headers = get_request_context().headers
         url_tools = [t for t in tools if t.url is not None]
         if not url_tools:
             return []
@@ -817,15 +852,12 @@ class MCPToolProvider:
         )
 
         tool_url = tool_config.url or "unknown"
-        config_headers = config.get("headers") or {}
-        cache_key = ToolListCache.make_key(
-            tool_url, auth_header=config_headers.get("Authorization")
-        )
+        cache_key = ToolListCache.make_key(tool_url)
 
         # Check cache before opening a session — avoids the TCP+TLS+initialize
         # cost entirely on a cache hit, and returns valid cached data even if
         # the server is temporarily unreachable.
-        cached = self.tool_list_cache.get(cache_key)
+        cached = await self.tool_list_cache.get_async(key=cache_key)
         if cached is not None:
             mcp_tools = cached
         else:
@@ -842,8 +874,7 @@ class MCPToolProvider:
                     )
             except BaseException as e:
                 if self._contains_http_auth_error(e):
-                    # Invalidate cache on auth errors so retry uses a fresh fetch
-                    self.tool_list_cache.invalidate(cache_key)
+                    await self.tool_list_cache.invalidate_async(key=cache_key)
                 else:
                     raise
 
@@ -883,12 +914,15 @@ class MCPToolProvider:
             tool_names = tool_config.tools.split(",")
             mcp_tools = [t for t in mcp_tools if t.name in tool_names]
 
+        # Filter out app-only tools (visibility: ["app"]) per MCP Apps spec
+        mcp_tools = [t for t in mcp_tools if is_tool_visible_to_model(t)]
+
         return mcp_tools
 
     def create_tool_resolver(
         self,
         *,
-        headers: Dict[str, str],
+        headers: Dict[str, str] | None = None,
         auth_interceptor: AuthMcpCallInterceptor,
     ) -> ToolResolverProtocol:
         """Create a resolver that lazily fetches tools from MCP servers.
@@ -929,6 +963,7 @@ class MCPToolProvider:
                 self.truncation_interceptor.get_tool_interceptor_truncation(),
             ],
             session_pool=session_pool,
+            tool_list_cache=self.tool_list_cache,
         )
 
     async def fetch_mcp_app_embed(
@@ -940,6 +975,8 @@ class MCPToolProvider:
         tool_result_text: str,
         agent_config: AgentConfig,
         session_pool: McpSessionPool | None = None,
+        proxy_base_url: str | None = None,
+        session_token: str | None = None,
     ) -> McpAppEmbed | None:
         """Fetch an MCP app UI resource for a tool, if one is declared.
 
@@ -966,7 +1003,6 @@ class MCPToolProvider:
                     config, mcp_callbacks=mcp_callbacks
                 )
             else:
-                # One-shot session fallback — not ideal but functional
                 async with create_mcp_session(
                     config, mcp_callbacks=mcp_callbacks
                 ) as session:
@@ -977,6 +1013,8 @@ class MCPToolProvider:
                         tool_name=tool_name,
                         tool_args=tool_args,
                         tool_result_text=tool_result_text,
+                        proxy_base_url=proxy_base_url,
+                        session_token=session_token,
                     )
 
             return await self._fetch_and_build_embed(
@@ -985,6 +1023,8 @@ class MCPToolProvider:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_result_text=tool_result_text,
+                proxy_base_url=proxy_base_url,
+                session_token=session_token,
             )
         except Exception as e:
             logger.warning(
@@ -1003,19 +1043,23 @@ class MCPToolProvider:
         tool_name: str,
         tool_args: Dict[str, Any],
         tool_result_text: str,
+        proxy_base_url: str | None = None,
+        session_token: str | None = None,
     ) -> McpAppEmbed | None:
         """Fetch the UI resource and inject tool data into the HTML."""
-        html = await fetch_ui_resource(session, ui_uri)
-        if not html:
+        fetch_result = await fetch_ui_resource(session=session, uri=ui_uri)
+        if not fetch_result:
             return None
 
         html = inject_tool_data_into_html(
-            html,
+            fetch_result.html,
             tool_name=tool_name,
             tool_args=tool_args,
             tool_result_text=tool_result_text,
+            proxy_base_url=proxy_base_url,
+            session_token=session_token,
         )
-        return McpAppEmbed(html=html, tool_name=tool_name)
+        return McpAppEmbed(html=html, tool_name=tool_name, ui_meta=fetch_result.ui_meta)
 
 
 class _BoundToolResolver:
@@ -1025,12 +1069,20 @@ class _BoundToolResolver:
         self,
         *,
         provider: MCPToolProvider,
-        headers: Dict[str, str],
+        headers: Dict[str, str] | None = None,
         auth_interceptor: AuthMcpCallInterceptor,
     ) -> None:
         self._provider = provider
-        self._headers = headers
+        self._static_headers = headers
         self._auth_interceptor = auth_interceptor
+
+    @property
+    def _headers(self) -> Dict[str, str]:
+        if self._static_headers is not None:
+            return self._static_headers
+        from languagemodelcommon.context.request_context import get_request_context
+
+        return get_request_context().headers
 
     async def resolve_tools(
         self,

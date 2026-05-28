@@ -39,6 +39,10 @@ def _make_provider() -> MCPToolProvider:
     provider.truncation_interceptor = MagicMock()
     provider.tracing_interceptor = MagicMock()
     provider.pass_through_token_manager = MagicMock()
+
+    from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
+
+    provider.tool_list_cache = ToolListCache(ttl_seconds=300.0)
     return provider
 
 

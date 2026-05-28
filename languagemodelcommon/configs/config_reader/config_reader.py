@@ -43,24 +43,26 @@ class ConfigReader:
         *,
         cache: ConfigExpiringCache | None = None,
         prompt_library_manager: PromptLibraryManager,
-        environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        environment_variables: LanguageModelCommonEnvironmentVariables,
         mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
         snapshot_cache_store: BaseStore | None = None,
+        file_config_reader: FileConfigReader | None = None,
+        s3_config_reader: S3ConfigReader | None = None,
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
         self._mcp_resolved_once: bool = False
         self._prompt_library_manager = prompt_library_manager
-        self._environment_variables = (
-            environment_variables or LanguageModelCommonEnvironmentVariables()
-        )
+        self._environment_variables = environment_variables
         self._github_directory_helper = (
             github_directory_helper
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
         self._mcp_json_fetcher = mcp_json_fetcher
         self._snapshot_cache_store = snapshot_cache_store
+        self._file_config_reader = file_config_reader or FileConfigReader()
+        self._s3_config_reader = s3_config_reader or S3ConfigReader()
         self._snapshot_cache_collection = (
             self._environment_variables.snapshot_cache_model_configs_collection
         )
@@ -79,7 +81,10 @@ class ConfigReader:
         # Re-resolve MCP servers on first request (snapshot may be stale)
         # and on subsequent requests if servers remain unresolved.
         if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
-            await self._retry_mcp_resolution(base_models, config_path)
+            await self._retry_mcp_resolution(
+                models=base_models,
+                config_path=config_path,
+            )
             self._mcp_resolved_once = True
 
         if client_id:
@@ -93,7 +98,7 @@ class ConfigReader:
                 )
 
         base_models = [model for model in base_models if not model.disabled]
-        self._resolve_prompt_library(base_models, config_path=config_path)
+        self._resolve_prompt_library(models=base_models, config_path=config_path)
         return base_models
 
     async def _read_base_models_async(
@@ -143,7 +148,10 @@ class ConfigReader:
             await self._write_to_snapshot_cache(models)
             return models
 
-    _SNAPSHOT_CACHE_KEY = "model_configs"
+    @property
+    def _snapshot_cache_key(self) -> str:
+        version = self._environment_variables.snapshot_cache_schema_version
+        return f"model_configs:v{version}"
 
     async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
         """Load model configs from the snapshot cache.
@@ -155,7 +163,7 @@ class ConfigReader:
         if not self._snapshot_cache_store:
             return None
         data = await self._snapshot_cache_store.get(
-            self._SNAPSHOT_CACHE_KEY,
+            self._snapshot_cache_key,
             collection=self._snapshot_cache_collection,
         )
         if data is None:
@@ -180,7 +188,7 @@ class ConfigReader:
         data = {"models": [m.model_dump() for m in models]}
         ttl = self._environment_variables.snapshot_cache_ttl_seconds
         await self._snapshot_cache_store.put(
-            self._SNAPSHOT_CACHE_KEY,
+            self._snapshot_cache_key,
             data,
             ttl=ttl,
             collection=self._snapshot_cache_collection,
@@ -212,15 +220,15 @@ class ConfigReader:
         for attempt in range(max_retries + 1):
             try:
                 models = await self.read_models_from_path_async(
-                    default_config_path, exclude_dirs=base_exclude_dirs
+                    config_path=default_config_path, exclude_dirs=base_exclude_dirs
                 )
                 if not models and default_config_path != config_path:
                     models = await self.read_models_from_path_async(
-                        config_path, exclude_dirs=base_exclude_dirs
+                        config_path=config_path, exclude_dirs=base_exclude_dirs
                     )
                 if models_testing_path:
                     models_testing = await self.read_models_from_path_async(
-                        models_testing_path, exclude_dirs=base_exclude_dirs
+                        config_path=models_testing_path, exclude_dirs=base_exclude_dirs
                     )
                     if models_testing and len(models_testing) > 0:
                         models.append(
@@ -269,7 +277,7 @@ class ConfigReader:
         if override_path is None:
             return []
         try:
-            return await self.read_models_from_path_async(override_path)
+            return await self.read_models_from_path_async(config_path=override_path)
         except Exception as e:
             logger.warning(
                 "Failed to load client overrides from %s: %s", override_path, e
@@ -277,12 +285,12 @@ class ConfigReader:
             return []
 
     async def read_models_from_path_async(
-        self, config_path: str, *, exclude_dirs: set[str] | None = None
+        self, *, config_path: str, exclude_dirs: set[str] | None = None
     ) -> List[ChatModelConfig]:
         models: List[ChatModelConfig]
         local_config_path: str = config_path
         if config_path.startswith("s3"):
-            models = await S3ConfigReader().read_model_configs(s3_url=config_path)
+            models = await self._s3_config_reader.read_model_configs(s3_url=config_path)
             logger.info(
                 "ConfigReader with id: %s loaded %s model configurations from S3",
                 self._identifier,
@@ -291,7 +299,7 @@ class ConfigReader:
         elif GitHubDirectoryHelper.is_github_path(config_path):
             resolved = self._github_directory_helper.resolve_github_path(config_path)
             local_config_path = str(resolved)
-            models = FileConfigReader().read_model_configs(
+            models = self._file_config_reader.read_model_configs(
                 config_path=local_config_path,
                 exclude_dirs=exclude_dirs,
             )
@@ -301,7 +309,7 @@ class ConfigReader:
                 len(models),
             )
         else:
-            models = FileConfigReader().read_model_configs(
+            models = self._file_config_reader.read_model_configs(
                 config_path=config_path,
                 exclude_dirs=exclude_dirs,
             )
@@ -312,11 +320,15 @@ class ConfigReader:
             )
 
         # Resolve MCP server references from plugins or local .mcp.json
-        await self._resolve_mcp_servers_async(models, local_config_path)
+        await self._resolve_mcp_servers_async(
+            models=models,
+            config_path=local_config_path,
+        )
         return models
 
     async def _resolve_mcp_servers_async(
         self,
+        *,
         models: List[ChatModelConfig],
         config_path: str,
     ) -> None:
@@ -364,7 +376,9 @@ class ConfigReader:
                 fetch_errors,
             )
         if plugin_configs:
-            resolve_mcp_servers_from_plugins(models, plugin_configs)
+            resolve_mcp_servers_from_plugins(
+                configs=models, plugin_configs=plugin_configs
+            )
         else:
             logger.warning(
                 "McpJsonFetcher returned no configs for plugins %s from %s "
@@ -397,7 +411,7 @@ class ConfigReader:
         return unresolved
 
     async def _retry_mcp_resolution(
-        self, models: List[ChatModelConfig], config_path: str
+        self, *, models: List[ChatModelConfig], config_path: str
     ) -> None:
         """Re-attempt MCP server resolution for models with unresolved refs.
 
@@ -407,7 +421,7 @@ class ConfigReader:
         cache so subsequent reads get the resolved data.
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
-        await self._resolve_mcp_servers_async(models, config_path)
+        await self._resolve_mcp_servers_async(models=models, config_path=config_path)
         await self._write_to_snapshot_cache(models)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
@@ -439,10 +453,13 @@ class ConfigReader:
             return None
         if GitHubDirectoryHelper.is_github_path(config_path):
             return GitHubDirectoryHelper.join_github_uri_path(
-                GitHubDirectoryHelper.to_github_uri(config_path), f"clients/{client_id}"
+                base_uri=GitHubDirectoryHelper.to_github_uri(config_path),
+                suffix=f"clients/{client_id}",
             )
         if config_path.startswith("s3"):
-            return ConfigReader._join_path(config_path, f"clients/{client_id}")
+            return ConfigReader._join_path(
+                base=config_path, suffix=f"clients/{client_id}"
+            )
         config_folder = Path(config_path)
         override_folder = config_folder.joinpath("clients", client_id)
         # Ensure the resolved path is within the config directory
@@ -466,7 +483,7 @@ class ConfigReader:
         return bool(re.match(r"^[a-zA-Z0-9_-]+$", client_id))
 
     @staticmethod
-    def _join_path(base: str, suffix: str) -> str:
+    def _join_path(*, base: str, suffix: str) -> str:
         if base.endswith("/"):
             return f"{base}{suffix}"
         return f"{base}/{suffix}"
@@ -500,8 +517,8 @@ class ConfigReader:
             merged_payload = cast(
                 dict[str, Any],
                 ConfigReader._deep_merge(
-                    base_model.model_dump(),
-                    override.model_dump(exclude_none=True, exclude_unset=True),
+                    base=base_model.model_dump(),
+                    override=override.model_dump(exclude_none=True, exclude_unset=True),
                 ),
             )
             merged_models[match_index] = ChatModelConfig(**merged_payload)
@@ -510,7 +527,7 @@ class ConfigReader:
         return merged_models
 
     @staticmethod
-    def _deep_merge(base: object, override: object) -> object:
+    def _deep_merge(*, base: object, override: object) -> object:
         if isinstance(base, dict) and isinstance(override, dict):
             merged = dict(base)
             for key, value in override.items():
@@ -519,17 +536,19 @@ class ConfigReader:
                     and isinstance(merged[key], dict)
                     and isinstance(value, dict)
                 ):
-                    merged[key] = ConfigReader._deep_merge(merged[key], value)
+                    merged[key] = ConfigReader._deep_merge(
+                        base=merged[key], override=value
+                    )
                 else:
                     merged[key] = value
             return merged
         if isinstance(base, list) and isinstance(override, list):
-            return ConfigReader._merge_list_of_dicts(base, override)
+            return ConfigReader._merge_list_of_dicts(base=base, override=override)
         return override
 
     @staticmethod
     def _merge_list_of_dicts(
-        base: list[object], override: list[object]
+        *, base: list[object], override: list[object]
     ) -> list[object]:
         if not base:
             return list(override)
@@ -560,7 +579,7 @@ class ConfigReader:
                 base_item = merged_list[index_by_key[override_key]]
                 if isinstance(base_item, dict):
                     merged_list[index_by_key[override_key]] = ConfigReader._deep_merge(
-                        base_item, override_item
+                        base=base_item, override=override_item
                     )
                 else:
                     merged_list[index_by_key[override_key]] = override_item
@@ -591,7 +610,8 @@ class ConfigReader:
             )
 
             prompts_uri = GitHubDirectoryHelper.join_github_uri_path(
-                GitHubDirectoryHelper.to_github_uri(config_path), PROMPTS_FOLDER_NAME
+                base_uri=GitHubDirectoryHelper.to_github_uri(config_path),
+                suffix=PROMPTS_FOLDER_NAME,
             )
             try:
                 local_path = self._github_directory_helper.resolve_github_path(
@@ -620,7 +640,7 @@ class ConfigReader:
     async def clear_cache(self) -> None:
         if self._snapshot_cache_store:
             await self._snapshot_cache_store.delete(
-                self._SNAPSHOT_CACHE_KEY,
+                self._snapshot_cache_key,
                 collection=self._snapshot_cache_collection,
             )
         logger.info(

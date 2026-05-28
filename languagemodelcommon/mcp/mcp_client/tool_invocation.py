@@ -1,9 +1,11 @@
 """Tool invocation — interceptor chain and raw MCP tool calls."""
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mcp.types import CallToolResult
+from pydantic import ValidationError
 
 from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext, _MCPCallbacks
 from languagemodelcommon.mcp.interceptors.types import (
@@ -16,9 +18,13 @@ from languagemodelcommon.mcp.mcp_client.session import (
     create_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
+from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
+
+logger = logging.getLogger(__name__)
 
 
 def build_interceptor_chain(
+    *,
     base_handler: Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]],
     tool_interceptors: list[ToolCallInterceptor] | None,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
@@ -43,10 +49,185 @@ def build_interceptor_chain(
     return handler
 
 
+def _server_supports_tool_tasks(session: Any) -> bool:
+    """Check whether the MCP server advertises task support for tool calls.
+
+    Supports both spec versions:
+    - Old (2025-11-25): capabilities.tasks.requests.tools.call
+    - New (2026-07-28): capabilities.extensions["io.modelcontextprotocol/tasks"]
+    """
+    try:
+        caps = session.get_server_capabilities()
+        if not caps:
+            return False
+
+        # New spec (2026-07-28): extension-based capability
+        extensions = getattr(caps, "extensions", None)
+        if extensions and "io.modelcontextprotocol/tasks" in extensions:
+            return True
+
+        # Old spec (2025-11-25): nested capability hierarchy
+        tasks_cap = getattr(caps, "tasks", None)
+        if tasks_cap:
+            requests = getattr(tasks_cap, "requests", None)
+            if requests:
+                tools = getattr(requests, "tools", None)
+                if tools and getattr(tools, "call", None):
+                    return True
+
+        return False
+    except Exception:
+        return False
+
+
+def _tool_supports_tasks(
+    *,
+    session: Any,
+    tool_name: str,
+    tool_list_cache: ToolListCache | None = None,
+    cache_key: str | None = None,
+) -> bool:
+    """Check whether a specific tool supports task-augmented execution.
+
+    Server-level task capability is necessary but not sufficient. Each tool
+    declares its own task support via execution.taskSupport in the tools/list
+    response. Only tools with "optional" or "required" support tasks.
+
+    Reads from the existing ToolListCache (populated when tools are listed)
+    rather than making a redundant list_tools call.
+    """
+    if not _server_supports_tool_tasks(session):
+        return False
+
+    if tool_list_cache is None or cache_key is None:
+        return False
+
+    tools = tool_list_cache.get(cache_key)
+    if tools is None:
+        return False
+
+    for tool in tools:
+        if tool.name == tool_name:
+            if tool.execution is not None:
+                task_support = getattr(tool.execution, "taskSupport", None)
+                return task_support in ("optional", "required")
+            return False
+
+    return False
+
+
+def _extract_task_id_from_create_result(create_result: Any) -> str:
+    """Extract taskId from CreateTaskResult, handling both spec versions.
+
+    Old spec: result.task.taskId (nested under 'task' field)
+    New spec: result.taskId (flat, Result & Task merged)
+    """
+    # New spec: taskId directly on result
+    if hasattr(create_result, "taskId"):
+        return str(create_result.taskId)
+
+    # Old spec: nested under .task
+    if hasattr(create_result, "task"):
+        return str(create_result.task.taskId)
+
+    raise ValueError(f"Cannot extract taskId from {type(create_result)}")
+
+
+def _extract_result_from_task_status(task_status: Any) -> CallToolResult | None:
+    """Extract inline result from a terminal task status (new spec).
+
+    New spec: completed tasks carry result inline in tasks/get response.
+    Old spec: requires separate tasks/result call — returns None.
+    """
+    if hasattr(task_status, "result") and task_status.result is not None:
+        result = task_status.result
+        if isinstance(result, CallToolResult):
+            return result
+        # New spec may return raw dict — wrap it
+        if isinstance(result, dict):
+            return CallToolResult(**result)
+    return None
+
+
+class TaskProtocolError(Exception):
+    """Raised when the MCP task protocol fails and caller should fall back to call_tool."""
+
+
+async def _execute_tool_as_task(
+    *,
+    session: Any,
+    name: str,
+    arguments: dict[str, Any],
+    server_name: str,
+) -> CallToolResult:
+    """Execute a tool via the MCP task protocol, polling until completion.
+
+    Supports both spec versions:
+    - Old (experimental): call_tool_as_task → poll_task → get_task_result
+    - New (extension): server returns resultType="task" → poll via
+      tasks/get → result inline in completed status
+
+    Emits ``mcp_task_progress`` custom events via LangChain's
+    ``adispatch_custom_event`` so the streaming manager can forward
+    progress updates to the client.
+
+    Raises TaskProtocolError if the server does not respond with a valid
+    CreateTaskResult (e.g., returns a plain CallToolResult instead).
+    """
+    from langchain_core.callbacks.manager import adispatch_custom_event
+
+    try:
+        create_result = await session.experimental.call_tool_as_task(
+            name, arguments, ttl=60000
+        )
+    except (ValidationError, ValueError, TypeError) as e:
+        raise TaskProtocolError(
+            f"Server did not return a valid CreateTaskResult for '{name}': {e}"
+        ) from e
+    task_id = _extract_task_id_from_create_result(create_result)
+
+    inline_result: CallToolResult | None = None
+
+    async for status in session.experimental.poll_task(task_id):
+        try:
+            await adispatch_custom_event(
+                "mcp_task_progress",
+                {
+                    "task_id": task_id,
+                    "status": status.status,
+                    "message": getattr(status, "statusMessage", None),
+                    "server_name": server_name,
+                    "tool_name": name,
+                },
+            )
+        except RuntimeError as e:
+            logger.debug(
+                "Skipping mcp_task_progress event dispatch: %s (task_id=%s, tool=%s)",
+                e,
+                task_id,
+                name,
+            )
+
+        # New spec: result may be inline on terminal status
+        inline_result = _extract_result_from_task_status(status)
+
+    # If new spec provided result inline, use it
+    if inline_result is not None:
+        return inline_result
+
+    # Old spec: fetch result via separate tasks/result call
+    result: CallToolResult = await session.experimental.get_task_result(
+        task_id, CallToolResult
+    )
+    return result
+
+
 def _make_execute_tool(
+    *,
     config: MCPConnectionConfig,
     mcp_callbacks: _MCPCallbacks,
     session_pool: McpSessionPool | None = None,
+    tool_list_cache: ToolListCache | None = None,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -55,6 +236,12 @@ def _make_execute_tool(
 
     When a ``session_pool`` is provided, sessions are reused across calls
     to the same MCP server URL within the pool's scope.
+
+    If the server and tool both advertise task support, the tool is
+    executed via the MCP task protocol with polling and progress events.
+    Per-tool ``execution.taskSupport`` is checked from the already-cached
+    tool list so that tools with ``"forbidden"`` (or no declaration) use
+    normal call_tool.
     """
 
     async def execute_tool(request: MCPToolCallRequest) -> MCPToolCallResult:
@@ -66,11 +253,38 @@ def _make_execute_tool(
             updated["headers"] = {**existing_headers, **modified_headers}
             effective_config = updated  # type: ignore[assignment]
 
+        server_url = effective_config.get("url", "")
+        effective_headers = effective_config.get("headers") or {}
+        cache_key = ToolListCache.make_key(
+            server_url, auth_header=effective_headers.get("Authorization")
+        )
+
         if session_pool is not None:
             session = await session_pool.get_session(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
+                if _tool_supports_tasks(
+                    session=session,
+                    tool_name=request.name,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
+                ):
+                    try:
+                        return await _execute_tool_as_task(
+                            session=session,
+                            name=request.name,
+                            arguments=request.args,
+                            server_name=request.server_name,
+                        )
+                    except TaskProtocolError:
+                        logger.warning(
+                            "Task protocol failed for %s on %s, falling back to call_tool",
+                            request.name,
+                            server_url,
+                        )
+                        if tool_list_cache is not None:
+                            tool_list_cache.invalidate(cache_key)
                 return await session.call_tool(
                     request.name,
                     request.args,
@@ -78,6 +292,8 @@ def _make_execute_tool(
                 )
             except Exception:
                 await session_pool.evict(effective_config)
+                if tool_list_cache is not None:
+                    tool_list_cache.invalidate(cache_key)
                 raise
 
         # Fallback: create a one-shot session (original behavior)
@@ -87,11 +303,38 @@ def _make_execute_tool(
         ) as session:
             await session.initialize()
             try:
-                result = await session.call_tool(
-                    request.name,
-                    request.args,
-                    progress_callback=mcp_callbacks.progress_callback,
-                )
+                if _tool_supports_tasks(
+                    session=session,
+                    tool_name=request.name,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
+                ):
+                    try:
+                        result = await _execute_tool_as_task(
+                            session=session,
+                            name=request.name,
+                            arguments=request.args,
+                            server_name=request.server_name,
+                        )
+                    except TaskProtocolError:
+                        logger.warning(
+                            "Task protocol failed for %s on %s, falling back to call_tool",
+                            request.name,
+                            server_url,
+                        )
+                        if tool_list_cache is not None:
+                            tool_list_cache.invalidate(cache_key)
+                        result = await session.call_tool(
+                            request.name,
+                            request.args,
+                            progress_callback=mcp_callbacks.progress_callback,
+                        )
+                else:
+                    result = await session.call_tool(
+                        request.name,
+                        request.args,
+                        progress_callback=mcp_callbacks.progress_callback,
+                    )
             except Exception as e:
                 captured_exception = e
 
@@ -111,6 +354,7 @@ async def call_mcp_tool_raw(
     callbacks: Callbacks | None = None,
     tool_interceptors: list[ToolCallInterceptor] | None = None,
     session_pool: McpSessionPool | None = None,
+    tool_list_cache: ToolListCache | None = None,
 ) -> CallToolResult:
     """Call an MCP tool and return the raw CallToolResult.
 
@@ -125,8 +369,15 @@ async def call_mcp_tool_raw(
         else _MCPCallbacks()
     )
 
-    execute_tool = _make_execute_tool(config, mcp_callbacks, session_pool=session_pool)
-    handler = build_interceptor_chain(execute_tool, tool_interceptors)
+    execute_tool = _make_execute_tool(
+        config=config,
+        mcp_callbacks=mcp_callbacks,
+        session_pool=session_pool,
+        tool_list_cache=tool_list_cache,
+    )
+    handler = build_interceptor_chain(
+        base_handler=execute_tool, tool_interceptors=tool_interceptors
+    )
     request = MCPToolCallRequest(
         name=tool_name,
         args=arguments,

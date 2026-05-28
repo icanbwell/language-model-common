@@ -19,14 +19,8 @@ See Also:
       which orchestrates streaming and calls this manager.
 """
 
-import copy  # For deepcopy
 import json
 import logging
-import time
-from dataclasses import dataclass
-from oidcauthlib.auth.exceptions.authorization_needed_exception import (
-    AuthorizationNeededException,
-)
 from typing import (
     Any,
     AsyncGenerator,
@@ -35,35 +29,40 @@ from typing import (
     cast,
 )
 
-from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessageChunk
 from langchain_core.runnables.schema import (
     CustomStreamEvent,
-    StandardStreamEvent,
     EventData,
+    StandardStreamEvent,
 )
 
+from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+    StreamedOutput,
+)
+from languagemodelcommon.converters.streaming_formatters import (
+    extract_reasoning_text,
+    format_message_content,
+)
+from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import (
-    FileWriter,
     DebugFileWriteResult,
+    FileWriter,
 )
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
-from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.chat_message_helpers import (
     iter_message_content_text_chunks,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
-    DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS,
     LanguageModelCommonEnvironmentVariables,
 )
-
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
-from languagemodelcommon.utilities.text_humanizer import Humanizer
-from languagemodelcommon.utilities.tool_display_name_mapper import (
-    ToolDisplayNameMapper,
-)
+from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -91,56 +90,56 @@ class LangGraphStreamingManager:
         token_reducer: TokenReducer,
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
-        tool_display_name_mapper: ToolDisplayNameMapper,
+        tool_event_handler: ToolEventHandler,
+        stream_buffer_manager: StreamBufferManager | None = None,
+        stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
-        self.token_reducer: TokenReducer = token_reducer
-        if self.token_reducer is None:
+        if token_reducer is None:
             raise ValueError("token_reducer must not be None")
-        if not isinstance(self.token_reducer, TokenReducer):
+        if not isinstance(token_reducer, TokenReducer):
             raise TypeError("token_reducer must be an instance of TokenReducer")
+        self.token_reducer = token_reducer
 
-        self.debug_file_writer: FileWriter = debug_file_writer
-        if self.debug_file_writer is None:
+        if debug_file_writer is None:
             raise ValueError("debug_file_writer must not be None")
-        if not isinstance(self.debug_file_writer, FileWriter):
+        if not isinstance(debug_file_writer, FileWriter):
             raise TypeError("debug_file_writer must be an instance of FileWriter")
+        self.debug_file_writer = debug_file_writer
 
-        self.environment_variables: LanguageModelCommonEnvironmentVariables = (
-            environment_variables
-        )
-        if self.environment_variables is None:
+        if environment_variables is None:
             raise ValueError("environment_variables must not be None")
-        if not isinstance(
-            self.environment_variables,
-            LanguageModelCommonEnvironmentVariables,
-        ):
+        self.environment_variables = environment_variables
+
+        if tool_event_handler is None:
+            raise ValueError("tool_event_handler must not be None")
+        if not isinstance(tool_event_handler, ToolEventHandler):
             raise TypeError(
-                "environment_variables must be an instance of LanguageModelCommonVariables"
+                "tool_event_handler must be an instance of ToolEventHandler"
             )
+        self._tool_event_handler = tool_event_handler
 
-        configured_interval = (
-            self.environment_variables.streaming_buffer_flush_interval_seconds
-        )
-        self.buffer_flush_interval_seconds: float = (
-            configured_interval
-            if configured_interval > 0
-            else DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS
-        )
-        self.enable_streaming_buffering: bool = (
-            self.environment_variables.enable_streaming_buffering
+        self._static_stream_buffer_manager = stream_buffer_manager
+        self._static_stream_debug_output_manager = stream_debug_output_manager
+
+    @property
+    def _stream_buffer_manager(self) -> StreamBufferManager:
+        if self._static_stream_buffer_manager is not None:
+            return self._static_stream_buffer_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_buffer_manager,
         )
 
-        self._stream_buffers: dict[str, _StreamBuffer] = {}
-        self._streamed_text_fragments: dict[str, list[str]] = {}
+        return get_stream_buffer_manager()
 
-        self.tool_display_name_mapper = tool_display_name_mapper
-        if tool_display_name_mapper is None:
-            raise ValueError("tool_display_name_mapper must not be None")
-        if not isinstance(tool_display_name_mapper, ToolDisplayNameMapper):
-            raise TypeError(
-                f"tool_display_name_mapper must be an instance of "
-                f"ToolDisplayNameMapper: {type(tool_display_name_mapper)}"
-            )
+    @property
+    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
+        if self._static_stream_debug_output_manager is not None:
+            return self._static_stream_debug_output_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_debug_output_manager,
+        )
+
+        return get_stream_debug_output_manager()
 
     async def handle_langchain_event(
         self,
@@ -154,12 +153,6 @@ class LangGraphStreamingManager:
         """Route a single LangGraph event to the appropriate handler and yield SSE chunks."""
         try:
             event_type: str = event["event"]
-            # logger.debug(
-            #     f"handle_langchain_event: Received event type: {event_type}: {event}"
-            # )
-            # Events defined here:
-            # https://reference.langchain.com/python/langchain_core/language_models/#langchain_core.language_models.BaseChatModel.astream_events
-            # https://reference.langchain.com/python/langchain-core/runnables/base/Runnable/astream_events
             match event_type:
                 case "on_chat_model_start":
                     async for chunk in self._handle_on_chat_model_start(
@@ -178,14 +171,6 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case "on_chain_start":
-                    # async for chunk in self._handle_on_chain_start(
-                    #     event=event,
-                    #     chat_request_wrapper=chat_request_wrapper,
-                    #     request_id=request_id,
-                    #     messages=messages,
-                    # ):
-                    #     if chunk:
-                    #         yield chunk
                     pass
                 case "on_chain_stream":
                     pass
@@ -206,7 +191,7 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case "on_tool_start":
-                    async for chunk in self._handle_on_tool_start(
+                    async for chunk in self._tool_event_handler.handle_tool_start(
                         event=event,
                         chat_request_wrapper=chat_request_wrapper,
                         request_information=request_information,
@@ -215,7 +200,7 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case "on_tool_end":
-                    async for chunk in self._handle_on_tool_end(
+                    async for chunk in self._tool_event_handler.handle_tool_end(
                         event=event,
                         chat_request_wrapper=chat_request_wrapper,
                         request_information=request_information,
@@ -225,12 +210,20 @@ class LangGraphStreamingManager:
                         if chunk:
                             yield chunk
                 case "on_tool_error":
-                    async for chunk in self._handle_on_tool_error(
+                    async for chunk in self._tool_event_handler.handle_tool_error(
                         event=event,
                         chat_request_wrapper=chat_request_wrapper,
                         request_information=request_information,
                         tool_start_times=tool_start_times,
                         user_id=user_id,
+                    ):
+                        if chunk:
+                            yield chunk
+                case "on_custom_event":
+                    async for chunk in self._handle_on_custom_event(
+                        event=event,
+                        chat_request_wrapper=chat_request_wrapper,
+                        request_information=request_information,
                     ):
                         if chunk:
                             yield chunk
@@ -246,13 +239,12 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str, None]:
-        """Yield SSE chunk for each LLM token received (main response text)."""
         data = event["data"] if "data" in event else {}
         chunk: AIMessageChunk | None = data.get("chunk")
         if chunk is not None:
             content: str | list[str | dict[str, Any]] = chunk.content
             content_chunks = iter_message_content_text_chunks(
-                content,
+                content=content,
                 include_non_text_placeholders=False,
             )
             for content_text in content_chunks.text_chunks:
@@ -260,23 +252,20 @@ class LangGraphStreamingManager:
                     raise TypeError(
                         f"content_text must be str, got {type(content_text)}"
                     )
-                # content_text = "<<" + content_text + ">>"
                 if self.environment_variables.log_input_and_output and content_text:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
-                    self._append_streamed_text_fragment(
-                        request_id=str(request_information.request_id),
-                        content_text=content_text,
+                    self._stream_debug_output_manager.append_fragment(
+                        text=content_text,
                     )
-                    buffered_chunk = await self._buffer_stream_content(
-                        request_id=str(request_information.request_id),
+                    buffered_chunk = await self._stream_buffer_manager.buffer_content(
                         content_text=content_text,
                     )
                     if buffered_chunk:
                         yield chat_request_wrapper.create_sse_message(
                             request_id=request_information.request_id,
                             content=buffered_chunk,
-                            usage_metadata=chunk.usage_metadata,
+                            usage_metadata=chunk.usage_metadata if chunk else None,
                             source="on_chat_model_stream",
                         )
             if chat_request_wrapper.enable_debug_logging:
@@ -295,14 +284,9 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str, None]:
-        """Emit final SSE message with usage metadata when the LangGraph chain completes."""
-        # Fix mypy TypedDict .get() error by using square bracket access and key existence checks
         data = event["data"] if "data" in event else {}
         output: Dict[str, Any] | str | None = data.get("output")
-        # Always force-flush any remaining buffered content on chain end,
-        # regardless of whether usage metadata is present.
-        buffered_chunk = await self._buffer_stream_content(
-            request_id=str(request_information.request_id),
+        buffered_chunk = await self._stream_buffer_manager.buffer_content(
             content_text="",
             force_flush=True,
         )
@@ -319,262 +303,8 @@ class LangGraphStreamingManager:
                 usage_metadata=output["usage_metadata"],
                 source="on_chain_end",
             )
-        self._clear_request_streamed_text(
-            request_id=str(request_information.request_id),
-        )
+        self._stream_debug_output_manager.clear()
 
-    async def _handle_on_tool_start(
-        self,
-        *,
-        event: StandardStreamEvent | CustomStreamEvent,
-        chat_request_wrapper: ChatRequestWrapper,
-        request_information: RequestInformation,
-        tool_start_times: dict[str, float],
-    ) -> AsyncGenerator[str, None]:
-        """Record tool start time and emit debug SSE showing which MCP tool is running."""
-        tool_name: Optional[str] = event["name"] if "name" in event else None
-        logger.debug("on_tool_start: %s: %s", tool_name, event)
-        data = event["data"] if "data" in event else {}
-        tool_input: Optional[Dict[str, Any]] = data.get("input")
-        tool_input_display: Optional[Dict[str, Any]] = (
-            tool_input.copy() if tool_input is not None else None
-        )
-        if tool_input_display and "auth_token" in tool_input_display:
-            tool_input_display["auth_token"] = "***"
-        if tool_input_display and "state" in tool_input_display:
-            tool_input_display["state"] = "***"
-        if tool_input_display and "runtime" in tool_input_display:
-            tool_input_display.pop(
-                "runtime"
-            )  # runtime has the chat history and other data we don't need to show
-        tool_key: str = self.make_tool_key(tool_name, tool_input)
-        tool_start_times[tool_key] = time.time()
-        if tool_name:
-            logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
-            # Emit structured tool-start event (Responses API emits
-            # response.output_item.added; Chat Completions returns None).
-            tool_start_event = chat_request_wrapper.create_tool_start_sse_event(
-                request_id=request_information.request_id,
-                tool_name=tool_name,
-                tool_input=tool_input_display,
-            )
-            if tool_start_event:
-                yield tool_start_event
-            content_text: str = self.tool_display_name_mapper.get_message_for_tool(
-                tool_name=tool_name, tool_input=tool_input
-            )
-            buffered_chunk = await self._buffer_stream_content(
-                request_id=str(request_information.request_id),
-                content_text=content_text,
-            )
-            if buffered_chunk:
-                yield chat_request_wrapper.create_sse_message(
-                    request_id=request_information.request_id,
-                    content=buffered_chunk,
-                    usage_metadata=None,
-                    source="on_tool_start",
-                )
-            debug_content_text: str = (
-                f"\n\n<details>\n<summary>Agent: {tool_name}</summary>\n\n"
-                f"```json\n{json.dumps(tool_input_display, indent=2, default=str)}\n```\n\n"
-                f"</details>\n\n"
-            )
-            debug_message = chat_request_wrapper.create_debug_sse_message(
-                request_id=request_information.request_id,
-                content=debug_content_text,
-                usage_metadata=None,
-                source="on_tool_start",
-            )
-            if debug_message:
-                yield debug_message
-
-    @staticmethod
-    def _format_tool_input_labels(*, tool_input: Dict[str, Any] | None) -> str:
-        """Return a friendly, label-only summary of tool input parameters."""
-        if not tool_input:
-            return "none"
-        hidden_keys = {"auth_token", "state", "runtime"}
-        labels: list[str] = []
-        for key in tool_input.keys():
-            if key in hidden_keys:
-                continue
-            labels.append(Humanizer.humanize_tool_name(key))
-        return ", ".join(labels) if labels else "none"
-
-    async def _handle_on_tool_end(
-        self,
-        *,
-        event: StandardStreamEvent | CustomStreamEvent,
-        chat_request_wrapper: ChatRequestWrapper,
-        request_information: RequestInformation,
-        tool_start_times: dict[str, float],
-        user_id: Optional[str] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Emit debug SSE when MCP tool completes, including runtime and optional raw output."""
-        event_name: Optional[str] = event["name"] if "name" in event else None
-        data = event["data"] if "data" in event else {}
-        logger.debug(
-            "on_tool_end: name=%s request_id=%s data=%s",
-            event_name,
-            request_information.request_id,
-            data,
-        )
-
-        runtime_str: str = ""
-        tool_message: Optional[ToolMessage] = data.get("output")
-        if tool_message:
-            tool_name: str = tool_message.name or event_name or "unknown"
-            tool_input: Optional[Dict[str, Any]] = data.get("input")
-
-            tool_key: str = self.make_tool_key(tool_name, tool_input)
-            start_time: Optional[float] = tool_start_times.pop(tool_key, None)
-            runtime_seconds: Optional[float] = None
-            if start_time is not None:
-                elapsed: float = time.time() - start_time
-                runtime_seconds = elapsed
-                runtime_str = f"{elapsed:.2f}s"
-                logger.debug("Tool %s completed in %.2f seconds.", tool_name, elapsed)
-            else:
-                logger.warning(
-                    "Tool %s end event received without matching start event.",
-                    tool_name,
-                )
-
-            # Emit structured tool-end event (Responses API emits
-            # response.output_item.done; Chat Completions returns None).
-            tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
-                request_id=request_information.request_id,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                runtime_seconds=runtime_seconds,
-            )
-            if tool_end_event:
-                yield tool_end_event
-
-            tool_message_content: str = (
-                self.convert_message_content_into_string(tool_message=tool_message)
-                if tool_message
-                else ""
-            )
-
-            artifact: Optional[Any] = tool_message.artifact
-
-            logger.debug(
-                "Tool %s has artifact of type %s: %s",
-                tool_name,
-                type(artifact),
-                artifact,
-            )
-
-            # Emit MCP app embed as a custom SSE event if present in artifact
-            if isinstance(artifact, dict) and "mcp_app_embed" in artifact:
-                mcp_app_embed = artifact["mcp_app_embed"]
-                embed_html = getattr(mcp_app_embed, "html", None)
-                embed_title = getattr(mcp_app_embed, "title", None)
-                if embed_html:
-                    mcp_app_event = chat_request_wrapper.create_mcp_app_sse_event(
-                        html=embed_html,
-                        title=embed_title,
-                    )
-                    if mcp_app_event:
-                        yield mcp_app_event
-
-            if self.environment_variables.write_tool_output_to_file and (
-                chat_request_wrapper.enable_debug_logging or artifact is not None
-            ):
-                if self.environment_variables.log_input_and_output:
-                    logger.debug(
-                        f"Returning artifact: {artifact if artifact else tool_message_content}"
-                    )
-                tool_message_or_artifact_content = (
-                    str(artifact) if artifact else tool_message_content
-                )
-                if chat_request_wrapper.enable_debug_logging:
-                    # Save to file and provide link
-                    self._append_streamed_text_fragment(
-                        request_id=str(request_information.request_id),
-                        content_text=tool_message_or_artifact_content,
-                    )
-
-                tool_display_name: str = (
-                    self.tool_display_name_mapper.get_name_for_tool(
-                        tool_name=tool_name,
-                        tool_input=tool_input,
-                    )
-                )
-                write_result: (
-                    DebugFileWriteResult | None
-                ) = await self.debug_file_writer.write_to_file_async(
-                    content=tool_message_or_artifact_content,
-                    user_id=user_id,
-                    file_name=tool_name,
-                )
-                if (
-                    write_result is not None
-                    and write_result.file_path
-                    and write_result.file_url
-                ):
-                    # send a follow-up message with the file URL
-                    content_text: str = f"\n\n[Click to download {tool_display_name} Output]({write_result.file_url})\n\n"
-                    yield chat_request_wrapper.create_sse_message(
-                        request_id=request_information.request_id,
-                        content=content_text,
-                        usage_metadata=None,
-                        source="on_tool_end",
-                    )
-
-            if chat_request_wrapper.enable_debug_logging:
-                # now if debugging is turned on then log the structured content
-                structured_data: dict[str, Any] | None = (
-                    artifact if isinstance(artifact, dict) else None
-                )
-                structured_data_without_result: dict[str, Any] | None = (
-                    copy.deepcopy(structured_data)
-                    if structured_data is not None
-                    else None
-                )
-                if structured_data_without_result:
-                    structured_data_without_result.pop("result", None)
-                    structured_content = structured_data_without_result.get(
-                        "structured_content"
-                    )
-                    # Only pop from structured_content if it is a dict
-                    if isinstance(structured_content, dict):
-                        structured_content.pop("result", None)
-
-                    structured_json = json.dumps(
-                        structured_data_without_result, indent=2
-                    )
-                    structured_content_text: str = (
-                        f"\n\n<details>\n<summary>{tool_name} output</summary>\n\n"
-                        f"```json\n{structured_json}\n```\n\n"
-                        f"</details>\n\n"
-                    )
-                    debug_message = chat_request_wrapper.create_debug_sse_message(
-                        request_id=request_information.request_id,
-                        content=structured_content_text,
-                        usage_metadata=None,
-                        source="on_tool_end",
-                    )
-                    if debug_message:
-                        yield debug_message
-        else:
-            logger.debug("on_tool_end: no tool message output")
-            content_text = (
-                f"\n\n<details>\n<summary>Tool completed with no output</summary>\n\n"
-                f"Runtime: {runtime_str}\n\n"
-                f"</details>\n\n"
-            )
-            debug_message = chat_request_wrapper.create_debug_sse_message(
-                request_id=request_information.request_id,
-                content=content_text,
-                usage_metadata=None,
-                source="on_tool_end",
-            )
-            if debug_message:
-                yield debug_message
-
-    # noinspection PyMethodMayBeStatic
     async def _handle_on_chat_model_start(
         self,
         *,
@@ -582,52 +312,8 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        """Emit debug SSE listing input messages when debug logging is enabled (skipped otherwise)."""
+        yield None
 
-        yield None  # moved logging to _handle_on_chat_model_end so we get the final messages added by tools
-
-        # if not chat_request_wrapper.enable_debug_logging:
-        #     return
-        #
-        # data: EventData = event["data"] if "data" in event else {}
-        # # {
-        # #     "event": "on_chat_model_start",
-        # #     "name": str,                    # Name of the chat model (e.g., "ChatOpenAI", "gpt-4")
-        # #     "run_id": str,                  # Unique UUID for this execution
-        # #     "parent_ids": List[str],        # List of parent run IDs (v2 only)
-        # #     "tags": List[str],              # Tags for filtering/organization
-        # #     "metadata": Dict[str, Any],     # Additional metadata
-        # #     "data": {
-        # #         "input": {
-        # #             "messages": List[List[BaseMessage]]  # The input messages
-        # #         }
-        # #     }
-        # # }
-        # input_messages_list: list[list[BaseMessage]] = cast(
-        #     list[list[BaseMessage]],
-        #     cast(dict[str, Any], data.get("input", {})).get("messages", []),
-        # )
-        # input_messages: list[BaseMessage] = (
-        #     input_messages_list[0] if input_messages_list else []
-        # )
-        # # append all the messages into content_text
-        # content_text = "```\n"
-        # content_text += "> Starting new chat_model with messages:\n"
-        # for message_number, input_message in enumerate(input_messages):
-        #     content_text += (
-        #         f"--- Message {message_number + 1} by {input_message.type} ---\n"
-        #     )
-        #     content_text += f"{input_message.content}\n"
-        # content_text += "```\n"
-        #
-        # yield chat_request_wrapper.create_debug_sse_message(
-        #     request_id=request_information.request_id,
-        #     content=content_text,
-        #     usage_metadata=None,
-        #     source="on_chat_model_start",
-        # )
-
-    # noinspection PyMethodMayBeStatic
     async def _handle_on_chat_model_end(
         self,
         *,
@@ -635,24 +321,10 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        """Emit debug SSE listing input messages when debug logging is enabled (skipped otherwise)."""
         if not chat_request_wrapper.enable_debug_logging:
             return
 
         data: EventData = event["data"] if "data" in event else {}
-        # {
-        #     "event": "on_chat_model_end",
-        #     "name": str,                    # Name of the chat model (e.g., "ChatOpenAI", "gpt-4")
-        #     "run_id": str,                  # Unique UUID for this execution
-        #     "parent_ids": List[str],        # List of parent run IDs (v2 only)
-        #     "tags": List[str],              # Tags for filtering/organization
-        #     "metadata": Dict[str, Any],     # Additional metadata
-        #     "data": {
-        #         "input": {
-        #             "messages": List[List[BaseMessage]]  # The input messages
-        #         }
-        #     }
-        # }
         input_messages_list: list[list[BaseMessage]] = cast(
             list[list[BaseMessage]],
             cast(dict[str, Any], data.get("input", {})).get("messages", []),
@@ -660,15 +332,22 @@ class LangGraphStreamingManager:
         input_messages: list[BaseMessage] = (
             input_messages_list[0] if input_messages_list else []
         )
-        streamed_output = self._pop_streamed_text(
-            request_id=str(request_information.request_id),
+        streamed_output_record: StreamedOutput | None = (
+            self._stream_debug_output_manager.pop_streamed_output()
         )
-        # append all the messages into content_text
+        streamed_output: str | None = (
+            "".join(streamed_output_record.text_fragments)
+            if streamed_output_record and streamed_output_record.text_fragments
+            else None
+        )
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""
             content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
-            content_text += f"{input_message.content}\n"
+            content_text += f"{format_message_content(input_message.content)}\n"
+            if isinstance(input_message, AIMessage) and input_message.tool_calls:
+                for tool_call in input_message.tool_calls:
+                    content_text += f"  Tool Call: {tool_call.get('name', 'unknown')}({json.dumps(tool_call.get('args', {}), default=str)})\n"
         if streamed_output:
             content_text += "--- Streamed assistant output ---\n"
             content_text += f"{streamed_output}\n"
@@ -701,248 +380,27 @@ class LangGraphStreamingManager:
                 source="on_chat_model_end",
             )
 
-    @staticmethod
-    def _format_text_resource_contents(text: str) -> str:
-        """Extract JSON fields (result, error, meta, urls) from text for human-readable output."""
-        result = ""
-        json_object: Any = LangGraphStreamingManager.safe_json(text)
-        if json_object is not None and isinstance(json_object, dict):
-            if "result" in json_object:
-                result += str(json_object.get("result")) + "\n"
-            if "error" in json_object:
-                result += "Error: " + str(json_object.get("error")) + "\n"
-            if "meta" in json_object:
-                meta = json_object.get("meta", {})
-                if isinstance(meta, dict) and len(meta) > 0:
-                    result += "Metadata:\n"
-                    for key, value in meta.items():
-                        result += f"- {key}: {value}\n"
-            if "urls" in json_object:
-                urls = json_object.get("urls", [])
-                if isinstance(urls, list) and len(urls) > 0:
-                    result += "Related URLs:\n"
-                    for url in urls:
-                        result += f"- {url}\n"
-            if "result" not in json_object and "error" not in json_object:
-                result += text + "\n"
-        else:
-            result += text + "\n"
-        return result
-
-    async def _handle_on_tool_error(
+    async def _handle_on_custom_event(
         self,
         *,
         event: StandardStreamEvent | CustomStreamEvent,
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
-        tool_start_times: dict[str, float],
-        user_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
-        """Emit SSE when an MCP tool raises an error, including runtime if available."""
-        # Extract error details
-        tool_name: Optional[str] = event["name"] if "name" in event else None
-        data = event["data"] if "data" in event else {}
-        error_message: BaseException | Any | str = data.get("error") or str(event)
-        tool_input: Optional[Dict[str, Any]] = data.get("input")
-        runtime_str: str = ""
-        tool_key: str = self.make_tool_key(tool_name, tool_input)
-        start_time: Optional[float] = tool_start_times.pop(tool_key, None)
-        if start_time is not None:
-            elapsed: float = time.time() - start_time
-            runtime_str = f"{elapsed:.2f}s"
-        logger.error(
-            "Tool error in %s: (%s) %s [runtime: %s]",
-            tool_name,
-            type(error_message),
-            error_message,
-            runtime_str,
-        )
-        if isinstance(error_message, AuthorizationNeededException):
-            # Auth errors are handled in _stream_resp_async_generator where
-            # the exception is caught and the login prompt is yielded once.
-            # Yielding here as well would duplicate the message.
-            return
-
-        content_text: str = f"\n\n> Tool {tool_name} encountered an error: {error_message} [runtime: {runtime_str}]\n"
-
-        yield chat_request_wrapper.create_sse_message(
-            request_id=request_information.request_id,
-            content=content_text,
-            usage_metadata=None,
-            source="on_tool_error",
-        )
-
-        # Write error output to file and provide download link
-        if self.environment_variables.write_tool_output_to_file:
-            error_content: str = (
-                f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
+        name = event.get("name")
+        if name == "mcp_task_progress":
+            data: Dict[str, Any] = dict(event.get("data", {}))
+            chunk = chat_request_wrapper.create_task_progress_sse_event(
+                request_id=request_information.request_id,
+                task_id=data.get("task_id", ""),
+                status=data.get("status", ""),
+                message=data.get("message"),
             )
-            self._append_streamed_text_fragment(
-                request_id=str(request_information.request_id),
-                content_text=error_content,
-            )
-            tool_display_name: str = self.tool_display_name_mapper.get_name_for_tool(
-                tool_name=tool_name or "unknown",
-                tool_input=tool_input,
-            )
-            write_result: (
-                DebugFileWriteResult | None
-            ) = await self.debug_file_writer.write_to_file_async(
-                content=error_content,
-                user_id=user_id,
-                file_name=tool_name or "unknown",
-            )
-            if (
-                write_result is not None
-                and write_result.file_path
-                and write_result.file_url
-            ):
-                download_text: str = f"\n\n[Click to download {tool_display_name} Error Output]({write_result.file_url})\n\n"
-                yield chat_request_wrapper.create_sse_message(
-                    request_id=request_information.request_id,
-                    content=download_text,
-                    usage_metadata=None,
-                    source="on_tool_error",
-                )
+            if chunk:
+                yield chunk
+        else:
+            logger.debug("Skipped custom event: %s", name)
 
-    @staticmethod
-    def make_tool_key(
-        tool_name1: Optional[str], tool_input1: Optional[Dict[str, Any]]
-    ) -> str:
-        """Generate a unique key for a tool invocation to correlate start/end events."""
-        # Use tool name and a hash of the input for uniqueness
-        if tool_name1 is None:
-            tool_name1 = "unknown"
-        # noinspection PyBroadException
-        try:
-            tool_input_str = json.dumps(tool_input1, sort_keys=True, default=str)
-        except Exception:
-            tool_input_str = str(tool_input1)
-        return f"{tool_name1}:{hash(tool_input_str)}"
-
-    @staticmethod
-    def safe_json(string: str) -> Any:
-        """Parse JSON string, returning None on failure instead of raising."""
-        try:
-            return json.loads(string)
-        except json.JSONDecodeError:
-            return None
-
-    @staticmethod
-    def convert_message_content_into_string(*, tool_message: ToolMessage) -> str:
-        """Convert a ToolMessage's content to a string, extracting JSON result if present."""
-        if isinstance(tool_message.content, str):
-            # the content is str then just return it
-            # see if this is a json object embedded in text
-            return LangGraphStreamingManager._format_text_resource_contents(
-                text=tool_message.content
-            )
-
-        # tool_message.content is a list of dicts (TextContent) where the text field
-        # is a stringified json of the structured content
-        if (
-            isinstance(tool_message.content, list)
-            and len(tool_message.content) == 1
-            and isinstance(tool_message.content[0], dict)
-            and "text" in tool_message.content[0]
-        ):
-            text = tool_message.content[0]["text"]
-            # see if text is json
-            json_object: dict[str, Any] = LangGraphStreamingManager.safe_json(text)
-            if json_object is not None and isinstance(json_object, dict):
-                if "result" in json_object:
-                    return cast(str, json_object.get("result"))
-
-        return (
-            # otherwise if content is a list, convert each item to str and join the items with a space
-            " ".join([str(c) for c in tool_message.content])
-        )
-
-    @staticmethod
-    def get_structured_content_from_tool_message(
-        *, tool_message: ToolMessage
-    ) -> dict[str, Any] | None:
-        """Extract structured dict content from a ToolMessage if available."""
-        content_dict: Dict[str, Any] | None = None
-        if isinstance(tool_message.content, dict):
-            content_dict = tool_message.content
-        elif (
-            isinstance(tool_message.content, list)
-            and len(tool_message.content) == 1
-            and isinstance(tool_message.content[0], dict)
-        ):
-            content_dict = tool_message.content[0]
-        return content_dict
-
-    async def _buffer_stream_content(
-        self,
-        *,
-        request_id: str,
-        content_text: str,
-        force_flush: bool = False,
-    ) -> str | None:
-        if not self.enable_streaming_buffering:
-            existing_buffer = self._stream_buffers.pop(request_id, None)
-            existing_text = (
-                "".join(existing_buffer.chunks)
-                if existing_buffer is not None and existing_buffer.chunks
-                else ""
-            )
-            immediate_text = f"{existing_text}{content_text}"
-            return immediate_text or None
-
-        buffer = self._stream_buffers.setdefault(
-            request_id,
-            _StreamBuffer(chunks=[], last_flush_ts=time.monotonic()),
-        )
-        if content_text:
-            buffer.chunks.append(content_text)
-        if not buffer.chunks and force_flush:
-            self._stream_buffers.pop(request_id, None)
-            return None
-        if not buffer.chunks:
-            return None
-        now = time.monotonic()
-        should_flush = (
-            force_flush
-            or ("\n" in content_text if content_text else False)
-            or (now - buffer.last_flush_ts) >= self.buffer_flush_interval_seconds
-        )
-        if not should_flush:
-            return None
-        combined = "".join(buffer.chunks)
-        buffer.chunks.clear()
-        buffer.last_flush_ts = now
-        if not combined:
-            if force_flush:
-                self._stream_buffers.pop(request_id, None)
-            return None
-        if force_flush:
-            self._stream_buffers.pop(request_id, None)
-        return combined
-
-    def _append_streamed_text_fragment(
-        self,
-        *,
-        request_id: str,
-        content_text: str,
-    ) -> None:
-        if not content_text:
-            return
-        fragments = self._streamed_text_fragments.setdefault(request_id, [])
-        fragments.append(content_text)
-
-    def _pop_streamed_text(self, *, request_id: str) -> str | None:
-        fragments = self._streamed_text_fragments.pop(request_id, None)
-        if not fragments:
-            return None
-        combined = "".join(fragments)
-        return combined if combined else None
-
-    def _clear_request_streamed_text(self, *, request_id: str) -> None:
-        self._streamed_text_fragments.pop(request_id, None)
-
-    # noinspection PyMethodMayBeStatic
     async def _handle_non_text_content_debug(
         self,
         *,
@@ -955,7 +413,7 @@ class LangGraphStreamingManager:
         for block in non_text_blocks:
             block_type = block.get("type", "unknown")
             if block_type in ("reasoning_content", "reasoning"):
-                reasoning_text = self._extract_reasoning_text(block)
+                reasoning_text = extract_reasoning_text(block)
                 if reasoning_text:
                     content_text = (
                         f"\n\n<details>\n<summary>Reasoning</summary>\n\n"
@@ -970,21 +428,3 @@ class LangGraphStreamingManager:
                     )
                     if message:
                         yield message
-
-    @staticmethod
-    def _extract_reasoning_text(block: dict[str, Any]) -> str | None:
-        """Extract reasoning text from a reasoning_content or reasoning block."""
-        block_type = block.get("type")
-        if block_type == "reasoning_content":
-            rc = block.get("reasoning_content", {})
-            if isinstance(rc, dict):
-                return rc.get("text")
-        elif block_type == "reasoning":
-            return block.get("reasoning")
-        return None
-
-
-@dataclass
-class _StreamBuffer:
-    chunks: list[str]
-    last_flush_ts: float

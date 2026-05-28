@@ -71,6 +71,11 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_STREAMING_BUFFERING", "true"))
 
     @property
+    def debug_prefixes(self) -> tuple[str, ...]:
+        raw = os.environ.get("DEBUG_PREFIXES", "DEBUG:,/debug ")
+        return tuple(p for p in raw.split(",") if p)
+
+    @property
     def client_ids_for_debug_output(self) -> set[str] | None:
         # read the CLIENT_IDS_FOR_DEBUG_OUTPUT environment variable and split it by commas
         client_ids = os.environ.get("CLIENT_IDS_FOR_DEBUG_OUTPUT", "aiden")
@@ -180,6 +185,54 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("SNAPSHOT_CACHE_MODEL_CONFIGS_COLLECTION") or None
 
     @property
+    def snapshot_cache_schema_version(self) -> str:
+        """Schema version for snapshot cache entries.
+
+        Changing this value automatically obsoletes all existing cache
+        entries without migration — queries use the version as part of
+        the cache key, so old-version entries are never found.
+        """
+        return os.environ.get("SNAPSHOT_CACHE_SCHEMA_VERSION", "1")
+
+    @property
+    def mcp_tool_cache_type(self) -> str:
+        """Backend for the MCP tool list cache: 'mongo', 'memory', or '' (disabled).
+
+        Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
+        """
+        explicit = os.environ.get("MCP_TOOL_CACHE_TYPE", "").strip().lower()
+        if explicit:
+            return explicit
+        return self.snapshot_cache_type
+
+    @property
+    def mcp_tool_cache_db_name(self) -> str:
+        """MongoDB database name for MCP tool list cache.
+
+        Falls back to MONGO_LLM_STORAGE_DB_NAME for backward compatibility.
+        """
+        return (
+            os.environ.get("MCP_TOOL_CACHE_DB_NAME")
+            or self.mongo_llm_storage_db_name
+            or "language_model_gateway"
+        )
+
+    @property
+    def mcp_tool_cache_db_collection(self) -> str:
+        """MongoDB collection name for MCP tool list cache."""
+        return os.environ.get("MCP_TOOL_CACHE_DB_COLLECTION", "mcp-tool-cache")
+
+    @property
+    def token_cache_schema_version(self) -> str:
+        """Schema version for token cache entries.
+
+        Changing this value automatically obsoletes all existing token
+        cache entries without migration — queries filter by version,
+        so old-version entries are never matched.
+        """
+        return os.environ.get("TOKEN_CACHE_SCHEMA_VERSION", "1")
+
+    @property
     def write_tool_output_to_file(self) -> bool:
         return self.str2bool(os.environ.get("WRITE_TOOL_OUTPUT_TO_FILE", "false"))
 
@@ -206,6 +259,14 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def mongo_db_dcr_collection_name(self) -> str:
         return os.environ.get("MONGO_DB_DCR_COLLECTION_NAME", "dcr_registrations")
+
+    @property
+    def emit_task_progress_in_chat_completions(self) -> bool:
+        """When True, MCP task progress updates are emitted as content deltas
+        in the Chat Completions streaming format."""
+        return self.str2bool(
+            os.environ.get("EMIT_TASK_PROGRESS_IN_CHAT_COMPLETIONS", "false")
+        )
 
     @property
     def mcp_tools_metadata_cache_ttl_seconds(self) -> int:
@@ -263,6 +324,14 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def aws_region(self) -> str:
         return os.environ.get("AWS_REGION", "us-east-1")
+
+    @property
+    def bedrock_use_anthropic_client(self) -> bool:
+        return os.environ.get("BEDROCK_USE_ANTHROPIC_CLIENT", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     @property
     def default_model_provider(self) -> str:
@@ -325,3 +394,14 @@ class LanguageModelCommonEnvironmentVariables(
         instead of reading a local ``.mcp.json`` file.
         """
         return os.environ.get("PLUGINS_MCP_SERVER")
+
+    @property
+    def mcp_app_proxy_base_url(self) -> Optional[str]:
+        """Base URL for the MCP Apps proxy endpoint.
+
+        When set, the injected bridge JavaScript in MCP App iframes can
+        proxy ``tools/call`` and ``resources/read`` requests through this
+        URL back to the MCP server.  Typically points to the gateway's
+        own base URL (e.g., ``http://localhost:5000``).
+        """
+        return os.environ.get("MCP_APP_PROXY_BASE_URL")

@@ -14,6 +14,11 @@ class TokenCacheItem(BaseDbModel):
     Represents a token cache item in the database.
     """
 
+    schema_version: Optional[str] = Field(
+        default=None,
+        description="Schema version of this cache entry. Used to filter out stale entries after schema changes.",
+    )
+
     created: datetime = Field(
         description="The creation time of the token as a datetime object."
     )
