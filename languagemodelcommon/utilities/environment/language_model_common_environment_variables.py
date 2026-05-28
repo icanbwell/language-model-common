@@ -218,6 +218,11 @@ class LanguageModelCommonEnvironmentVariables(
         )
 
     @property
+    def mcp_tool_cache_db_collection(self) -> str:
+        """MongoDB collection name for MCP tool list cache."""
+        return os.environ.get("MCP_TOOL_CACHE_DB_COLLECTION", "mcp_tool_cache")
+
+    @property
     def token_cache_schema_version(self) -> str:
         """Schema version for token cache entries.
 

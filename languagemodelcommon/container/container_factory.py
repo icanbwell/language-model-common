@@ -138,8 +138,13 @@ class LanguageModelCommonContainerFactory:
                     mongo_password=c.resolve(
                         LanguageModelCommonEnvironmentVariables
                     ).mongo_llm_storage_db_password,
-                    collection="mcp_tool_cache",
+                    collection=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mcp_tool_cache_db_collection,
                 ),
+                collection=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mcp_tool_cache_db_collection,
             ),
         )
         container.singleton(
