@@ -1,11 +1,19 @@
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 
 @dataclass
 class StreamBuffer:
     chunks: list[str] = field(default_factory=list)
     last_flush_ts: float = 0.0
+
+
+@dataclass
+class StreamedOutput:
+    event_name: str
+    start_time: datetime
+    text_fragments: list[str] = field(default_factory=list)
 
 
 class StreamBufferManager:
@@ -18,7 +26,7 @@ class StreamBufferManager:
         self._flush_interval_seconds = flush_interval_seconds
         self._enabled = enabled
         self._stream_buffers: dict[str, StreamBuffer] = {}
-        self._streamed_text_fragments: dict[str, list[str]] = {}
+        self._streamed_outputs: dict[str, StreamedOutput] = {}
 
     async def buffer_content(
         self,
@@ -67,18 +75,34 @@ class StreamBufferManager:
             self._stream_buffers.pop(request_id, None)
         return combined
 
+    def start_streamed_output(
+        self, *, request_id: str, event_name: str, start_time: datetime
+    ) -> None:
+        self._streamed_outputs[request_id] = StreamedOutput(
+            event_name=event_name, start_time=start_time
+        )
+
     def append_streamed_text_fragment(self, *, request_id: str, text: str) -> None:
         if not text:
             return
-        fragments = self._streamed_text_fragments.setdefault(request_id, [])
-        fragments.append(text)
+        output = self._streamed_outputs.get(request_id)
+        if output is None:
+            output = StreamedOutput(
+                event_name="unknown",
+                start_time=datetime.now(tz=timezone.utc),
+            )
+            self._streamed_outputs[request_id] = output
+        output.text_fragments.append(text)
+
+    def pop_streamed_output(self, request_id: str) -> StreamedOutput | None:
+        return self._streamed_outputs.pop(request_id, None)
 
     def pop_streamed_text(self, request_id: str) -> str | None:
-        fragments = self._streamed_text_fragments.pop(request_id, None)
-        if not fragments:
+        output = self._streamed_outputs.get(request_id)
+        if not output or not output.text_fragments:
             return None
-        combined = "".join(fragments)
+        combined = "".join(output.text_fragments)
         return combined if combined else None
 
     def clear_request_streamed_text(self, request_id: str) -> None:
-        self._streamed_text_fragments.pop(request_id, None)
+        self._streamed_outputs.pop(request_id, None)

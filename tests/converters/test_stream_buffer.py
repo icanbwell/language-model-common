@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
@@ -117,3 +119,18 @@ class TestStreamedTextFragments:
         manager = StreamBufferManager(flush_interval_seconds=1.0, enabled=True)
         manager.append_streamed_text_fragment(request_id="req", text="")
         assert manager.pop_streamed_text("req") is None
+
+    def test_start_streamed_output_sets_metadata(self) -> None:
+        manager = StreamBufferManager(flush_interval_seconds=1.0, enabled=True)
+        start = datetime(2026, 5, 28, 6, 30, 0, tzinfo=timezone.utc)
+        manager.start_streamed_output(
+            request_id="req",
+            event_name="agent_node",
+            start_time=start,
+        )
+        manager.append_streamed_text_fragment(request_id="req", text="response")
+        output = manager.pop_streamed_output("req")
+        assert output is not None
+        assert output.event_name == "agent_node"
+        assert output.start_time == start
+        assert "".join(output.text_fragments) == "response"

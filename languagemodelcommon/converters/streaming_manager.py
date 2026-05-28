@@ -38,7 +38,10 @@ from langchain_core.runnables.schema import (
     StandardStreamEvent,
 )
 
-from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_buffer import (
+    StreamBufferManager,
+    StreamedOutput,
+)
 from languagemodelcommon.converters.streaming_formatters import (
     extract_reasoning_text,
     format_message_content,
@@ -298,6 +301,13 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
+        metadata = event.get("metadata") or {}
+        event_name: str = metadata.get("langgraph_node", "unknown")
+        self._stream_buffer_manager.start_streamed_output(
+            request_id=str(request_information.request_id),
+            event_name=event_name,
+            start_time=datetime.now(timezone.utc),
+        )
         yield None
 
     async def _handle_on_chat_model_end(
@@ -318,11 +328,24 @@ class LangGraphStreamingManager:
         input_messages: list[BaseMessage] = (
             input_messages_list[0] if input_messages_list else []
         )
-        streamed_output = self._stream_buffer_manager.pop_streamed_text(
-            str(request_information.request_id),
+        streamed_output_record: StreamedOutput | None = (
+            self._stream_buffer_manager.pop_streamed_output(
+                str(request_information.request_id),
+            )
         )
-        event_name: str = event.get("name", "unknown")
-        event_time: str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        streamed_output: str | None = (
+            "".join(streamed_output_record.text_fragments)
+            if streamed_output_record and streamed_output_record.text_fragments
+            else None
+        )
+        event_name: str = (
+            streamed_output_record.event_name if streamed_output_record else "unknown"
+        )
+        event_time: str = (
+            streamed_output_record.start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+            if streamed_output_record
+            else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        )
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""
