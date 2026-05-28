@@ -7,6 +7,9 @@ from langchain_core.messages import AIMessageChunk
 from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
@@ -69,11 +72,13 @@ def streaming_manager_factory(
             flush_interval_seconds=10.0,
             enabled=True,
         )
+        stream_debug_output_manager = StreamDebugOutputManager()
         tool_event_handler = ToolEventHandler(
             debug_file_writer=mock_file_writer,
             environment_variables=environment_variables,
             tool_display_name_mapper=ToolDisplayNameMapper(),
             stream_buffer_manager=stream_buffer_manager,
+            stream_debug_output_manager=stream_debug_output_manager,
         )
         return LangGraphStreamingManager(
             token_reducer=TokenReducer(),
@@ -81,6 +86,7 @@ def streaming_manager_factory(
             debug_file_writer=mock_file_writer,
             tool_event_handler=tool_event_handler,
             stream_buffer_manager=stream_buffer_manager,
+            stream_debug_output_manager=stream_debug_output_manager,
         )
 
     return _factory
@@ -179,5 +185,5 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
         )
     ]
 
-    # Verify fragments were cleared
-    assert manager._stream_buffer_manager.pop_streamed_text("req-2") is None
+    # Verify debug output was cleared
+    assert manager._stream_debug_output_manager.pop_text() is None

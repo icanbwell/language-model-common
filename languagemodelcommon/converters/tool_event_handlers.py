@@ -11,6 +11,9 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.streaming_formatters import (
     convert_message_content_into_string,
     make_tool_key,
@@ -41,6 +44,7 @@ class ToolEventHandler:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         tool_display_name_mapper: ToolDisplayNameMapper,
         stream_buffer_manager: StreamBufferManager,
+        stream_debug_output_manager: StreamDebugOutputManager,
     ) -> None:
         if debug_file_writer is None:
             raise ValueError("debug_file_writer must not be None")
@@ -50,11 +54,14 @@ class ToolEventHandler:
             raise ValueError("tool_display_name_mapper must not be None")
         if stream_buffer_manager is None:
             raise ValueError("stream_buffer_manager must not be None")
+        if stream_debug_output_manager is None:
+            raise ValueError("stream_debug_output_manager must not be None")
 
         self._debug_file_writer = debug_file_writer
         self._environment_variables = environment_variables
         self._tool_display_name_mapper = tool_display_name_mapper
         self._stream_buffer_manager = stream_buffer_manager
+        self._stream_debug_output_manager = stream_debug_output_manager
 
     async def handle_tool_start(
         self,
@@ -92,7 +99,6 @@ class ToolEventHandler:
                 tool_name=tool_name, tool_input=tool_input
             )
             buffered_chunk = await self._stream_buffer_manager.buffer_content(
-                request_id=str(request_information.request_id),
                 content_text=content_text,
             )
             if buffered_chunk:
@@ -103,8 +109,7 @@ class ToolEventHandler:
                     source="on_tool_start",
                 )
             if chat_request_wrapper.enable_debug_logging:
-                self._stream_buffer_manager.append_streamed_text_fragment(
-                    request_id=str(request_information.request_id),
+                self._stream_debug_output_manager.append_fragment(
                     text=f"\n--- Tool Call: {tool_name} ---\n{json.dumps(tool_input_display, indent=2, default=str)}\n",
                 )
             debug_content_text: str = (
@@ -217,8 +222,7 @@ class ToolEventHandler:
                     str(artifact) if artifact else tool_message_content
                 )
                 if chat_request_wrapper.enable_debug_logging:
-                    self._stream_buffer_manager.append_streamed_text_fragment(
-                        request_id=str(request_information.request_id),
+                    self._stream_debug_output_manager.append_fragment(
                         text=f"\n--- Tool Output: {tool_name} ({runtime_str}) ---\n{tool_message_or_artifact_content}\n",
                     )
 
@@ -339,8 +343,7 @@ class ToolEventHandler:
             error_content: str = (
                 f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
             )
-            self._stream_buffer_manager.append_streamed_text_fragment(
-                request_id=str(request_information.request_id),
+            self._stream_debug_output_manager.append_fragment(
                 text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{error_message}\n",
             )
             tool_display_name: str = self._tool_display_name_mapper.get_name_for_tool(

@@ -43,6 +43,9 @@ from typing import (
 )
 
 from languagemodelcommon.configs.schemas.config_schema import PromptConfig
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
@@ -126,6 +129,7 @@ class LangGraphToOpenAIConverter:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         token_reducer: TokenReducer,
         streaming_manager: LangGraphStreamingManager,
+        stream_debug_output_manager: StreamDebugOutputManager,
     ) -> None:
         if environment_variables is None:
             raise ValueError("environment_variables must not be None")
@@ -154,6 +158,14 @@ class LangGraphToOpenAIConverter:
             raise TypeError(
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
             )
+
+        if stream_debug_output_manager is None:
+            raise ValueError("stream_debug_output_manager must not be None")
+        if not isinstance(stream_debug_output_manager, StreamDebugOutputManager):
+            raise TypeError(
+                f"stream_debug_output_manager must be StreamDebugOutputManager, got {type(stream_debug_output_manager)}"
+            )
+        self._stream_debug_output_manager = stream_debug_output_manager
 
     async def _stream_resp_async_generator(
         self,
@@ -231,11 +243,7 @@ class LangGraphToOpenAIConverter:
             # terminates the event stream early.  Write the messages log here
             # so that the debug download link is still available.
             if chat_request_wrapper.enable_debug_logging:
-                streamed_output = (
-                    self.streaming_manager._stream_buffer_manager.pop_streamed_text(
-                        request_id=str(request_id),
-                    )
-                )
+                streamed_output = self._stream_debug_output_manager.pop_text()
                 content_text = ""
                 if streamed_output:
                     content_text += "--- Streamed assistant output ---\n"

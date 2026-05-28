@@ -6,6 +6,9 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables.schema import StandardStreamEvent
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
+)
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
@@ -56,11 +59,13 @@ def tool_event_handler(monkeypatch: pytest.MonkeyPatch) -> ToolEventHandler:
         flush_interval_seconds=10.0,
         enabled=False,
     )
+    stream_debug_output_manager = StreamDebugOutputManager()
     return ToolEventHandler(
         debug_file_writer=mock_file_writer,
         environment_variables=environment_variables,
         tool_display_name_mapper=ToolDisplayNameMapper(),
         stream_buffer_manager=stream_buffer_manager,
+        stream_debug_output_manager=stream_debug_output_manager,
     )
 
 

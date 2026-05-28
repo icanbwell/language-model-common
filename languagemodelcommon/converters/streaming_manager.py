@@ -37,8 +37,9 @@ from langchain_core.runnables.schema import (
     StandardStreamEvent,
 )
 
-from languagemodelcommon.converters.stream_buffer import (
-    StreamBufferManager,
+from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_debug_output_manager import (
+    StreamDebugOutputManager,
     StreamedOutput,
 )
 from languagemodelcommon.converters.streaming_formatters import (
@@ -91,6 +92,7 @@ class LangGraphStreamingManager:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         tool_event_handler: ToolEventHandler,
         stream_buffer_manager: StreamBufferManager,
+        stream_debug_output_manager: StreamDebugOutputManager,
     ) -> None:
         if token_reducer is None:
             raise ValueError("token_reducer must not be None")
@@ -123,6 +125,14 @@ class LangGraphStreamingManager:
                 "stream_buffer_manager must be an instance of StreamBufferManager"
             )
         self._stream_buffer_manager = stream_buffer_manager
+
+        if stream_debug_output_manager is None:
+            raise ValueError("stream_debug_output_manager must not be None")
+        if not isinstance(stream_debug_output_manager, StreamDebugOutputManager):
+            raise TypeError(
+                "stream_debug_output_manager must be an instance of StreamDebugOutputManager"
+            )
+        self._stream_debug_output_manager = stream_debug_output_manager
 
     async def handle_langchain_event(
         self,
@@ -238,12 +248,10 @@ class LangGraphStreamingManager:
                 if self.environment_variables.log_input_and_output and content_text:
                     logger.debug("Returning content: %s", content_text)
                 if content_text:
-                    self._stream_buffer_manager.append_streamed_text_fragment(
-                        request_id=str(request_information.request_id),
+                    self._stream_debug_output_manager.append_fragment(
                         text=content_text,
                     )
                     buffered_chunk = await self._stream_buffer_manager.buffer_content(
-                        request_id=str(request_information.request_id),
                         content_text=content_text,
                     )
                     if buffered_chunk:
@@ -272,7 +280,6 @@ class LangGraphStreamingManager:
         data = event["data"] if "data" in event else {}
         output: Dict[str, Any] | str | None = data.get("output")
         buffered_chunk = await self._stream_buffer_manager.buffer_content(
-            request_id=str(request_information.request_id),
             content_text="",
             force_flush=True,
         )
@@ -289,9 +296,7 @@ class LangGraphStreamingManager:
                 usage_metadata=output["usage_metadata"],
                 source="on_chain_end",
             )
-        self._stream_buffer_manager.clear_request_streamed_text(
-            str(request_information.request_id),
-        )
+        self._stream_debug_output_manager.clear()
 
     async def _handle_on_chat_model_start(
         self,
@@ -321,9 +326,7 @@ class LangGraphStreamingManager:
             input_messages_list[0] if input_messages_list else []
         )
         streamed_output_record: StreamedOutput | None = (
-            self._stream_buffer_manager.pop_streamed_output(
-                str(request_information.request_id),
-            )
+            self._stream_debug_output_manager.pop_streamed_output()
         )
         streamed_output: str | None = (
             "".join(streamed_output_record.text_fragments)
