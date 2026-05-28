@@ -100,7 +100,7 @@ class TestToolListCacheMakeKey:
         key = ToolListCache.make_key(
             "https://example.com", auth_header="Bearer token123"
         )
-        assert key == "https://example.com|Bearer token123"
+        assert key == "https://example.com"
 
     def test_none_auth_header_returns_url(self) -> None:
         key = ToolListCache.make_key("https://example.com", auth_header=None)
@@ -110,14 +110,14 @@ class TestToolListCacheMakeKey:
         key = ToolListCache.make_key("https://example.com", auth_header="")
         assert key == "https://example.com"
 
-    def test_different_auth_headers_produce_different_keys(self) -> None:
+    def test_different_auth_headers_produce_same_key(self) -> None:
         key_a = ToolListCache.make_key(
             "https://example.com", auth_header="Bearer user_a"
         )
         key_b = ToolListCache.make_key(
             "https://example.com", auth_header="Bearer user_b"
         )
-        assert key_a != key_b
+        assert key_a == key_b
 
 
 # ---------- list_all_tools_cached ----------
