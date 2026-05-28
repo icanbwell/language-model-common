@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = "mcp_tool_cache"
 
 
-class MongoToolListStore:
+class McpToolListStore:
     """Persistent MCP tool list store backed by py-key-value-aio.
 
     Implements ToolListStoreProtocol using any py-key-value-aio BaseStore

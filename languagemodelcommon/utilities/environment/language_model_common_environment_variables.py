@@ -195,6 +195,29 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("SNAPSHOT_CACHE_SCHEMA_VERSION", "1")
 
     @property
+    def mcp_tool_cache_type(self) -> str:
+        """Backend for the MCP tool list cache: 'mongo', 'memory', or '' (disabled).
+
+        Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
+        """
+        explicit = os.environ.get("MCP_TOOL_CACHE_TYPE", "").strip().lower()
+        if explicit:
+            return explicit
+        return self.snapshot_cache_type
+
+    @property
+    def mcp_tool_cache_db_name(self) -> str:
+        """MongoDB database name for MCP tool list cache.
+
+        Falls back to MONGO_LLM_STORAGE_DB_NAME for backward compatibility.
+        """
+        return (
+            os.environ.get("MCP_TOOL_CACHE_DB_NAME")
+            or self.mongo_llm_storage_db_name
+            or "language_model_gateway"
+        )
+
+    @property
     def token_cache_schema_version(self) -> str:
         """Schema version for token cache entries.
 
