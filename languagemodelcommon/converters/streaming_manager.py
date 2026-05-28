@@ -91,8 +91,8 @@ class LangGraphStreamingManager:
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         tool_event_handler: ToolEventHandler,
-        stream_buffer_manager: StreamBufferManager,
-        stream_debug_output_manager: StreamDebugOutputManager,
+        stream_buffer_manager: StreamBufferManager | None = None,
+        stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
         if token_reducer is None:
             raise ValueError("token_reducer must not be None")
@@ -118,21 +118,28 @@ class LangGraphStreamingManager:
             )
         self._tool_event_handler = tool_event_handler
 
-        if stream_buffer_manager is None:
-            raise ValueError("stream_buffer_manager must not be None")
-        if not isinstance(stream_buffer_manager, StreamBufferManager):
-            raise TypeError(
-                "stream_buffer_manager must be an instance of StreamBufferManager"
-            )
-        self._stream_buffer_manager = stream_buffer_manager
+        self._static_stream_buffer_manager = stream_buffer_manager
+        self._static_stream_debug_output_manager = stream_debug_output_manager
 
-        if stream_debug_output_manager is None:
-            raise ValueError("stream_debug_output_manager must not be None")
-        if not isinstance(stream_debug_output_manager, StreamDebugOutputManager):
-            raise TypeError(
-                "stream_debug_output_manager must be an instance of StreamDebugOutputManager"
-            )
-        self._stream_debug_output_manager = stream_debug_output_manager
+    @property
+    def _stream_buffer_manager(self) -> StreamBufferManager:
+        if self._static_stream_buffer_manager is not None:
+            return self._static_stream_buffer_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_buffer_manager,
+        )
+
+        return get_stream_buffer_manager()
+
+    @property
+    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
+        if self._static_stream_debug_output_manager is not None:
+            return self._static_stream_debug_output_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_debug_output_manager,
+        )
+
+        return get_stream_debug_output_manager()
 
     async def handle_langchain_event(
         self,

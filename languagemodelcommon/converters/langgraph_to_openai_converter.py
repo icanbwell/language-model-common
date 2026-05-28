@@ -129,7 +129,7 @@ class LangGraphToOpenAIConverter:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         token_reducer: TokenReducer,
         streaming_manager: LangGraphStreamingManager,
-        stream_debug_output_manager: StreamDebugOutputManager,
+        stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
         if environment_variables is None:
             raise ValueError("environment_variables must not be None")
@@ -159,13 +159,17 @@ class LangGraphToOpenAIConverter:
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
             )
 
-        if stream_debug_output_manager is None:
-            raise ValueError("stream_debug_output_manager must not be None")
-        if not isinstance(stream_debug_output_manager, StreamDebugOutputManager):
-            raise TypeError(
-                f"stream_debug_output_manager must be StreamDebugOutputManager, got {type(stream_debug_output_manager)}"
-            )
-        self._stream_debug_output_manager = stream_debug_output_manager
+        self._static_stream_debug_output_manager = stream_debug_output_manager
+
+    @property
+    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
+        if self._static_stream_debug_output_manager is not None:
+            return self._static_stream_debug_output_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_debug_output_manager,
+        )
+
+        return get_stream_debug_output_manager()
 
     async def _stream_resp_async_generator(
         self,

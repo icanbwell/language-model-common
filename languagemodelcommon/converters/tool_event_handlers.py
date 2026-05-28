@@ -43,8 +43,8 @@ class ToolEventHandler:
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         tool_display_name_mapper: ToolDisplayNameMapper,
-        stream_buffer_manager: StreamBufferManager,
-        stream_debug_output_manager: StreamDebugOutputManager,
+        stream_buffer_manager: StreamBufferManager | None = None,
+        stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
         if debug_file_writer is None:
             raise ValueError("debug_file_writer must not be None")
@@ -52,16 +52,32 @@ class ToolEventHandler:
             raise ValueError("environment_variables must not be None")
         if tool_display_name_mapper is None:
             raise ValueError("tool_display_name_mapper must not be None")
-        if stream_buffer_manager is None:
-            raise ValueError("stream_buffer_manager must not be None")
-        if stream_debug_output_manager is None:
-            raise ValueError("stream_debug_output_manager must not be None")
 
         self._debug_file_writer = debug_file_writer
         self._environment_variables = environment_variables
         self._tool_display_name_mapper = tool_display_name_mapper
-        self._stream_buffer_manager = stream_buffer_manager
-        self._stream_debug_output_manager = stream_debug_output_manager
+        self._static_stream_buffer_manager = stream_buffer_manager
+        self._static_stream_debug_output_manager = stream_debug_output_manager
+
+    @property
+    def _stream_buffer_manager(self) -> StreamBufferManager:
+        if self._static_stream_buffer_manager is not None:
+            return self._static_stream_buffer_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_buffer_manager,
+        )
+
+        return get_stream_buffer_manager()
+
+    @property
+    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
+        if self._static_stream_debug_output_manager is not None:
+            return self._static_stream_debug_output_manager
+        from languagemodelcommon.context.request_context import (
+            get_stream_debug_output_manager,
+        )
+
+        return get_stream_debug_output_manager()
 
     async def handle_tool_start(
         self,

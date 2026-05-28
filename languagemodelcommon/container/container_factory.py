@@ -14,10 +14,6 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
-from languagemodelcommon.converters.stream_buffer import StreamBufferManager
-from languagemodelcommon.converters.stream_debug_output_manager import (
-    StreamDebugOutputManager,
-)
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
@@ -169,26 +165,12 @@ class LanguageModelCommonContainerFactory:
             ),
         )
 
-        # --- Request-scoped services (one instance per HTTP request) ---
+        # --- Streaming components (singletons — per-request state via contextvar) ---
+        # StreamBufferManager and StreamDebugOutputManager are created per-request
+        # and set into contextvars by init_request_context(). These singletons
+        # read from the contextvar at access time.
 
-        container.request_scoped(
-            service_type=StreamBufferManager,
-            factory=lambda c: StreamBufferManager(
-                flush_interval_seconds=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).streaming_buffer_flush_interval_seconds,
-                enabled=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).enable_streaming_buffering,
-            ),
-        )
-
-        container.request_scoped(
-            service_type=StreamDebugOutputManager,
-            factory=lambda c: StreamDebugOutputManager(),
-        )
-
-        container.request_scoped(
+        container.singleton(
             service_type=ToolEventHandler,
             factory=lambda c: ToolEventHandler(
                 debug_file_writer=c.resolve(FileWriter),
@@ -196,12 +178,10 @@ class LanguageModelCommonContainerFactory:
                     LanguageModelCommonEnvironmentVariables
                 ),
                 tool_display_name_mapper=c.resolve(ToolDisplayNameMapper),
-                stream_buffer_manager=c.resolve(StreamBufferManager),
-                stream_debug_output_manager=c.resolve(StreamDebugOutputManager),
             ),
         )
 
-        container.request_scoped(
+        container.singleton(
             service_type=LangGraphStreamingManager,
             factory=lambda c: LangGraphStreamingManager(
                 environment_variables=c.resolve(
@@ -210,12 +190,10 @@ class LanguageModelCommonContainerFactory:
                 debug_file_writer=c.resolve(FileWriter),
                 token_reducer=c.resolve(TokenReducer),
                 tool_event_handler=c.resolve(ToolEventHandler),
-                stream_buffer_manager=c.resolve(StreamBufferManager),
-                stream_debug_output_manager=c.resolve(StreamDebugOutputManager),
             ),
         )
 
-        container.request_scoped(
+        container.singleton(
             service_type=LangGraphToOpenAIConverter,
             factory=lambda c: LangGraphToOpenAIConverter(
                 environment_variables=c.resolve(
@@ -223,7 +201,6 @@ class LanguageModelCommonContainerFactory:
                 ),
                 token_reducer=c.resolve(TokenReducer),
                 streaming_manager=c.resolve(LangGraphStreamingManager),
-                stream_debug_output_manager=c.resolve(StreamDebugOutputManager),
             ),
         )
 
