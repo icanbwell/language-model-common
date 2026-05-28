@@ -19,7 +19,6 @@ See Also:
       which orchestrates streaming and calls this manager.
 """
 
-from datetime import datetime, timezone
 import json
 import logging
 from typing import (
@@ -251,7 +250,7 @@ class LangGraphStreamingManager:
                         yield chat_request_wrapper.create_sse_message(
                             request_id=request_information.request_id,
                             content=buffered_chunk,
-                            usage_metadata=chunk.usage_metadata,
+                            usage_metadata=chunk.usage_metadata if chunk else None,
                             source="on_chat_model_stream",
                         )
             if chat_request_wrapper.enable_debug_logging:
@@ -301,13 +300,6 @@ class LangGraphStreamingManager:
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        metadata = event.get("metadata") or {}
-        event_name: str = metadata.get("langgraph_node", "unknown")
-        self._stream_buffer_manager.start_streamed_output(
-            request_id=str(request_information.request_id),
-            event_name=event_name,
-            start_time=datetime.now(timezone.utc),
-        )
         yield None
 
     async def _handle_on_chat_model_end(
@@ -338,18 +330,10 @@ class LangGraphStreamingManager:
             if streamed_output_record and streamed_output_record.text_fragments
             else None
         )
-        event_name: str = (
-            streamed_output_record.event_name if streamed_output_record else "unknown"
-        )
-        event_time: str = (
-            streamed_output_record.start_time.strftime("%Y-%m-%d %H:%M:%S UTC")
-            if streamed_output_record
-            else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        )
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""
-            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} | event: {event_name} | {event_time} ---\n"
+            content_text += f"--- Message {message_number + 1} by {input_message.type}{name_suffix} ---\n"
             content_text += f"{format_message_content(input_message.content)}\n"
             if isinstance(input_message, AIMessage) and input_message.tool_calls:
                 for tool_call in input_message.tool_calls:
