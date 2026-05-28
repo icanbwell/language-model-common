@@ -38,6 +38,7 @@ from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 from languagemodelcommon.utilities.cache.config_expiring_cache import (
     ConfigExpiringCache,
 )
+from languagemodelcommon.mcp.mcp_client.tool_list_store_mongo import MongoToolListStore
 from languagemodelcommon.utilities.cache.snapshot_cache_store import (
     create_cache_store,
 )
@@ -116,6 +117,30 @@ class LanguageModelCommonContainerFactory:
                 collection=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).snapshot_cache_collection_name,
+            ),
+        )
+        container.singleton(
+            service_type=MongoToolListStore,
+            factory=lambda c: MongoToolListStore(
+                store=create_cache_store(
+                    cache_type=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).snapshot_cache_type,
+                    mongo_url=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mongo_llm_storage_uri,
+                    mongo_db_name=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mongo_llm_storage_db_name
+                    or "language_model_gateway",
+                    mongo_username=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mongo_llm_storage_db_username,
+                    mongo_password=c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mongo_llm_storage_db_password,
+                    collection="mcp_tool_cache",
+                ),
             ),
         )
         container.singleton(

@@ -53,6 +53,7 @@ from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_invocation import call_mcp_tool_raw
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
+    ToolListStoreProtocol,
     list_all_tools,
     list_all_tools_cached,
 )
@@ -95,6 +96,7 @@ class MCPToolProvider:
         tracing_interceptor: TracingMcpCallInterceptor,
         pass_through_token_manager: PassThroughTokenManager,
         auth_server_metadata_discovery: McpAuthServerDiscoveryProtocol,
+        tool_list_cache_store: "ToolListStoreProtocol | None" = None,
     ) -> None:
         """
         Initialize the MCPToolProvider with authentication and token management.
@@ -154,6 +156,7 @@ class MCPToolProvider:
             ttl_seconds=float(
                 environment_variables.mcp_tools_metadata_cache_ttl_seconds
             ),
+            store=tool_list_cache_store,
         )
 
     @staticmethod
@@ -823,15 +826,12 @@ class MCPToolProvider:
         )
 
         tool_url = tool_config.url or "unknown"
-        config_headers = config.get("headers") or {}
-        cache_key = ToolListCache.make_key(
-            tool_url, auth_header=config_headers.get("Authorization")
-        )
+        cache_key = ToolListCache.make_key(tool_url)
 
         # Check cache before opening a session — avoids the TCP+TLS+initialize
         # cost entirely on a cache hit, and returns valid cached data even if
         # the server is temporarily unreachable.
-        cached = self.tool_list_cache.get(cache_key)
+        cached = await self.tool_list_cache.get_async(key=cache_key)
         if cached is not None:
             mcp_tools = cached
         else:
@@ -848,8 +848,7 @@ class MCPToolProvider:
                     )
             except BaseException as e:
                 if self._contains_http_auth_error(e):
-                    # Invalidate cache on auth errors so retry uses a fresh fetch
-                    self.tool_list_cache.invalidate(cache_key)
+                    await self.tool_list_cache.invalidate_async(key=cache_key)
                 else:
                     raise
 
