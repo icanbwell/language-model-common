@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         LanguageModelCommonEnvironmentVariables,
     )
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AnyMessage, AIMessage, ToolMessage
 from langchain_core.messages.ai import UsageMetadata
 from openai.types.responses import (
     ResponseInputParam,
@@ -467,9 +467,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         json_output_requested: Optional[bool],
         responses: List[AnyMessage],
     ) -> dict[str, Any]:
-        # Build a non-streaming response dict
+        # Build a non-streaming response dict (only AI and Tool messages)
+        ai_messages = [m for m in responses if isinstance(m, (AIMessage, ToolMessage))]
         output: list[ResponseOutputItem] = []
-        for idx, msg in enumerate(responses):
+        for idx, msg in enumerate(ai_messages):
             content: str | list[str | dict[str, Any]] = msg.content
             output.append(
                 ResponseOutputMessage(
@@ -568,9 +569,12 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 source="stream_response",
             )
 
-            # Collect usage from all messages for the final event
+            # Only stream AI and Tool messages (skip System/Human input messages)
+            ai_tool_messages = [
+                m for m in response_messages1 if isinstance(m, (AIMessage, ToolMessage))
+            ]
             accumulated_usage: UsageMetadata | None = None
-            for response_message in response_messages1:
+            for response_message in ai_tool_messages:
                 message_content: str = convert_message_content_to_string(
                     response_message.content
                 )

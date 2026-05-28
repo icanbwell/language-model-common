@@ -5,7 +5,7 @@ from typing import Any, List, cast
 from unittest.mock import MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
 from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
@@ -225,6 +225,23 @@ class TestNonStreamingResponse:
         assert output_msg["role"] == "assistant"
         assert output_msg["status"] == "completed"
         assert output_msg["content"][0]["text"] == "Hello world"
+
+    def test_filters_out_system_and_human_messages(self) -> None:
+        wrapper = _make_wrapper()
+        response = wrapper.create_non_streaming_response(
+            request_id="req-2",
+            json_output_requested=False,
+            responses=[
+                SystemMessage(content="Current date and time: Thursday, May 28, 2026"),
+                HumanMessage(content="Write a story"),
+                AIMessage(content="I can only help with healthcare topics."),
+            ],
+        )
+        assert len(response["output"]) == 1
+        assert (
+            response["output"][0]["content"][0]["text"]
+            == "I can only help with healthcare topics."
+        )
 
     def test_empty_responses(self) -> None:
         wrapper = _make_wrapper()
