@@ -48,7 +48,7 @@ class GithubDirectoryDownloader:
                 is younger than this many seconds.
 
         Returns:
-            Resolved path to the downloaded directory.
+            Resolved path to the downloaded content directory.
 
         Raises:
             ValueError: If the URI is malformed or download fails.
@@ -75,7 +75,9 @@ class GithubDirectoryDownloader:
                 "Cache for %s is fresh — skipping download",
                 source_uri,
             )
-            return target_dir.resolve()
+            return self._resolve_content_dir(
+                target_dir=target_dir, source_path=source_path
+            )
 
         try:
             self._download_with_retry(
@@ -95,7 +97,7 @@ class GithubDirectoryDownloader:
                 )
             else:
                 raise
-        return target_dir.resolve()
+        return self._resolve_content_dir(target_dir=target_dir, source_path=source_path)
 
     @staticmethod
     def _is_cache_fresh(*, target_dir: Path, ttl_seconds: int) -> bool:
@@ -111,6 +113,26 @@ class GithubDirectoryDownloader:
         """Write a timestamp marker so other workers know the cache is fresh."""
         ts_file = target_dir.with_name(target_dir.name + ".ts")
         ts_file.write_text(str(time.time()))
+
+    @staticmethod
+    def _resolve_content_dir(*, target_dir: Path, source_path: str) -> Path:
+        """Return the actual content directory within the cache.
+
+        fsspec's ``get()`` preserves the last component of ``source_path``
+        as a subdirectory inside ``target_dir``.  For example, downloading
+        ``bailey/prompts`` produces ``target_dir/prompts/``.  This method
+        descends into that subdirectory so callers get the path where
+        files actually live.
+
+        Falls back to ``target_dir`` itself when the expected subdirectory
+        does not exist (e.g. single-file downloads or root-level fetches).
+        """
+        if source_path:
+            last_component = Path(source_path).name
+            content_dir = target_dir / last_component
+            if content_dir.is_dir():
+                return content_dir.resolve()
+        return target_dir.resolve()
 
     def _download_with_retry(
         self,
