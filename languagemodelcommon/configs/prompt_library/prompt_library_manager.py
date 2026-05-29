@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
@@ -13,8 +12,7 @@ from languagemodelcommon.configs.prompt_library.prompt_library_environment_varia
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
-if TYPE_CHECKING:
-    from languagemodelcommon.configs.prompt_library.prompt_store import PromptStore
+from languagemodelcommon.configs.prompt_library.prompt_store import PromptStore
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
