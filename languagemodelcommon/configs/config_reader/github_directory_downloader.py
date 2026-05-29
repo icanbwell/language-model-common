@@ -134,13 +134,15 @@ class GithubDirectoryDownloader:
                 last_exc = exc
                 if attempt < self._MAX_RETRIES - 1:
                     delay = self._RETRY_BASE_DELAY * (2**attempt)
+                    exc_type = type(exc).__name__
                     logger.warning(
-                        "Download attempt %d/%d failed for %s/%s (retrying in %.1fs): %s",
+                        "Download attempt %d/%d failed for %s/%s (retrying in %.1fs): [%s] %s",
                         attempt + 1,
                         self._MAX_RETRIES,
                         git_location.owner,
                         git_location.repository,
                         delay,
+                        exc_type,
                         exc,
                     )
                     time.sleep(delay)
@@ -152,9 +154,10 @@ class GithubDirectoryDownloader:
         token_status = (
             "GITHUB_TOKEN is set" if github_token else "GITHUB_TOKEN is NOT set"
         )
+        exc_type = type(last_exc).__name__ if last_exc else "unknown"
         raise ValueError(
             f"Download failed after {self._MAX_RETRIES} attempts for {source_uri} "
-            f"({token_status}): {last_exc}"
+            f"({token_status}): [{exc_type}] {last_exc}"
         ) from last_exc
 
     def _fetch_to_directory(
@@ -209,8 +212,14 @@ class GithubDirectoryDownloader:
             )
             if git_location.branch:
                 source_uri += f"?ref={git_location.branch}"
+            exc_type = type(exc).__name__
+            exc_detail = str(exc) or "(no message)"
+            status_code = ""
+            if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+                status_code = f" [HTTP {exc.response.status_code}]"
             raise ValueError(
-                f"Unable to download github:// directory into cache: {source_uri}"
+                f"Unable to download github:// directory into cache: {source_uri} — "
+                f"{exc_type}{status_code}: {exc_detail}"
             ) from exc
 
         # Atomic swap: staging → target, target → old
