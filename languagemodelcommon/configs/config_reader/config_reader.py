@@ -203,11 +203,6 @@ class ConfigReader:
             )
             return [doc["key"] async for doc in cursor]
 
-        # Fallback for stores that support key enumeration (e.g. FileStore)
-        if hasattr(store, "keys"):
-            all_keys: list[str] = await store.keys(collection_name)
-            return [k for k in all_keys if k.startswith(prefix)]
-
         return []
 
     async def _write_to_model_config_cache(self, models: List[ChatModelConfig]) -> None:
@@ -342,7 +337,16 @@ class ConfigReader:
                 len(models),
             )
         elif GitHubDirectoryHelper.is_github_path(config_path):
-            resolved = self._github_directory_helper.resolve_github_path(config_path)
+            resolved = await self._github_directory_helper.resolve_github_path(
+                config_path
+            )
+            if resolved is None:
+                logger.info(
+                    "ConfigReader with id: %s download lock held for %s — using cache",
+                    self._identifier,
+                    config_path,
+                )
+                return []
             local_config_path = str(resolved)
             models = self._file_config_reader.read_model_configs(
                 config_path=local_config_path,
@@ -639,7 +643,7 @@ class ConfigReader:
     ) -> None:
         # Auto-discover prompts/ folder if no explicit path is configured
         if not self._prompt_library_manager.resolved_path and config_path:
-            discovered = self._discover_prompts_path(config_path)
+            discovered = await self._discover_prompts_path(config_path)
             if discovered:
                 self._prompt_library_manager.resolved_path = discovered
 
@@ -647,7 +651,7 @@ class ConfigReader:
             await self._resolve_prompt_list_async(model.system_prompts)
             await self._resolve_prompt_list_async(model.example_prompts)
 
-    def _discover_prompts_path(self, config_path: str) -> str | None:
+    async def _discover_prompts_path(self, config_path: str) -> str | None:
         """Discover the prompts folder from config_path, supporting GitHub paths."""
         if GitHubDirectoryHelper.is_github_path(config_path):
             from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
@@ -659,9 +663,11 @@ class ConfigReader:
                 suffix=PROMPTS_FOLDER_NAME,
             )
             try:
-                local_path = self._github_directory_helper.resolve_github_path(
+                local_path = await self._github_directory_helper.resolve_github_path(
                     prompts_uri
                 )
+                if local_path is None:
+                    return None
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
                 return str(local_path)
             except Exception as e:

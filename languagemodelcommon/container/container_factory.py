@@ -56,11 +56,33 @@ class LanguageModelCommonContainerFactory:
             factory=lambda c: LanguageModelCommonEnvironmentVariables(),
         )
         container.singleton(
+            service_type=KeyValueBaseStore,
+            factory=lambda c: create_cache_store(
+                mongo_url=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_uri,
+                mongo_db_name=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_name
+                or "language_model_gateway",
+                mongo_username=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_username,
+                mongo_password=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).mongo_llm_storage_db_password,
+                collection=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).model_config_cache_collection_name,
+            ),
+        )
+        container.singleton(
             service_type=GitHubDirectoryHelper,
             factory=lambda c: GitHubDirectoryHelper(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
+                store=c.resolve(KeyValueBaseStore),
             ),
         )
 
@@ -95,27 +117,6 @@ class LanguageModelCommonContainerFactory:
 
         container.singleton(
             service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
-        )
-        container.singleton(
-            service_type=KeyValueBaseStore,
-            factory=lambda c: create_cache_store(
-                mongo_url=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).mongo_llm_storage_uri,
-                mongo_db_name=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).mongo_llm_storage_db_name
-                or "language_model_gateway",
-                mongo_username=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).mongo_llm_storage_db_username,
-                mongo_password=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).mongo_llm_storage_db_password,
-                collection=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).model_config_cache_collection_name,
-            ),
         )
         container.singleton(
             service_type=McpToolListStore,

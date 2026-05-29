@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
+
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -27,12 +29,12 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 class GitHubDirectoryHelper:
     """Encapsulates GitHub directory download, caching, and URI manipulation.
 
-    Environment-dependent configuration (token, cache dir, TTL) is read
+    Environment-dependent configuration (token, cache dir) is read
     from the injected ``environment_variables`` instance rather than from
     ``os.environ`` directly, keeping this class testable and DI-friendly.
 
     Caching is handled at the on-disk level by ``GithubDirectoryDownloader``
-    (timestamp-based freshness check) and at the application level by the
+    (with advisory lock coordination) and at the application level by the
     MongoDB model config cache. There is no in-memory cache layer.
     """
 
@@ -40,8 +42,10 @@ class GitHubDirectoryHelper:
         self,
         *,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        store: AsyncKeyValueProtocol | None = None,
     ) -> None:
         self._environment_variables = environment_variables
+        self._store = store
 
     # ------------------------------------------------------------------
     # Pure / static helpers — no env vars or instance state needed
@@ -124,36 +128,31 @@ class GitHubDirectoryHelper:
     # Instance methods — use environment variables and instance cache
     # ------------------------------------------------------------------
 
-    def resolve_github_path(self, path: str) -> Path:
+    async def resolve_github_path(self, path: str) -> Path | None:
         """Resolve a GitHub path to a local directory.
 
         Accepts ``github://`` URIs, ``https://github.com/`` URLs, or local paths.
         GitHub paths are downloaded via fsspec; local paths are returned as-is.
+
+        Returns None if another worker holds the download lock.
         """
         if self.is_github_path(path):
-            return self.download_github_directory(self.to_github_uri(path))
+            return await self.download_github_directory(self.to_github_uri(path))
         return Path(path)
 
-    def download_github_directory(self, github_uri: str) -> Path:
+    async def download_github_directory(self, github_uri: str) -> Path | None:
         """Download a ``github://`` URI to a local cache directory using fsspec.
 
         The cache directory defaults to ``{tempdir}/github_config_cache`` and can
         be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
-        Caching is handled by ``GithubDirectoryDownloader`` using on-disk
-        timestamp files. There is no in-memory cache layer — the model config
-        cache in MongoDB is the authoritative cache for resolved configs.
+        Returns None if another worker holds the download lock.
         """
         from languagemodelcommon.configs.config_reader.github_directory_downloader import (
             GithubDirectoryDownloader,
         )
 
         env = self._environment_variables
-        cache_ttl = (
-            env.config_cache_timeout_seconds
-            if env
-            else int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "3600"))
-        )
         cache_dir = Path(
             env.github_config_cache_dir
             if env
@@ -167,10 +166,10 @@ class GitHubDirectoryHelper:
 
         github_token = env.github_token if env else os.environ.get("GITHUB_TOKEN")
         downloader = GithubDirectoryDownloader()
-        result: Path = downloader.download(
+        result = await downloader.download(
             source_uri=github_uri,
             github_token=github_token,
             cache_path=cache_dir,
-            cache_ttl_seconds=cache_ttl,
+            store=self._store,
         )
         return result

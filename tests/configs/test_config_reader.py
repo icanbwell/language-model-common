@@ -35,6 +35,33 @@ class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
         return self._prompt_library_path
 
 
+class _AsyncCursorStub:
+    """Simulates an async MongoDB cursor yielding key documents."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    def __aiter__(self) -> "_AsyncCursorStub":
+        self._iter = iter(self._keys)
+        return self
+
+    async def __anext__(self) -> dict[str, str]:
+        try:
+            return {"key": next(self._iter)}
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+class _MockMongoCollection:
+    """Simulates a MongoDB collection with find() returning cached keys."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    def find(self, *args: Any, **kwargs: Any) -> _AsyncCursorStub:
+        return _AsyncCursorStub(self._keys)
+
+
 def _make_model_config_store_mock(*, cached_keys: list[str] | None = None) -> AsyncMock:
     """Create an AsyncMock that quacks like key_value BaseStore."""
     store = AsyncMock()
@@ -43,8 +70,11 @@ def _make_model_config_store_mock(*, cached_keys: list[str] | None = None) -> As
     store.put = AsyncMock()
     store.delete = AsyncMock(return_value=True)
     store.delete_many = AsyncMock(return_value=0)
-    store._collections_by_name = None
-    store.keys = AsyncMock(return_value=cached_keys or [])
+    keys = cached_keys or []
+    if keys:
+        store._collections_by_name = {"models": _MockMongoCollection(keys)}
+    else:
+        store._collections_by_name = {"models": _MockMongoCollection([])}
     return store
 
 
@@ -366,7 +396,7 @@ async def test_model_config_cache_get_error_propagates(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If the cache store .get() raises, the error propagates (fail-fast)."""
+    """If the cache store collection.find() raises, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -375,7 +405,9 @@ async def test_model_config_cache_get_error_propagates(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     cache_store = _make_model_config_store_mock()
-    cache_store.keys.side_effect = ConnectionError("MongoDB unavailable")
+    error_collection = MagicMock()
+    error_collection.find.side_effect = ConnectionError("MongoDB unavailable")
+    cache_store._collections_by_name = {"models": error_collection}
 
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,

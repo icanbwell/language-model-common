@@ -53,7 +53,7 @@ class PromptLibraryManager:
         self._resolved_path = value
         self._github_resolved = False
 
-    def _ensure_local_path(self) -> Path:
+    async def _ensure_local_path(self) -> Path:
         """Return a local filesystem Path, downloading from GitHub if needed."""
         effective_path = self.resolved_path
         if effective_path is None or not str(effective_path).strip():
@@ -65,9 +65,14 @@ class PromptLibraryManager:
                     raise RuntimeError(
                         "GitHubDirectoryHelper is required to resolve GitHub paths"
                     )
-                local_path = self._github_directory_helper.resolve_github_path(
+                local_path = await self._github_directory_helper.resolve_github_path(
                     effective_path
                 )
+                if local_path is None:
+                    raise FileNotFoundError(
+                        f"Download lock held — cannot resolve prompt path: "
+                        f"{effective_path}"
+                    )
                 self._resolved_path = str(local_path)
                 effective_path = self._resolved_path
             self._github_resolved = True
@@ -87,19 +92,19 @@ class PromptLibraryManager:
             if content is not None:
                 return content
 
-        return self._get_prompt_from_filesystem(normalized_name=normalized_name)
+        return await self._get_prompt_from_filesystem(normalized_name=normalized_name)
 
-    def get_prompt(self, name: str) -> str:
+    async def get_prompt(self, name: str) -> str:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("Prompt name must not be empty")
         if not self._VALID_NAME_PATTERN.match(normalized_name):
             raise ValueError(f"Invalid prompt name: {normalized_name}")
 
-        return self._get_prompt_from_filesystem(normalized_name=normalized_name)
+        return await self._get_prompt_from_filesystem(normalized_name=normalized_name)
 
-    def _get_prompt_from_filesystem(self, *, normalized_name: str) -> str:
-        base_path = self._ensure_local_path()
+    async def _get_prompt_from_filesystem(self, *, normalized_name: str) -> str:
+        base_path = await self._ensure_local_path()
 
         # If the name already has an extension, try that file directly
         if any(normalized_name.endswith(ext) for ext in _SUPPORTED_EXTENSIONS):
@@ -124,7 +129,7 @@ class PromptLibraryManager:
         if self._prompt_store is None:
             return 0
 
-        base_path = self._ensure_local_path()
+        base_path = await self._ensure_local_path()
         count = 0
         for ext in _SUPPORTED_EXTENSIONS:
             for prompt_path in base_path.glob(f"*{ext}"):

@@ -115,33 +115,38 @@ def test_is_github_path(path: str, expected: bool) -> None:
 # --- resolve_github_path tests ---
 
 
-def test_resolve_github_path_local(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_local(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
-    result = helper.resolve_github_path(str(tmp_path))
+    result = await helper.resolve_github_path(str(tmp_path))
     assert result == tmp_path
 
 
-def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
     with patch.object(
         helper,
         "download_github_directory",
+        new_callable=AsyncMock,
         return_value=tmp_path,
     ) as mock_download:
-        result = helper.resolve_github_path("github://org/repo/configs?ref=main")
+        result = await helper.resolve_github_path("github://org/repo/configs?ref=main")
 
     assert result == tmp_path
     mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
 
 
-def test_resolve_github_path_https_url(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_https_url(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
     with patch.object(
         helper,
         "download_github_directory",
+        new_callable=AsyncMock,
         return_value=tmp_path,
     ) as mock_download:
-        result = helper.resolve_github_path(
+        result = await helper.resolve_github_path(
             "https://github.com/owner/repo/tree/main/configs"
         )
 
@@ -425,7 +430,8 @@ async def test_prompt_library_resolves_github_nested_directory(
     assert content_md == "# Skills"
 
 
-def test_download_returns_content_subdir(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_download_returns_content_subdir(tmp_path: Path) -> None:
     """download() returns the nested content directory, not the cache root."""
     cache_path = tmp_path / "cache"
     cache_path.mkdir()
@@ -435,53 +441,44 @@ def test_download_returns_content_subdir(tmp_path: Path) -> None:
     def fake_fetch(
         *, git_location: Any, source_path: str, github_token: Any, target_dir: Path
     ) -> None:
-        # Simulate fsspec behavior: creates last component as subdirectory
         subdir = target_dir / Path(source_path).name
         subdir.mkdir(parents=True, exist_ok=True)
         (subdir / "system_prompt.txt").write_text("hello")
 
     with patch.object(downloader, "_fetch_to_directory", side_effect=fake_fetch):
-        result = downloader.download(
+        result = await downloader.download(
             source_uri="github://org/repo/bailey/prompts?ref=main",
             github_token="fake-token",
             cache_path=cache_path,
-            cache_ttl_seconds=0,
         )
 
+    assert result is not None
     assert result.name == "prompts"
     assert (result / "system_prompt.txt").read_text() == "hello"
 
 
-def test_download_cached_returns_content_subdir(tmp_path: Path) -> None:
-    """download() returns content subdir even on cache hit."""
+@pytest.mark.asyncio
+async def test_download_cached_returns_content_subdir(tmp_path: Path) -> None:
+    """download() always re-downloads (no local freshness check)."""
     cache_path = tmp_path / "cache"
     cache_path.mkdir()
 
     downloader = GithubDirectoryDownloader()
 
-    # Pre-populate the cache to simulate a cache hit
-    from hashlib import sha256
+    def fake_fetch(
+        *, git_location: Any, source_path: str, github_token: Any, target_dir: Path
+    ) -> None:
+        subdir = target_dir / Path(source_path).name
+        subdir.mkdir(parents=True, exist_ok=True)
+        (subdir / "my_prompt.txt").write_text("fresh content")
 
-    key = "org/repo:main:bailey/prompts"
-    cache_dir_name = f"org-repo-{sha256(key.encode('utf-8')).hexdigest()[:12]}"
-    target_dir = cache_path / cache_dir_name
-    target_dir.mkdir()
-    prompts_subdir = target_dir / "prompts"
-    prompts_subdir.mkdir()
-    (prompts_subdir / "my_prompt.txt").write_text("cached content")
+    with patch.object(downloader, "_fetch_to_directory", side_effect=fake_fetch):
+        result = await downloader.download(
+            source_uri="github://org/repo/bailey/prompts?ref=main",
+            github_token="fake-token",
+            cache_path=cache_path,
+        )
 
-    # Write the timestamp file to make cache fresh
-    ts_file = target_dir.with_name(target_dir.name + ".ts")
-    import time
-
-    ts_file.write_text(str(time.time()))
-
-    result = downloader.download(
-        source_uri="github://org/repo/bailey/prompts?ref=main",
-        github_token="fake-token",
-        cache_path=cache_path,
-        cache_ttl_seconds=3600,
-    )
-
+    assert result is not None
     assert result.name == "prompts"
-    assert (result / "my_prompt.txt").read_text() == "cached content"
+    assert (result / "my_prompt.txt").read_text() == "fresh content"
