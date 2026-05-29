@@ -146,14 +146,6 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
 
     @property
-    def model_config_cache_type(self) -> str:
-        """Cache backend type: 'mongo' or '' (disabled)."""
-        explicit = os.environ.get("MODEL_CONFIG_CACHE_TYPE", "").strip().lower()
-        if explicit:
-            return explicit
-        return "mongo"
-
-    @property
     def model_config_cache_collection_name(self) -> str:
         return os.environ.get("MODEL_CONFIG_CACHE_COLLECTION_NAME", "models")
 
@@ -177,17 +169,6 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("MODEL_CONFIG_CACHE_SCHEMA_VERSION", "1")
 
     @property
-    def mcp_tool_cache_type(self) -> str:
-        """Backend for the MCP tool list cache: 'mongo' or '' (disabled).
-
-        Falls back to MODEL_CONFIG_CACHE_TYPE for backward compatibility.
-        """
-        explicit = os.environ.get("MCP_TOOL_CACHE_TYPE", "").strip().lower()
-        if explicit:
-            return explicit
-        return self.model_config_cache_type
-
-    @property
     def mcp_tool_cache_db_name(self) -> str:
         """MongoDB database name for MCP tool list cache.
 
@@ -206,14 +187,11 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def prompt_store_type(self) -> str:
-        """Backend for the prompt store: 'mongo' or '' (disabled).
-
-        Falls back to MODEL_CONFIG_CACHE_TYPE for backward compatibility.
-        """
+        """Backend for the prompt store: 'mongo' or '' (disabled)."""
         explicit = os.environ.get("PROMPT_STORE_TYPE", "").strip().lower()
         if explicit:
             return explicit
-        return self.model_config_cache_type
+        return "mongo"
 
     @property
     def prompt_store_db_name(self) -> str:
@@ -381,17 +359,6 @@ class LanguageModelCommonEnvironmentVariables(
                 str(Path(tempfile.gettempdir()) / "github_config_cache"),
             )
         ) or str(Path(tempfile.gettempdir()) / "github_config_cache")
-
-    @property
-    def github_config_repo_url(self) -> Optional[str]:
-        return os.environ.get("GITHUB_CONFIG_REPO_URL")
-
-    @property
-    def github_timeout(self) -> int:
-        try:
-            return int(os.environ.get("GITHUB_TIMEOUT", "300"))
-        except (ValueError, TypeError):
-            return 300
 
     @property
     def github_token(self) -> Optional[str]:
