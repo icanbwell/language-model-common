@@ -35,7 +35,7 @@ class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
         return self._prompt_library_path
 
 
-def _make_model_config_store_mock() -> AsyncMock:
+def _make_model_config_store_mock(*, cached_keys: list[str] | None = None) -> AsyncMock:
     """Create an AsyncMock that quacks like key_value BaseStore."""
     store = AsyncMock()
     store.get = AsyncMock(return_value=None)
@@ -43,6 +43,8 @@ def _make_model_config_store_mock() -> AsyncMock:
     store.put = AsyncMock()
     store.delete = AsyncMock(return_value=True)
     store.delete_many = AsyncMock(return_value=0)
+    store._collections_by_name = None
+    store.keys = AsyncMock(return_value=cached_keys or [])
     return store
 
 
@@ -75,9 +77,8 @@ async def test_model_config_cache_hit(
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
-    cache_store = _make_model_config_store_mock()
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:Test"])
     model_data = ChatModelConfig(id="1", name="Test", description="").model_dump()
-    cache_store.get.return_value = {"keys": ["v1:Test"]}
     cache_store.get_many.return_value = [model_data]
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
@@ -317,8 +318,7 @@ async def test_model_config_cache_hit_short_circuits_disk(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:SnapModel"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:SnapModel"])
     cache_store.get_many.return_value = [_SAMPLE_MODEL.model_dump()]
 
     reader = ConfigReader(
@@ -350,8 +350,7 @@ async def test_model_config_cache_returns_none_falls_through(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = None
+    cache_store = _make_model_config_store_mock(cached_keys=[])
 
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
@@ -376,7 +375,7 @@ async def test_model_config_cache_get_error_propagates(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     cache_store = _make_model_config_store_mock()
-    cache_store.get.side_effect = ConnectionError("MongoDB unavailable")
+    cache_store.keys.side_effect = ConnectionError("MongoDB unavailable")
 
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
@@ -400,8 +399,7 @@ async def test_model_config_cache_deserialization_error_propagates(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:BadModel"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:BadModel"])
     cache_store.get_many.return_value = [{"bad": "data"}]
 
     reader = ConfigReader(
@@ -426,8 +424,7 @@ async def test_model_config_cache_put_error_propagates(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = None  # miss → read from disk
+    cache_store = _make_model_config_store_mock(cached_keys=[])
     cache_store.put.side_effect = TimeoutError("MongoDB write timeout")
 
     reader = ConfigReader(
@@ -466,8 +463,7 @@ async def test_clear_cache_deletes_entries(
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     """clear_cache() should delete cached model config entries."""
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:ModelA", "v1:ModelB"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:ModelA", "v1:ModelB"])
 
     reader = ConfigReader(
         prompt_library_manager=prompt_library_manager,
@@ -478,10 +474,6 @@ async def test_clear_cache_deletes_entries(
 
     cache_store.delete_many.assert_awaited_once_with(
         ["v1:ModelA", "v1:ModelB"],
-        collection="models",
-    )
-    cache_store.delete.assert_awaited_once_with(
-        "_manifest:v1",
         collection="models",
     )
 
@@ -540,8 +532,7 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:UnresolvedModel"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:UnresolvedModel"])
     cache_store.get_many.return_value = [unresolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
@@ -587,8 +578,7 @@ async def test_first_request_always_resolves_mcp(
             ),
         ],
     )
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:Test"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:Test"])
     cache_store.get_many.return_value = [resolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
@@ -619,8 +609,7 @@ async def test_retry_still_fails_gracefully(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    cache_store = _make_model_config_store_mock()
-    cache_store.get.return_value = {"keys": ["v1:UnresolvedModel"]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:UnresolvedModel"])
     cache_store.get_many.return_value = [unresolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
@@ -650,9 +639,8 @@ async def test_no_retry_when_no_mcp_refs(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    cache_store = _make_model_config_store_mock()
     no_mcp_model = _model_without_mcp()
-    cache_store.get.return_value = {"keys": [f"v1:{no_mcp_model.name}"]}
+    cache_store = _make_model_config_store_mock(cached_keys=[f"v1:{no_mcp_model.name}"])
     cache_store.get_many.return_value = [no_mcp_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)

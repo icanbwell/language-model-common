@@ -146,11 +146,6 @@ class ConfigReader:
             await self._write_to_model_config_cache(models)
             return models
 
-    @property
-    def _manifest_key(self) -> str:
-        version = self._environment_variables.model_config_cache_schema_version
-        return f"_manifest:v{version}"
-
     def _model_config_cache_key(self, *, model_name: str) -> str:
         version = self._environment_variables.model_config_cache_schema_version
         return f"v{version}:{model_name}"
@@ -158,19 +153,18 @@ class ConfigReader:
     async def _read_from_model_config_cache(self) -> List[ChatModelConfig] | None:
         """Load model configs from the model config cache (one row per model).
 
+        Scans the collection for all entries matching the current schema
+        version prefix.
+
         Returns ``None`` when the cache has no entries.
         Raises on store or deserialization errors so that a misconfigured
         cache backend surfaces immediately (fail-fast).
         """
         if not self._model_config_cache_store:
             return None
-        manifest = await self._model_config_cache_store.get(
-            self._manifest_key,
-            collection=self._model_config_cache_collection,
-        )
-        if manifest is None:
-            return None
-        model_keys: list[str] = manifest.get("keys", [])
+        version = self._environment_variables.model_config_cache_schema_version
+        prefix = f"v{version}:"
+        model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
         if not model_keys:
             return None
         results = await self._model_config_cache_store.get_many(
@@ -188,6 +182,34 @@ class ConfigReader:
         )
         return models if models else None
 
+    async def _get_cache_keys_by_prefix(self, *, prefix: str) -> list[str]:
+        """Return all cache keys in the collection that start with *prefix*.
+
+        Uses the underlying MongoDB collection's ``find`` when available,
+        falling back to the store's ``keys()`` method for other backends.
+        """
+        store = self._model_config_cache_store
+        if store is None:
+            return []
+
+        collection_name = self._model_config_cache_collection
+        # MongoDBStore exposes the raw collection via _collections_by_name
+        collections_map = getattr(store, "_collections_by_name", None)
+        if collections_map and collection_name in collections_map:
+            mongo_collection = collections_map[collection_name]
+            cursor = mongo_collection.find(
+                {"key": {"$regex": f"^{prefix}"}},
+                projection={"key": 1, "_id": 0},
+            )
+            return [doc["key"] async for doc in cursor]
+
+        # Fallback for stores that support key enumeration (e.g. FileStore)
+        if hasattr(store, "keys"):
+            all_keys: list[str] = await store.keys(collection_name)
+            return [k for k in all_keys if k.startswith(prefix)]
+
+        return []
+
     async def _write_to_model_config_cache(self, models: List[ChatModelConfig]) -> None:
         """Store each model config as a separate row in the cache.
 
@@ -197,22 +219,14 @@ class ConfigReader:
         if not self._model_config_cache_store:
             return
         ttl = self._environment_variables.model_config_cache_ttl_seconds
-        model_keys: list[str] = []
         for model in models:
             key = self._model_config_cache_key(model_name=model.name)
-            model_keys.append(key)
             await self._model_config_cache_store.put(
                 key,
                 model.model_dump(),
                 ttl=ttl,
                 collection=self._model_config_cache_collection,
             )
-        await self._model_config_cache_store.put(
-            self._manifest_key,
-            {"keys": model_keys},
-            ttl=ttl,
-            collection=self._model_config_cache_collection,
-        )
         logger.info(
             "ConfigReader with id: %s wrote %d configs to model config cache",
             self._identifier,
@@ -674,21 +688,14 @@ class ConfigReader:
 
     async def clear_cache(self) -> None:
         if self._model_config_cache_store:
-            manifest = await self._model_config_cache_store.get(
-                self._manifest_key,
-                collection=self._model_config_cache_collection,
-            )
-            if manifest:
-                model_keys: list[str] = manifest.get("keys", [])
-                if model_keys:
-                    await self._model_config_cache_store.delete_many(
-                        model_keys,
-                        collection=self._model_config_cache_collection,
-                    )
-            await self._model_config_cache_store.delete(
-                self._manifest_key,
-                collection=self._model_config_cache_collection,
-            )
+            version = self._environment_variables.model_config_cache_schema_version
+            prefix = f"v{version}:"
+            model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
+            if model_keys:
+                await self._model_config_cache_store.delete_many(
+                    model_keys,
+                    collection=self._model_config_cache_collection,
+                )
         logger.info(
             "ConfigReader with id: %s cleared model config cache",
             self._identifier,
