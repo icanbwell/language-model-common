@@ -5,10 +5,9 @@ The ``SNAPSHOT_CACHE_TYPE`` env var selects the backend:
 - ``mongo``  — ``ValidatingMongoDBStore`` (wraps ``MongoDBStore``), pings
                MongoDB on open and raises ``ConnectionError`` immediately
                if the server is unreachable.  Fail-fast, not fail-safe.
-- ``memory`` — in-process ``MemoryStore``, no persistence across restarts
 - ``file``   — JSON file-backed store, persists locally without MongoDB
 
-Both ``MongoDBStore`` and ``MemoryStore`` are from ``py-key-value-aio``.
+``MongoDBStore`` is from ``py-key-value-aio``.
 All returned stores support ``async with`` / ``get`` / ``put`` uniformly.
 """
 
@@ -144,18 +143,18 @@ class ValidatingMongoDBStore(MongoDBStore):
 
 def create_cache_store(
     *,
-    cache_type: str = "memory",
+    cache_type: str = "mongo",
     mongo_url: str | None = None,
     mongo_db_name: str = "language_model_gateway",
     mongo_username: str | None = None,
     mongo_password: str | None = None,
     collection: str = "snapshots",
     file_path: str | None = None,
-) -> MongoDBStore | FileStore | MemoryStoreWithContextManager:
+) -> MongoDBStore | FileStore:
     """Create a cache store based on the specified type.
 
     Args:
-        cache_type: Backend type — ``'mongo'``, ``'file'``, or ``'memory'``.
+        cache_type: Backend type — ``'mongo'`` or ``'file'``.
         mongo_url: MongoDB connection URL (required when cache_type='mongo').
         mongo_db_name: MongoDB database name.
         mongo_username: MongoDB username.
@@ -191,11 +190,7 @@ def create_cache_store(
         logger.info("Snapshot cache using file: %s", resolved_path)
         return FileStore(file_path=resolved_path, default_collection=collection)
 
-    # Default: in-memory (no persistence)
-    if cache_type != "memory":
-        logger.warning(
-            "Unknown SNAPSHOT_CACHE_TYPE '%s'; defaulting to memory",
-            cache_type,
-        )
-    logger.info("Snapshot cache using in-memory store")
-    return MemoryStoreWithContextManager(default_collection=collection)
+    raise ValueError(
+        f"Unsupported SNAPSHOT_CACHE_TYPE '{cache_type}'. "
+        f"Supported values: 'mongo', 'file'."
+    )

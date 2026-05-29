@@ -147,18 +147,11 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def snapshot_cache_type(self) -> str:
-        """Cache backend type: 'mongo', 'memory', or '' (disabled).
-
-        Replaces the old ENABLE_SNAPSHOT_CACHE boolean.
-        Falls back to ENABLE_SNAPSHOT_CACHE for backward compatibility.
-        """
+        """Cache backend type: 'mongo' or '' (disabled)."""
         explicit = os.environ.get("SNAPSHOT_CACHE_TYPE", "").strip().lower()
         if explicit:
             return explicit
-        # Backward compat: ENABLE_SNAPSHOT_CACHE=true → "mongo"
-        if self.str2bool(os.environ.get("ENABLE_SNAPSHOT_CACHE", "false")):
-            return "mongo"
-        return "memory"
+        return "mongo"
 
     @property
     def snapshot_cache_collection_name(self) -> str:
@@ -196,7 +189,7 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def mcp_tool_cache_type(self) -> str:
-        """Backend for the MCP tool list cache: 'mongo', 'memory', or '' (disabled).
+        """Backend for the MCP tool list cache: 'mongo' or '' (disabled).
 
         Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
         """
@@ -224,7 +217,7 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def prompt_store_type(self) -> str:
-        """Backend for the prompt store: 'mongo', 'memory', or '' (disabled).
+        """Backend for the prompt store: 'mongo' or '' (disabled).
 
         Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
         """

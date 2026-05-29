@@ -16,24 +16,24 @@ from languagemodelcommon.utilities.cache.snapshot_cache_store import (
 )
 
 
-class TestCreateCacheStoreMemory:
-    """cache_type='memory' returns MemoryStoreWithContextManager."""
+class TestCreateCacheStoreUnsupported:
+    """Unsupported cache types raise ValueError."""
 
-    def test_default_returns_memory(self) -> None:
-        store = create_cache_store()
-        assert isinstance(store, MemoryStoreWithContextManager)
+    def test_memory_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported SNAPSHOT_CACHE_TYPE"):
+            create_cache_store(cache_type="memory")
 
-    def test_explicit_memory(self) -> None:
-        store = create_cache_store(cache_type="memory")
-        assert isinstance(store, MemoryStoreWithContextManager)
-
-    def test_unknown_type_defaults_to_memory(self) -> None:
-        store = create_cache_store(cache_type="redis")
-        assert isinstance(store, MemoryStoreWithContextManager)
+    def test_unknown_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported SNAPSHOT_CACHE_TYPE"):
+            create_cache_store(cache_type="redis")
 
 
 class TestCreateCacheStoreMongo:
     """cache_type='mongo' returns ValidatingMongoDBStore."""
+
+    def test_default_is_mongo(self) -> None:
+        with pytest.raises(ValueError, match="no MongoDB URL"):
+            create_cache_store()
 
     def test_returns_validating_mongodb_store(self) -> None:
         store = create_cache_store(
