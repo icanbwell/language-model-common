@@ -169,7 +169,10 @@ def resolve_mcp_servers(
             if entry.headers:
                 agent.headers = entry.headers
             if entry.auth:
-                agent.auth = entry.auth
+                if entry.auth == "pass_through":
+                    agent.auth = "jwt_token"
+                else:
+                    agent.auth = entry.auth
             if entry.auth_optional is not None:
                 agent.auth_optional = entry.auth_optional
             if entry.auth_providers:
