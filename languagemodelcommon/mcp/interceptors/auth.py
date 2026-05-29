@@ -150,7 +150,7 @@ class AuthMcpCallInterceptor:
             tool_config = self._tool_configs_by_server_name.get(request.server_name)
             if tool_config is None or tool_config.auth != "jwt_token":
                 # Forward caller's token as pass-through even when config
-                # doesn't explicitly declare auth (e.g. stale snapshot cache)
+                # doesn't explicitly declare auth (e.g. stale config cache)
                 auth_header = self._extract_auth_header(self._headers)
                 if auth_header:
                     existing_headers: Dict[str, Any] = dict(request.headers or {})

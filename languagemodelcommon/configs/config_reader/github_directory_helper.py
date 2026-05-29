@@ -33,7 +33,7 @@ class GitHubDirectoryHelper:
 
     Caching is handled at the on-disk level by ``GithubDirectoryDownloader``
     (timestamp-based freshness check) and at the application level by the
-    MongoDB snapshot cache. There is no in-memory cache layer.
+    MongoDB model config cache. There is no in-memory cache layer.
     """
 
     def __init__(
@@ -141,7 +141,7 @@ class GitHubDirectoryHelper:
         be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
         Caching is handled by ``GithubDirectoryDownloader`` using on-disk
-        timestamp files. There is no in-memory cache layer — the snapshot
+        timestamp files. There is no in-memory cache layer — the model config
         cache in MongoDB is the authoritative cache for resolved configs.
         """
         from languagemodelcommon.configs.config_reader.github_directory_downloader import (

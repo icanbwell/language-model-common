@@ -33,7 +33,7 @@ from languagemodelcommon.persistence.persistence_factory import PersistenceFacto
 from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
-from languagemodelcommon.utilities.cache.snapshot_cache_store import (
+from languagemodelcommon.utilities.cache.model_config_cache_store import (
     create_cache_store,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -103,7 +103,7 @@ class LanguageModelCommonContainerFactory:
             factory=lambda c: create_cache_store(
                 cache_type=c.resolve(
                     LanguageModelCommonEnvironmentVariables
-                ).snapshot_cache_type,
+                ).model_config_cache_type,
                 mongo_url=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mongo_llm_storage_uri,
@@ -119,7 +119,7 @@ class LanguageModelCommonContainerFactory:
                 ).mongo_llm_storage_db_password,
                 collection=c.resolve(
                     LanguageModelCommonEnvironmentVariables
-                ).snapshot_cache_collection_name,
+                ).model_config_cache_collection_name,
             ),
         )
         container.singleton(
@@ -159,7 +159,7 @@ class LanguageModelCommonContainerFactory:
                 ),
                 mcp_json_fetcher=c.resolve(McpJsonFetcher),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
-                snapshot_cache_store=c.resolve(KeyValueBaseStore),
+                model_config_cache_store=c.resolve(KeyValueBaseStore),
             ),
         )
         container.singleton(

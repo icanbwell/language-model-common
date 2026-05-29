@@ -1,4 +1,4 @@
-"""Tests for snapshot cache store factory and store types."""
+"""Tests for model config cache store factory and store types."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import pytest
 from key_value.aio.errors.store import StoreSetupError
 from key_value.aio.stores.mongodb import MongoDBStore
 
-from languagemodelcommon.utilities.cache.snapshot_cache_store import (
+from languagemodelcommon.utilities.cache.model_config_cache_store import (
     FileStore,
     MemoryStoreWithContextManager,
     ValidatingMongoDBStore,
@@ -20,11 +20,11 @@ class TestCreateCacheStoreUnsupported:
     """Unsupported cache types raise ValueError."""
 
     def test_memory_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported SNAPSHOT_CACHE_TYPE"):
+        with pytest.raises(ValueError, match="Unsupported MODEL_CONFIG_CACHE_TYPE"):
             create_cache_store(cache_type="memory")
 
     def test_unknown_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported SNAPSHOT_CACHE_TYPE"):
+        with pytest.raises(ValueError, match="Unsupported MODEL_CONFIG_CACHE_TYPE"):
             create_cache_store(cache_type="redis")
 
 
@@ -68,7 +68,9 @@ class TestCreateCacheStoreMongo:
             mongo_db_name="test_db",
             collection="test_cache",
         )
-        with pytest.raises(StoreSetupError, match="Snapshot cache failed to connect"):
+        with pytest.raises(
+            StoreSetupError, match="Model config cache failed to connect"
+        ):
             await store.__aenter__()
 
 
@@ -129,7 +131,7 @@ class TestFileStore:
 
         assert path.is_file()
         data = json.loads(path.read_text())
-        assert "key1" in data.get("snapshots", {})
+        assert "key1" in data.get("models", {})
 
     @pytest.mark.asyncio
     async def test_restores_from_disk(self, tmp_path: Path) -> None:

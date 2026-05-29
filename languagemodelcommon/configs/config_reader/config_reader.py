@@ -42,7 +42,7 @@ class ConfigReader:
         environment_variables: LanguageModelCommonEnvironmentVariables,
         mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
-        snapshot_cache_store: BaseStore | None = None,
+        model_config_cache_store: BaseStore | None = None,
         file_config_reader: FileConfigReader | None = None,
         s3_config_reader: S3ConfigReader | None = None,
     ) -> None:
@@ -56,11 +56,11 @@ class ConfigReader:
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
         self._mcp_json_fetcher = mcp_json_fetcher
-        self._snapshot_cache_store = snapshot_cache_store
+        self._model_config_cache_store = model_config_cache_store
         self._file_config_reader = file_config_reader or FileConfigReader()
         self._s3_config_reader = s3_config_reader or S3ConfigReader()
-        self._snapshot_cache_collection = (
-            self._environment_variables.snapshot_cache_model_configs_collection
+        self._model_config_cache_collection = (
+            self._environment_variables.model_config_cache_collection_name
         )
 
     async def read_model_configs_async(
@@ -74,7 +74,7 @@ class ConfigReader:
             models_testing_path=models_testing_path,
         )
 
-        # Re-resolve MCP servers on first request (snapshot may be stale)
+        # Re-resolve MCP servers on first request (cache may be stale)
         # and on subsequent requests if servers remain unresolved.
         if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
             await self._retry_mcp_resolution(
@@ -105,19 +105,19 @@ class ConfigReader:
         config_path: str,
         models_testing_path: Optional[str],
     ) -> List[ChatModelConfig]:
-        # Read from MongoDB snapshot cache
-        models = await self._read_from_snapshot_cache()
+        # Read from MongoDB model config cache
+        models = await self._read_from_model_config_cache()
         if models:
             return models
 
         logger.info(
-            "ConfigReader with id: %s no snapshot cache, reading from source",
+            "ConfigReader with id: %s no model config cache, reading from source",
             self._identifier,
         )
 
         async with self._lock:
             # Double-check after acquiring lock
-            models = await self._read_from_snapshot_cache()
+            models = await self._read_from_model_config_cache()
             if models:
                 return models
 
@@ -137,62 +137,84 @@ class ConfigReader:
             if not models:
                 logger.warning(
                     "ConfigReader with id: %s read 0 model configurations "
-                    "from %s and no snapshot cache available",
+                    "from %s and no model config cache available",
                     self._identifier,
                     default_config_path,
                 )
                 return models
 
-            await self._write_to_snapshot_cache(models)
+            await self._write_to_model_config_cache(models)
             return models
 
     @property
-    def _snapshot_cache_key(self) -> str:
-        version = self._environment_variables.snapshot_cache_schema_version
-        return f"model_configs:v{version}"
+    def _manifest_key(self) -> str:
+        version = self._environment_variables.model_config_cache_schema_version
+        return f"_manifest:v{version}"
 
-    async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
-        """Load model configs from the snapshot cache.
+    def _model_config_cache_key(self, *, model_name: str) -> str:
+        version = self._environment_variables.model_config_cache_schema_version
+        return f"v{version}:{model_name}"
 
-        Returns ``None`` when the cache has no entry for the key.
+    async def _read_from_model_config_cache(self) -> List[ChatModelConfig] | None:
+        """Load model configs from the model config cache (one row per model).
+
+        Returns ``None`` when the cache has no entries.
         Raises on store or deserialization errors so that a misconfigured
         cache backend surfaces immediately (fail-fast).
         """
-        if not self._snapshot_cache_store:
+        if not self._model_config_cache_store:
             return None
-        data = await self._snapshot_cache_store.get(
-            self._snapshot_cache_key,
-            collection=self._snapshot_cache_collection,
+        manifest = await self._model_config_cache_store.get(
+            self._manifest_key,
+            collection=self._model_config_cache_collection,
         )
-        if data is None:
+        if manifest is None:
             return None
-        models_data: list[dict[str, Any]] = data.get("models", [])
-        models = [ChatModelConfig.model_validate(d) for d in models_data]
+        model_keys: list[str] = manifest.get("keys", [])
+        if not model_keys:
+            return None
+        results = await self._model_config_cache_store.get_many(
+            model_keys,
+            collection=self._model_config_cache_collection,
+        )
+        models: List[ChatModelConfig] = []
+        for data in results:
+            if data is not None:
+                models.append(ChatModelConfig.model_validate(data))
         logger.info(
-            "ConfigReader with id: %s loaded %d configs from snapshot cache",
+            "ConfigReader with id: %s loaded %d configs from model config cache",
             self._identifier,
             len(models),
         )
         return models if models else None
 
-    async def _write_to_snapshot_cache(self, models: List[ChatModelConfig]) -> None:
-        """Store parsed model configs in the snapshot cache.
+    async def _write_to_model_config_cache(self, models: List[ChatModelConfig]) -> None:
+        """Store each model config as a separate row in the cache.
 
         Raises on write errors so that a misconfigured cache backend
         surfaces immediately (fail-fast).
         """
-        if not self._snapshot_cache_store:
+        if not self._model_config_cache_store:
             return
-        data = {"models": [m.model_dump() for m in models]}
-        ttl = self._environment_variables.snapshot_cache_ttl_seconds
-        await self._snapshot_cache_store.put(
-            self._snapshot_cache_key,
-            data,
+        ttl = self._environment_variables.model_config_cache_ttl_seconds
+        model_keys: list[str] = []
+        for model in models:
+            key = self._model_config_cache_key(model_name=model.name)
+            model_keys.append(key)
+            await self._model_config_cache_store.put(
+                key,
+                model.model_dump(),
+                ttl=ttl,
+                collection=self._model_config_cache_collection,
+            )
+        await self._model_config_cache_store.put(
+            self._manifest_key,
+            {"keys": model_keys},
             ttl=ttl,
-            collection=self._snapshot_cache_collection,
+            collection=self._model_config_cache_collection,
         )
         logger.info(
-            "ConfigReader with id: %s wrote %d configs to snapshot cache",
+            "ConfigReader with id: %s wrote %d configs to model config cache",
             self._identifier,
             len(models),
         )
@@ -425,13 +447,13 @@ class ConfigReader:
         """Re-attempt MCP server resolution for models with unresolved refs.
 
         Called on first request (to pick up .mcp.json changes not in the
-        snapshot) and when cached configs carry ``mcp_server`` references
-        without a resolved ``url``.  Always writes back to the snapshot
+        cache) and when cached configs carry ``mcp_server`` references
+        without a resolved ``url``.  Always writes back to the model config
         cache so subsequent reads get the resolved data.
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models=models, config_path=config_path)
-        await self._write_to_snapshot_cache(models)
+        await self._write_to_model_config_cache(models)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
             fetcher_url = (
@@ -651,12 +673,23 @@ class ConfigReader:
                 ) from exc
 
     async def clear_cache(self) -> None:
-        if self._snapshot_cache_store:
-            await self._snapshot_cache_store.delete(
-                self._snapshot_cache_key,
-                collection=self._snapshot_cache_collection,
+        if self._model_config_cache_store:
+            manifest = await self._model_config_cache_store.get(
+                self._manifest_key,
+                collection=self._model_config_cache_collection,
+            )
+            if manifest:
+                model_keys: list[str] = manifest.get("keys", [])
+                if model_keys:
+                    await self._model_config_cache_store.delete_many(
+                        model_keys,
+                        collection=self._model_config_cache_collection,
+                    )
+            await self._model_config_cache_store.delete(
+                self._manifest_key,
+                collection=self._model_config_cache_collection,
             )
         logger.info(
-            "ConfigReader with id: %s cleared snapshot cache",
+            "ConfigReader with id: %s cleared model config cache",
             self._identifier,
         )

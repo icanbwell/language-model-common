@@ -1,6 +1,6 @@
-"""Factory for creating async key-value cache stores for parsed snapshots.
+"""Factory for creating async key-value cache stores for model config persistence.
 
-The ``SNAPSHOT_CACHE_TYPE`` env var selects the backend:
+The ``MODEL_CONFIG_CACHE_TYPE`` env var selects the backend:
 
 - ``mongo``  — ``ValidatingMongoDBStore`` (wraps ``MongoDBStore``), pings
                MongoDB on open and raises ``ConnectionError`` immediately
@@ -46,7 +46,7 @@ class FileStore(MemoryStoreWithContextManager):
         self,
         *,
         file_path: str | Path,
-        default_collection: str = "snapshots",
+        default_collection: str = "models",
     ) -> None:
         super().__init__(default_collection=default_collection)
         self._file_path = Path(file_path)
@@ -120,7 +120,7 @@ class ValidatingMongoDBStore(MongoDBStore):
     """MongoDBStore that validates connectivity on open.
 
     Pings MongoDB during ``__aenter__`` so that a misconfigured
-    snapshot cache fails fast at startup rather than silently
+    model config cache fails fast at startup rather than silently
     swallowing errors at runtime.
     """
 
@@ -130,13 +130,13 @@ class ValidatingMongoDBStore(MongoDBStore):
             await self._db.command("ping")
         except Exception as e:
             raise ConnectionError(
-                f"Snapshot cache failed to connect to MongoDB "
+                f"Model config cache failed to connect to MongoDB "
                 f"(database: {self._db.name}). "
                 f"Verify MONGO_LLM_STORAGE_URI / MONGO_URL, credentials, "
                 f"and network access. Error: {e}"
             ) from e
         logger.info(
-            "Snapshot cache MongoDB connection validated (db=%s)",
+            "Model config cache MongoDB connection validated (db=%s)",
             self._db.name,
         )
 
@@ -167,7 +167,7 @@ def create_cache_store(
     if cache_type == "mongo":
         if not mongo_url:
             raise ValueError(
-                "SNAPSHOT_CACHE_TYPE is 'mongo' but no MongoDB URL is configured"
+                "MODEL_CONFIG_CACHE_TYPE is 'mongo' but no MongoDB URL is configured"
             )
         connection_url = MongoUrlHelpers.add_credentials_to_mongo_url(
             mongo_url=mongo_url,
@@ -175,7 +175,7 @@ def create_cache_store(
             password=mongo_password,
         )
         logger.info(
-            "Snapshot cache using MongoDB: db=%s, collection=%s",
+            "Model config cache using MongoDB: db=%s, collection=%s",
             mongo_db_name,
             collection,
         )
@@ -186,11 +186,11 @@ def create_cache_store(
         )
 
     if cache_type == "file":
-        resolved_path = file_path or f"/tmp/snapshot_cache/{collection}.json"  # noqa: S108  # nosec B108
-        logger.info("Snapshot cache using file: %s", resolved_path)
+        resolved_path = file_path or f"/tmp/model_config_cache/{collection}.json"  # noqa: S108  # nosec B108
+        logger.info("Model config cache using file: %s", resolved_path)
         return FileStore(file_path=resolved_path, default_collection=collection)
 
     raise ValueError(
-        f"Unsupported SNAPSHOT_CACHE_TYPE '{cache_type}'. "
+        f"Unsupported MODEL_CONFIG_CACHE_TYPE '{cache_type}'. "
         f"Supported values: 'mongo', 'file'."
     )

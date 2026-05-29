@@ -146,57 +146,46 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("ENABLE_LLM_CHECKPOINTER", "false"))
 
     @property
-    def snapshot_cache_type(self) -> str:
+    def model_config_cache_type(self) -> str:
         """Cache backend type: 'mongo' or '' (disabled)."""
-        explicit = os.environ.get("SNAPSHOT_CACHE_TYPE", "").strip().lower()
+        explicit = os.environ.get("MODEL_CONFIG_CACHE_TYPE", "").strip().lower()
         if explicit:
             return explicit
         return "mongo"
 
     @property
-    def snapshot_cache_collection_name(self) -> str:
-        return os.environ.get("SNAPSHOT_CACHE_COLLECTION_NAME", "snapshot_cache")
+    def model_config_cache_collection_name(self) -> str:
+        return os.environ.get("MODEL_CONFIG_CACHE_COLLECTION_NAME", "models")
 
     @property
-    def snapshot_cache_ttl_seconds(self) -> int:
-        """TTL for snapshot cache entries in seconds.
+    def model_config_cache_ttl_seconds(self) -> int:
+        """TTL for model config cache entries in seconds.
 
-        Defaults to 3600 (1 hour).  This is independent of
-        ``config_cache_timeout_seconds`` which controls the in-memory
-        cache.  The snapshot cache should persist long enough to
-        survive restarts and new worker processes.
+        Defaults to 3600 (1 hour).  The model config cache should persist
+        long enough to survive restarts and new worker processes.
         """
-        return int(os.environ.get("SNAPSHOT_CACHE_TTL_SECONDS", "3600"))
+        return int(os.environ.get("MODEL_CONFIG_CACHE_TTL_SECONDS", "3600"))
 
     @property
-    def snapshot_cache_model_configs_collection(self) -> str | None:
-        """Optional separate collection for model config snapshots.
-
-        When set, ConfigReader stores its snapshot in this collection
-        instead of the store's default collection.
-        """
-        return os.environ.get("SNAPSHOT_CACHE_MODEL_CONFIGS_COLLECTION") or None
-
-    @property
-    def snapshot_cache_schema_version(self) -> str:
-        """Schema version for snapshot cache entries.
+    def model_config_cache_schema_version(self) -> str:
+        """Schema version for model config cache entries.
 
         Changing this value automatically obsoletes all existing cache
         entries without migration — queries use the version as part of
         the cache key, so old-version entries are never found.
         """
-        return os.environ.get("SNAPSHOT_CACHE_SCHEMA_VERSION", "1")
+        return os.environ.get("MODEL_CONFIG_CACHE_SCHEMA_VERSION", "1")
 
     @property
     def mcp_tool_cache_type(self) -> str:
         """Backend for the MCP tool list cache: 'mongo' or '' (disabled).
 
-        Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
+        Falls back to MODEL_CONFIG_CACHE_TYPE for backward compatibility.
         """
         explicit = os.environ.get("MCP_TOOL_CACHE_TYPE", "").strip().lower()
         if explicit:
             return explicit
-        return self.snapshot_cache_type
+        return self.model_config_cache_type
 
     @property
     def mcp_tool_cache_db_name(self) -> str:
@@ -219,12 +208,12 @@ class LanguageModelCommonEnvironmentVariables(
     def prompt_store_type(self) -> str:
         """Backend for the prompt store: 'mongo' or '' (disabled).
 
-        Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
+        Falls back to MODEL_CONFIG_CACHE_TYPE for backward compatibility.
         """
         explicit = os.environ.get("PROMPT_STORE_TYPE", "").strip().lower()
         if explicit:
             return explicit
-        return self.snapshot_cache_type
+        return self.model_config_cache_type
 
     @property
     def prompt_store_db_name(self) -> str:

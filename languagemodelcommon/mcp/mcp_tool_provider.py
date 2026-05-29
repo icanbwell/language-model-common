@@ -799,7 +799,7 @@ class MCPToolProvider:
         # When auth_providers is configured, use the token exchange flow.
         # Otherwise forward the caller's Authorization header directly —
         # MCP servers that require auth need the token even if the config
-        # doesn't explicitly declare oauth/auth (e.g. stale snapshot cache).
+        # doesn't explicitly declare oauth/auth (e.g. stale config cache).
         logger.info(
             "Tool discovery for '%s': auth=%s, oauth=%s, auth_providers=%s, "
             "has_headers=%s, header_keys=%s",
