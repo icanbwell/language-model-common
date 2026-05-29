@@ -1,7 +1,4 @@
-"""Tests for model config cache store factory and store types."""
-
-import json
-from pathlib import Path
+"""Tests for model config cache store factory."""
 
 import pytest
 
@@ -9,35 +6,24 @@ from key_value.aio.errors.store import StoreSetupError
 from key_value.aio.stores.mongodb import MongoDBStore
 
 from languagemodelcommon.utilities.cache.model_config_cache_store import (
-    FileStore,
-    MemoryStoreWithContextManager,
     ValidatingMongoDBStore,
     create_cache_store,
 )
 
 
-class TestCreateCacheStoreUnsupported:
-    """Unsupported cache types raise ValueError."""
+class TestCreateCacheStore:
+    """create_cache_store returns ValidatingMongoDBStore."""
 
-    def test_memory_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported MODEL_CONFIG_CACHE_TYPE"):
-            create_cache_store(cache_type="memory")
-
-    def test_unknown_type_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported MODEL_CONFIG_CACHE_TYPE"):
-            create_cache_store(cache_type="redis")
-
-
-class TestCreateCacheStoreMongo:
-    """cache_type='mongo' returns ValidatingMongoDBStore."""
-
-    def test_default_is_mongo(self) -> None:
-        with pytest.raises(ValueError, match="no MongoDB URL"):
+    def test_raises_without_url(self) -> None:
+        with pytest.raises(ValueError, match="No MongoDB URL"):
             create_cache_store()
+
+    def test_raises_with_none_url(self) -> None:
+        with pytest.raises(ValueError, match="No MongoDB URL"):
+            create_cache_store(mongo_url=None)
 
     def test_returns_validating_mongodb_store(self) -> None:
         store = create_cache_store(
-            cache_type="mongo",
             mongo_url="mongodb://localhost:27017",
             mongo_db_name="test_db",
             collection="test_cache",
@@ -47,23 +33,15 @@ class TestCreateCacheStoreMongo:
 
     def test_custom_collection(self) -> None:
         store = create_cache_store(
-            cache_type="mongo",
             mongo_url="mongodb://localhost:27017",
             collection="custom_collection",
         )
         assert isinstance(store, ValidatingMongoDBStore)
         assert store.default_collection == "custom_collection"
 
-    def test_raises_without_url(self) -> None:
-        with pytest.raises(ValueError, match="no MongoDB URL"):
-            create_cache_store(cache_type="mongo", mongo_url=None)
-
     @pytest.mark.asyncio
     async def test_aenter_raises_on_unreachable_mongo(self) -> None:
-        """ValidatingMongoDBStore raises when MongoDB is unreachable,
-        instead of silently falling back."""
         store = create_cache_store(
-            cache_type="mongo",
             mongo_url="mongodb://unreachable-host:27017",
             mongo_db_name="test_db",
             collection="test_cache",
@@ -72,92 +50,3 @@ class TestCreateCacheStoreMongo:
             StoreSetupError, match="Model config cache failed to connect"
         ):
             await store.__aenter__()
-
-
-class TestCreateCacheStoreFile:
-    """cache_type='file' returns FileStore."""
-
-    def test_returns_file_store(self, tmp_path: Path) -> None:
-        store = create_cache_store(
-            cache_type="file",
-            file_path=str(tmp_path / "cache.json"),
-        )
-        assert isinstance(store, FileStore)
-
-
-class TestMemoryStoreContextManager:
-    """MemoryStoreWithContextManager supports async with."""
-
-    @pytest.mark.asyncio
-    async def test_context_manager_lifecycle(self) -> None:
-        store = MemoryStoreWithContextManager(default_collection="test")
-        async with store as s:
-            assert s is store
-
-    @pytest.mark.asyncio
-    async def test_put_and_get(self) -> None:
-        store = MemoryStoreWithContextManager(default_collection="test")
-        async with store:
-            await store.put("key1", {"data": "hello"})
-            result = await store.get("key1")
-            assert result is not None
-            assert result["data"] == "hello"
-
-    @pytest.mark.asyncio
-    async def test_get_missing_key(self) -> None:
-        store = MemoryStoreWithContextManager(default_collection="test")
-        async with store:
-            result = await store.get("nonexistent")
-            assert result is None
-
-
-class TestFileStore:
-    """FileStore persists data to a JSON file."""
-
-    @pytest.mark.asyncio
-    async def test_put_and_get(self, tmp_path: Path) -> None:
-        path = tmp_path / "cache.json"
-        async with FileStore(file_path=path) as store:
-            await store.put("key1", {"data": "hello"})
-            result = await store.get("key1")
-            assert result is not None
-            assert result["data"] == "hello"
-
-    @pytest.mark.asyncio
-    async def test_persists_to_disk(self, tmp_path: Path) -> None:
-        path = tmp_path / "cache.json"
-        async with FileStore(file_path=path) as store:
-            await store.put("key1", {"value": 42})
-
-        assert path.is_file()
-        data = json.loads(path.read_text())
-        assert "key1" in data.get("models", {})
-
-    @pytest.mark.asyncio
-    async def test_restores_from_disk(self, tmp_path: Path) -> None:
-        path = tmp_path / "cache.json"
-
-        # Write data in first session
-        async with FileStore(file_path=path) as store:
-            await store.put("key1", {"persisted": True})
-
-        # Read data in new session
-        async with FileStore(file_path=path) as store:
-            result = await store.get("key1")
-            assert result is not None
-            assert result["persisted"] is True
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "nonexistent" / "cache.json"
-        async with FileStore(file_path=path) as store:
-            result = await store.get("key1")
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_handles_corrupt_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "cache.json"
-        path.write_text("not valid json{{{", encoding="utf-8")
-        async with FileStore(file_path=path) as store:
-            result = await store.get("key1")
-            assert result is None

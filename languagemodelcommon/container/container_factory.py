@@ -66,11 +66,9 @@ class LanguageModelCommonContainerFactory:
 
         def _create_prompt_store(c: Any) -> PromptStore | None:
             env = c.resolve(LanguageModelCommonEnvironmentVariables)
-            store_type = env.prompt_store_type
-            if not store_type:
+            if not env.prompt_store_type:
                 return None
             store = create_cache_store(
-                cache_type=store_type,
                 mongo_url=env.mongo_llm_storage_uri,
                 mongo_db_name=env.prompt_store_db_name,
                 mongo_username=env.mongo_llm_storage_db_username,
@@ -101,9 +99,6 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             service_type=KeyValueBaseStore,
             factory=lambda c: create_cache_store(
-                cache_type=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).model_config_cache_type,
                 mongo_url=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mongo_llm_storage_uri,
@@ -126,9 +121,6 @@ class LanguageModelCommonContainerFactory:
             service_type=McpToolListStore,
             factory=lambda c: McpToolListStore(
                 store=create_cache_store(
-                    cache_type=c.resolve(
-                        LanguageModelCommonEnvironmentVariables
-                    ).mcp_tool_cache_type,
                     mongo_url=c.resolve(
                         LanguageModelCommonEnvironmentVariables
                     ).mongo_llm_storage_uri,
