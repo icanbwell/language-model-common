@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -174,8 +175,9 @@ class GithubDirectoryDownloader:
         If the download fails, the existing *target_dir* is left untouched
         so callers can fall back to stale-but-valid cached data.
         """
-        staging_dir = target_dir.with_name(target_dir.name + ".staging")
-        old_dir = target_dir.with_name(target_dir.name + ".old")
+        pid = os.getpid()
+        staging_dir = target_dir.with_name(f"{target_dir.name}.staging.{pid}")
+        old_dir = target_dir.with_name(f"{target_dir.name}.old.{pid}")
 
         if staging_dir.exists():
             shutil.rmtree(staging_dir)

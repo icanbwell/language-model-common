@@ -11,6 +11,7 @@ from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFe
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
+from languagemodelcommon.configs.prompt_library.prompt_store import PromptStore
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
@@ -74,6 +75,23 @@ class LanguageModelCommonContainerFactory:
                 ).config_cache_timeout_seconds,
             ),
         )
+
+        def _create_prompt_store(c: Any) -> PromptStore | None:
+            env = c.resolve(LanguageModelCommonEnvironmentVariables)
+            store_type = env.prompt_store_type
+            if not store_type:
+                return None
+            store = create_cache_store(
+                cache_type=store_type,
+                mongo_url=env.mongo_llm_storage_uri,
+                mongo_db_name=env.prompt_store_db_name,
+                mongo_username=env.mongo_llm_storage_db_username,
+                mongo_password=env.mongo_llm_storage_db_password,
+                collection=env.prompt_store_collection,
+            )
+            return PromptStore(store=store, collection=env.prompt_store_collection)
+
+        container.singleton(service_type=PromptStore, factory=_create_prompt_store)
         container.singleton(
             service_type=PromptLibraryManager,
             factory=lambda c: PromptLibraryManager(
@@ -81,6 +99,7 @@ class LanguageModelCommonContainerFactory:
                     LanguageModelCommonEnvironmentVariables
                 ),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
+                prompt_store=c.resolve(PromptStore),
             ),
         )
 

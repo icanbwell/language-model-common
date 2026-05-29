@@ -223,6 +223,34 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("MCP_TOOL_CACHE_DB_COLLECTION", "mcp-tool-cache")
 
     @property
+    def prompt_store_type(self) -> str:
+        """Backend for the prompt store: 'mongo', 'memory', or '' (disabled).
+
+        Falls back to SNAPSHOT_CACHE_TYPE for backward compatibility.
+        """
+        explicit = os.environ.get("PROMPT_STORE_TYPE", "").strip().lower()
+        if explicit:
+            return explicit
+        return self.snapshot_cache_type
+
+    @property
+    def prompt_store_db_name(self) -> str:
+        """MongoDB database name for prompt store.
+
+        Falls back to MONGO_LLM_STORAGE_DB_NAME for backward compatibility.
+        """
+        return (
+            os.environ.get("PROMPT_STORE_DB_NAME")
+            or self.mongo_llm_storage_db_name
+            or "language_model_gateway"
+        )
+
+    @property
+    def prompt_store_collection(self) -> str:
+        """MongoDB collection name for prompt store."""
+        return os.environ.get("PROMPT_STORE_COLLECTION", "prompts")
+
+    @property
     def token_cache_schema_version(self) -> str:
         """Schema version for token cache entries.
 
@@ -365,10 +393,12 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def github_config_cache_dir(self) -> str:
-        return os.environ.get(
-            "GITHUB_CONFIG_CACHE_DIR",
-            str(Path(tempfile.gettempdir()) / "github_config_cache"),
-        )
+        return self._resolve_path(
+            os.environ.get(
+                "GITHUB_CONFIG_CACHE_DIR",
+                str(Path(tempfile.gettempdir()) / "github_config_cache"),
+            )
+        ) or str(Path(tempfile.gettempdir()) / "github_config_cache")
 
     @property
     def github_config_repo_url(self) -> Optional[str]:

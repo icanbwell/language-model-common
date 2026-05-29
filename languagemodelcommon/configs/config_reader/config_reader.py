@@ -98,7 +98,9 @@ class ConfigReader:
                 )
 
         base_models = [model for model in base_models if not model.disabled]
-        self._resolve_prompt_library(models=base_models, config_path=config_path)
+        await self._resolve_prompt_library_async(
+            models=base_models, config_path=config_path
+        )
         return base_models
 
     async def _read_base_models_async(
@@ -589,7 +591,7 @@ class ConfigReader:
 
         return merged_list
 
-    def _resolve_prompt_library(
+    async def _resolve_prompt_library_async(
         self, models: List[ChatModelConfig], *, config_path: str | None = None
     ) -> None:
         # Auto-discover prompts/ folder if no explicit path is configured
@@ -599,8 +601,8 @@ class ConfigReader:
                 self._prompt_library_manager.resolved_path = discovered
 
         for model in models:
-            self._resolve_prompt_list(model.system_prompts)
-            self._resolve_prompt_list(model.example_prompts)
+            await self._resolve_prompt_list_async(model.system_prompts)
+            await self._resolve_prompt_list_async(model.example_prompts)
 
     def _discover_prompts_path(self, config_path: str) -> str | None:
         """Discover the prompts folder from config_path, supporting GitHub paths."""
@@ -624,14 +626,18 @@ class ConfigReader:
                 return None
         return FileConfigReader.discover_prompts_path(config_path)
 
-    def _resolve_prompt_list(self, prompts: List[PromptConfig] | None) -> None:
+    async def _resolve_prompt_list_async(
+        self, prompts: List[PromptConfig] | None
+    ) -> None:
         if not prompts:
             return
         for prompt in prompts:
             if not prompt.name:
                 continue
             try:
-                prompt.content = self._prompt_library_manager.get_prompt(prompt.name)
+                prompt.content = await self._prompt_library_manager.get_prompt_async(
+                    prompt.name
+                )
             except FileNotFoundError as exc:
                 raise ValueError(
                     f"Prompt not found in prompt library: {prompt.name}"
