@@ -120,7 +120,11 @@ class GithubDirectoryDownloader:
         github_token: str | None,
         target_dir: Path,
     ) -> None:
-        """Try the download up to ``_MAX_RETRIES`` times with exponential backoff."""
+        """Try the download up to ``_MAX_RETRIES`` times with exponential backoff.
+
+        FileNotFoundError is never retried — it indicates the path does not
+        exist in the repository (e.g. a missing client-override directory).
+        """
         last_exc: Exception | None = None
         for attempt in range(self._MAX_RETRIES):
             try:
@@ -131,6 +135,8 @@ class GithubDirectoryDownloader:
                     target_dir=target_dir,
                 )
                 return
+            except FileNotFoundError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt < self._MAX_RETRIES - 1:
@@ -204,7 +210,7 @@ class GithubDirectoryDownloader:
                         continue
                     destination = staging_dir / Path(item_path).name
                     filesystem.get(item_path, str(destination), recursive=True)
-        except ValueError:
+        except (ValueError, FileNotFoundError):
             shutil.rmtree(staging_dir, ignore_errors=True)
             raise
         except Exception as exc:

@@ -44,13 +44,6 @@ def _make_snapshot_store_mock() -> AsyncMock:
 
 
 @pytest.fixture
-def cache_mock() -> AsyncMock:
-    mock = AsyncMock()
-    mock.get.return_value = None
-    return mock
-
-
-@pytest.fixture
 def prompt_library_manager(tmp_path: Path) -> PromptLibraryManager:
     return PromptLibraryManager(
         environment_variables=_StubPromptLibraryEnv(str(tmp_path))
@@ -64,12 +57,10 @@ def environment_variables() -> LanguageModelCommonEnvironmentVariables:
 
 @pytest.fixture
 def config_reader(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     environment_variables: LanguageModelCommonEnvironmentVariables,
 ) -> ConfigReader:
     return ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=environment_variables,
     )
@@ -78,7 +69,6 @@ def config_reader(
 @pytest.mark.asyncio
 async def test_snapshot_cache_hit(
     monkeypatch: Any,
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
@@ -87,7 +77,6 @@ async def test_snapshot_cache_hit(
         "models": [ChatModelConfig(id="1", name="Test", description="").model_dump()],
     }
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -97,13 +86,10 @@ async def test_snapshot_cache_hit(
 
 
 @pytest.mark.asyncio
-async def test_env_var_missing(
-    cache_mock: AsyncMock, prompt_library_manager: PromptLibraryManager
-) -> None:
+async def test_env_var_missing(prompt_library_manager: PromptLibraryManager) -> None:
     if "MODELS_OFFICIAL_PATH" in os.environ:
         del os.environ["MODELS_OFFICIAL_PATH"]
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -115,7 +101,6 @@ async def test_env_var_missing(
 @pytest.mark.asyncio
 async def test_read_from_file(
     FileConfigReaderMock: Any,
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
@@ -124,7 +109,6 @@ async def test_read_from_file(
         ChatModelConfig(id="1", name="FileModel", description="")
     ]
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -136,7 +120,6 @@ async def test_read_from_file(
 @pytest.mark.asyncio
 async def test_read_from_s3(
     S3ConfigReaderMock: Any,
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
@@ -146,7 +129,6 @@ async def test_read_from_s3(
         return_value=[ChatModelConfig(id="2", name="S3Model", description="")]
     )
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -156,12 +138,10 @@ async def test_read_from_s3(
 
 @pytest.mark.asyncio
 async def test_disabled_models_filtered(
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
-    cache_mock.get.return_value = None
     with patch(
         "languagemodelcommon.configs.config_reader.config_reader.FileConfigReader"
     ) as FileConfigReaderMock:
@@ -170,7 +150,6 @@ async def test_disabled_models_filtered(
             ChatModelConfig(id="2", name="Disabled", description="", disabled=True),
         ]
         reader = ConfigReader(
-            cache=cache_mock,
             prompt_library_manager=prompt_library_manager,
             environment_variables=LanguageModelCommonEnvironmentVariables(),
         )
@@ -180,7 +159,7 @@ async def test_disabled_models_filtered(
 
 @pytest.mark.asyncio
 async def test_client_override_merges_with_default(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     client_dir = tmp_path / "clients" / "client-a"
     client_dir.mkdir(parents=True)
@@ -197,7 +176,6 @@ async def test_client_override_merges_with_default(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -210,9 +188,7 @@ async def test_client_override_merges_with_default(
 
 
 @pytest.mark.asyncio
-async def test_prompt_name_resolves_from_library(
-    cache_mock: AsyncMock, tmp_path: Any
-) -> None:
+async def test_prompt_name_resolves_from_library(tmp_path: Any) -> None:
     prompt_library = tmp_path / "prompt_library" / "prompt_library" / "prompts"
     prompt_library.mkdir(parents=True)
     (prompt_library / "support_prompt.txt").write_text(
@@ -229,7 +205,6 @@ async def test_prompt_name_resolves_from_library(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(str(prompt_library))
         ),
@@ -245,7 +220,7 @@ async def test_prompt_name_resolves_from_library(
 
 @pytest.mark.asyncio
 async def test_override_does_not_clobber_default_fields(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     client_dir = tmp_path / "clients" / "client-b"
     client_dir.mkdir(parents=True)
@@ -262,7 +237,6 @@ async def test_override_does_not_clobber_default_fields(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -274,9 +248,7 @@ async def test_override_does_not_clobber_default_fields(
 
 
 @pytest.mark.asyncio
-async def test_prompt_auto_discovered_from_prompts_folder(
-    cache_mock: AsyncMock, tmp_path: Any
-) -> None:
+async def test_prompt_auto_discovered_from_prompts_folder(tmp_path: Any) -> None:
     """When no PROMPT_LIBRARY_PATH is set, prompts/ alongside configs is used."""
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
@@ -293,7 +265,6 @@ async def test_prompt_auto_discovered_from_prompts_folder(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(None)
         ),
@@ -307,7 +278,7 @@ async def test_prompt_auto_discovered_from_prompts_folder(
 
 @pytest.mark.asyncio
 async def test_inline_prompt_content_still_works(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     """Inline content in PromptConfig is preserved (backward compat)."""
     (tmp_path / "model.json").write_text(
@@ -319,7 +290,6 @@ async def test_inline_prompt_content_still_works(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -337,7 +307,6 @@ _SAMPLE_MODEL = ChatModelConfig(id="snap-1", name="SnapModel", description="cach
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_hit_short_circuits_disk(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -351,7 +320,6 @@ async def test_snapshot_cache_hit_short_circuits_disk(
     }
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -369,7 +337,6 @@ async def test_snapshot_cache_hit_short_circuits_disk(
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_returns_none_falls_through(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -385,7 +352,6 @@ async def test_snapshot_cache_returns_none_falls_through(
     snapshot_store.get.return_value = None
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -396,7 +362,6 @@ async def test_snapshot_cache_returns_none_falls_through(
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_get_error_propagates(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -412,7 +377,6 @@ async def test_snapshot_cache_get_error_propagates(
     snapshot_store.get.side_effect = ConnectionError("MongoDB unavailable")
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -423,7 +387,6 @@ async def test_snapshot_cache_get_error_propagates(
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_deserialization_error_propagates(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -439,7 +402,6 @@ async def test_snapshot_cache_deserialization_error_propagates(
     snapshot_store.get.return_value = {"models": [{"bad": "data"}]}
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -450,7 +412,6 @@ async def test_snapshot_cache_deserialization_error_propagates(
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_put_error_propagates(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -467,7 +428,6 @@ async def test_snapshot_cache_put_error_propagates(
     snapshot_store.put.side_effect = TimeoutError("MongoDB write timeout")
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -478,7 +438,6 @@ async def test_snapshot_cache_put_error_propagates(
 
 @pytest.mark.asyncio
 async def test_snapshot_cache_none_store_skips_entirely(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -491,7 +450,6 @@ async def test_snapshot_cache_none_store_skips_entirely(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=None,
@@ -502,7 +460,6 @@ async def test_snapshot_cache_none_store_skips_entirely(
 
 @pytest.mark.asyncio
 async def test_clear_cache_deletes_snapshot_entry(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     """clear_cache() should delete the snapshot cache entry."""
@@ -510,7 +467,6 @@ async def test_clear_cache_deletes_snapshot_entry(
     snapshot_store.delete = AsyncMock(return_value=True)
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=snapshot_store,
@@ -525,12 +481,10 @@ async def test_clear_cache_deletes_snapshot_entry(
 
 @pytest.mark.asyncio
 async def test_clear_cache_without_snapshot_store(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     """clear_cache() with no snapshot store is a no-op."""
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         snapshot_cache_store=None,

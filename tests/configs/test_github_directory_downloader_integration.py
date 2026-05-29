@@ -19,9 +19,6 @@ from languagemodelcommon.configs.config_reader.github_directory_helper import (
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,
-)
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -167,10 +164,8 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -202,10 +197,8 @@ async def test_read_models_from_https_github_url(
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -257,10 +250,8 @@ async def test_github_uri_resolves_mcp_via_fetcher(
         [],
     )
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -295,10 +286,8 @@ async def test_read_model_configs_async_with_github_uri(
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,

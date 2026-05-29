@@ -11,7 +11,6 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 import logging
 import os
 import tempfile
-import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -32,9 +31,9 @@ class GitHubDirectoryHelper:
     from the injected ``environment_variables`` instance rather than from
     ``os.environ`` directly, keeping this class testable and DI-friendly.
 
-    The in-memory ``_cache`` dict is per-instance (and therefore
-    per-worker when registered as a singleton in the container), which
-    avoids cross-worker state issues under Gunicorn prefork.
+    Caching is handled at the on-disk level by ``GithubDirectoryDownloader``
+    (timestamp-based freshness check) and at the application level by the
+    MongoDB snapshot cache. There is no in-memory cache layer.
     """
 
     def __init__(
@@ -43,7 +42,6 @@ class GitHubDirectoryHelper:
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
     ) -> None:
         self._environment_variables = environment_variables
-        self._cache: dict[str, tuple[Path, float]] = {}
 
     # ------------------------------------------------------------------
     # Pure / static helpers — no env vars or instance state needed
@@ -139,20 +137,12 @@ class GitHubDirectoryHelper:
     def download_github_directory(self, github_uri: str) -> Path:
         """Download a ``github://`` URI to a local cache directory using fsspec.
 
-        Results are cached for ``config_cache_timeout_seconds``.
         The cache directory defaults to ``{tempdir}/github_config_cache`` and can
         be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
-        Caching is checked at two levels:
-
-        1. **In-memory** (per-instance / per-worker) — avoids filesystem stat
-           calls on hot paths within the same Gunicorn worker.
-        2. **On-disk timestamp file** — checked by ``GithubDirectoryDownloader``
-           after acquiring its per-URI lock, allowing workers that lost the lock
-           race to skip redundant downloads.
-
-        The downloader itself handles locking, atomic swap, and retry so this
-        method no longer needs its own file lock.
+        Caching is handled by ``GithubDirectoryDownloader`` using on-disk
+        timestamp files. There is no in-memory cache layer — the snapshot
+        cache in MongoDB is the authoritative cache for resolved configs.
         """
         from languagemodelcommon.configs.config_reader.github_directory_downloader import (
             GithubDirectoryDownloader,
@@ -173,19 +163,6 @@ class GitHubDirectoryHelper:
             )
         )
 
-        now = time.monotonic()
-        cached = self._cache.get(github_uri)
-
-        if cached is not None:
-            cached_path, cached_time = cached
-            if (now - cached_time) < cache_ttl and cached_path.is_dir():
-                logger.debug(
-                    "Using cached GitHub download for %s (age: %.0fs)",
-                    github_uri,
-                    now - cached_time,
-                )
-                return cached_path
-
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         github_token = env.github_token if env else os.environ.get("GITHUB_TOKEN")
@@ -196,6 +173,4 @@ class GitHubDirectoryHelper:
             cache_path=cache_dir,
             cache_ttl_seconds=cache_ttl,
         )
-        self._cache[github_uri] = (result, time.monotonic())
-        logger.info("Downloaded and cached GitHub content from %s", github_uri)
         return result

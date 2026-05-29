@@ -32,9 +32,6 @@ from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,
-)
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
 from languagemodelcommon.utilities.cache.snapshot_cache_store import (
     create_cache_store,
@@ -64,15 +61,6 @@ class LanguageModelCommonContainerFactory:
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
-            ),
-        )
-        # we want only one instance of the cache so we use singleton
-        container.singleton(
-            service_type=ConfigExpiringCache,
-            factory=lambda c: ConfigExpiringCache(
-                ttl_seconds=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).config_cache_timeout_seconds,
             ),
         )
 
@@ -165,7 +153,6 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             service_type=ConfigReader,
             factory=lambda c: ConfigReader(
-                cache=c.resolve(ConfigExpiringCache),
                 prompt_library_manager=c.resolve(PromptLibraryManager),
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables

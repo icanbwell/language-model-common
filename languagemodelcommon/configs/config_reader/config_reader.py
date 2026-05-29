@@ -21,9 +21,6 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 )
 from key_value.aio.stores.base import BaseStore
 
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,  # kept for backwards-compatible constructor signature
-)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -41,7 +38,6 @@ class ConfigReader:
     def __init__(
         self,
         *,
-        cache: ConfigExpiringCache | None = None,
         prompt_library_manager: PromptLibraryManager,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         mcp_json_fetcher: McpJsonFetcher | None = None,
@@ -280,6 +276,17 @@ class ConfigReader:
             return []
         try:
             return await self.read_models_from_path_async(config_path=override_path)
+        except (FileNotFoundError, ValueError) as e:
+            if "FileNotFoundError" in str(e) or isinstance(e, FileNotFoundError):
+                logger.debug(
+                    "No client overrides found at %s (path does not exist)",
+                    override_path,
+                )
+            else:
+                logger.warning(
+                    "Failed to load client overrides from %s: %s", override_path, e
+                )
+            return []
         except Exception as e:
             logger.warning(
                 "Failed to load client overrides from %s: %s", override_path, e
