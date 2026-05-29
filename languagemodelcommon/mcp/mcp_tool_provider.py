@@ -96,6 +96,7 @@ class MCPToolProvider:
         pass_through_token_manager: PassThroughTokenManager,
         auth_server_metadata_discovery: McpAuthServerDiscoveryProtocol,
         tool_list_cache_store: "ToolListStoreProtocol | None" = None,
+        default_headers: Dict[str, str] | None = None,
     ) -> None:
         """
         Initialize the MCPToolProvider with authentication and token management.
@@ -151,6 +152,7 @@ class MCPToolProvider:
             )
 
         self.auth_server_metadata_discovery = auth_server_metadata_discovery
+        self._default_headers: Dict[str, str] = default_headers or {}
         self.tool_list_cache = ToolListCache(
             ttl_seconds=float(
                 environment_variables.mcp_tools_metadata_cache_ttl_seconds
@@ -218,11 +220,16 @@ class MCPToolProvider:
             "timeout": timedelta(seconds=tool_call_timeout_seconds),
             "sse_read_timeout": timedelta(seconds=tool_call_timeout_seconds),
         }
+        headers: dict[str, str] = dict(self._default_headers)
         if tool_config.headers:
-            config["headers"] = {
-                key: os.path.expandvars(value)
-                for key, value in tool_config.headers.items()
-            }
+            headers.update(
+                {
+                    key: os.path.expandvars(value)
+                    for key, value in tool_config.headers.items()
+                }
+            )
+        if headers:
+            config["headers"] = headers
         return config
 
     def get_lazy_tools(
