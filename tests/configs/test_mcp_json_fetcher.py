@@ -131,6 +131,31 @@ class TestFetchPluginAsync:
         assert "returned no text" in error
 
     @pytest.mark.asyncio
+    async def test_returns_error_when_tool_reports_isError(self) -> None:
+        session = AsyncMock()
+        session.initialize = AsyncMock()
+        session.call_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    TextContent(type="text", text="Something went wrong on the server")
+                ],
+                isError=True,
+            )
+        )
+        fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
+
+        with patch(
+            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            return_value=_mock_session_ctx(session),
+        ):
+            result, error = await fetcher.fetch_plugin_async("failing-plugin")
+
+        assert result is None
+        assert error is not None
+        assert "returned an error" in error
+        assert "Something went wrong on the server" in error
+
+    @pytest.mark.asyncio
     async def test_applies_env_var_substitution(self, monkeypatch: Any) -> None:
         monkeypatch.setenv("DRIVE_URL", "https://resolved.example.com/drive/")
         session = _make_session(

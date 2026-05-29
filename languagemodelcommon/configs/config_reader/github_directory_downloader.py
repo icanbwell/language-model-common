@@ -144,8 +144,17 @@ class GithubDirectoryDownloader:
                         exc,
                     )
                     time.sleep(delay)
+        source_uri = (
+            f"github://{git_location.owner}/{git_location.repository}/{source_path}"
+        )
+        if git_location.branch:
+            source_uri += f"?ref={git_location.branch}"
+        token_status = (
+            "GITHUB_TOKEN is set" if github_token else "GITHUB_TOKEN is NOT set"
+        )
         raise ValueError(
-            f"Download failed after {self._MAX_RETRIES} attempts: {last_exc}"
+            f"Download failed after {self._MAX_RETRIES} attempts for {source_uri} "
+            f"({token_status}): {last_exc}"
         ) from last_exc
 
     def _fetch_to_directory(
@@ -195,8 +204,13 @@ class GithubDirectoryDownloader:
             raise
         except Exception as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
+            source_uri = (
+                f"github://{git_location.owner}/{git_location.repository}/{source_path}"
+            )
+            if git_location.branch:
+                source_uri += f"?ref={git_location.branch}"
             raise ValueError(
-                "Unable to download github:// directory into cache"
+                f"Unable to download github:// directory into cache: {source_uri}"
             ) from exc
 
         # Atomic swap: staging → target, target → old
