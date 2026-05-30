@@ -73,12 +73,23 @@ class McpJsonFetcher:
             return None, error_msg
 
         raw_json = text_parts[0]
+
+        if getattr(result, "isError", False):
+            error_msg = (
+                f"get_mcp_servers_config returned an error for plugin "
+                f"'{plugin_name}' from {self._url}: {raw_json}"
+            )
+            logger.warning(error_msg)
+            return None, error_msg
+
         try:
             data: Any = substitute_env_vars(json.loads(raw_json))
         except (json.JSONDecodeError, TypeError) as e:
+            preview = raw_json[:200] if raw_json else "<empty>"
             error_msg = (
                 f"Failed to parse MCP config JSON for plugin '{plugin_name}' "
-                f"from {self._url}: {type(e).__name__}: {e}"
+                f"from {self._url}: {type(e).__name__}: {e} "
+                f"(response starts with: {preview!r})"
             )
             logger.warning(error_msg)
             return None, error_msg
@@ -128,12 +139,23 @@ class McpJsonFetcher:
             return None
 
         raw_json = text_parts[0]
+
+        if getattr(result, "isError", False):
+            logger.warning(
+                "get_mcp_servers_config returned an error from %s: %s",
+                self._url,
+                raw_json,
+            )
+            return None
+
         try:
             data: Any = substitute_env_vars(json.loads(raw_json))
         except (json.JSONDecodeError, TypeError):
+            preview = raw_json[:200] if raw_json else "<empty>"
             logger.exception(
-                "Failed to parse MCP config JSON from %s",
+                "Failed to parse MCP config JSON from %s (response starts with: %r)",
                 self._url,
+                preview,
             )
             return None
 

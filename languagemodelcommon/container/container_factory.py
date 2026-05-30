@@ -11,6 +11,7 @@ from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFe
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
+from languagemodelcommon.configs.prompt_library.prompt_store import PromptStore
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
@@ -31,11 +32,8 @@ from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,
-)
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
-from languagemodelcommon.utilities.cache.snapshot_cache_store import (
+from languagemodelcommon.utilities.cache.model_config_cache_store import (
     create_cache_store,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -58,45 +56,8 @@ class LanguageModelCommonContainerFactory:
             factory=lambda c: LanguageModelCommonEnvironmentVariables(),
         )
         container.singleton(
-            service_type=GitHubDirectoryHelper,
-            factory=lambda c: GitHubDirectoryHelper(
-                environment_variables=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ),
-            ),
-        )
-        # we want only one instance of the cache so we use singleton
-        container.singleton(
-            service_type=ConfigExpiringCache,
-            factory=lambda c: ConfigExpiringCache(
-                ttl_seconds=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).config_cache_timeout_seconds,
-            ),
-        )
-        container.singleton(
-            service_type=PromptLibraryManager,
-            factory=lambda c: PromptLibraryManager(
-                environment_variables=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ),
-                github_directory_helper=c.resolve(GitHubDirectoryHelper),
-            ),
-        )
-
-        def _create_mcp_json_fetcher(c: Any) -> McpJsonFetcher | None:
-            url = c.resolve(LanguageModelCommonEnvironmentVariables).plugins_mcp_server
-            return McpJsonFetcher(plugins_mcp_server_url=url) if url else None
-
-        container.singleton(
-            service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
-        )
-        container.singleton(
             service_type=KeyValueBaseStore,
             factory=lambda c: create_cache_store(
-                cache_type=c.resolve(
-                    LanguageModelCommonEnvironmentVariables
-                ).snapshot_cache_type,
                 mongo_url=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mongo_llm_storage_uri,
@@ -112,16 +73,55 @@ class LanguageModelCommonContainerFactory:
                 ).mongo_llm_storage_db_password,
                 collection=c.resolve(
                     LanguageModelCommonEnvironmentVariables
-                ).snapshot_cache_collection_name,
+                ).model_config_cache_collection_name,
             ),
+        )
+        container.singleton(
+            service_type=GitHubDirectoryHelper,
+            factory=lambda c: GitHubDirectoryHelper(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                store=c.resolve(KeyValueBaseStore),
+            ),
+        )
+
+        def _create_prompt_store(c: Any) -> PromptStore | None:
+            env = c.resolve(LanguageModelCommonEnvironmentVariables)
+            if not env.prompt_store_type:
+                return None
+            store = create_cache_store(
+                mongo_url=env.mongo_llm_storage_uri,
+                mongo_db_name=env.prompt_store_db_name,
+                mongo_username=env.mongo_llm_storage_db_username,
+                mongo_password=env.mongo_llm_storage_db_password,
+                collection=env.prompt_store_collection,
+            )
+            return PromptStore(store=store, collection=env.prompt_store_collection)
+
+        container.singleton(service_type=PromptStore, factory=_create_prompt_store)
+        container.singleton(
+            service_type=PromptLibraryManager,
+            factory=lambda c: PromptLibraryManager(
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+                github_directory_helper=c.resolve(GitHubDirectoryHelper),
+                prompt_store=c.resolve(PromptStore),
+            ),
+        )
+
+        def _create_mcp_json_fetcher(c: Any) -> McpJsonFetcher | None:
+            url = c.resolve(LanguageModelCommonEnvironmentVariables).plugins_mcp_server
+            return McpJsonFetcher(plugins_mcp_server_url=url) if url else None
+
+        container.singleton(
+            service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
         )
         container.singleton(
             service_type=McpToolListStore,
             factory=lambda c: McpToolListStore(
                 store=create_cache_store(
-                    cache_type=c.resolve(
-                        LanguageModelCommonEnvironmentVariables
-                    ).mcp_tool_cache_type,
                     mongo_url=c.resolve(
                         LanguageModelCommonEnvironmentVariables
                     ).mongo_llm_storage_uri,
@@ -146,14 +146,13 @@ class LanguageModelCommonContainerFactory:
         container.singleton(
             service_type=ConfigReader,
             factory=lambda c: ConfigReader(
-                cache=c.resolve(ConfigExpiringCache),
                 prompt_library_manager=c.resolve(PromptLibraryManager),
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
                 mcp_json_fetcher=c.resolve(McpJsonFetcher),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
-                snapshot_cache_store=c.resolve(KeyValueBaseStore),
+                model_config_cache_store=c.resolve(KeyValueBaseStore),
             ),
         )
         container.singleton(

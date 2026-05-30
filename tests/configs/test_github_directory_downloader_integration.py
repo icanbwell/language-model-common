@@ -3,6 +3,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch, MagicMock
 
+from languagemodelcommon.configs.config_reader.github_directory_downloader import (
+    GithubDirectoryDownloader,
+)
+
 import pytest
 
 from languagemodelcommon.configs.config_reader.config_reader import ConfigReader
@@ -18,9 +22,6 @@ from languagemodelcommon.configs.config_reader.github_directory_helper import (
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
-)
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,
 )
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
@@ -114,33 +115,38 @@ def test_is_github_path(path: str, expected: bool) -> None:
 # --- resolve_github_path tests ---
 
 
-def test_resolve_github_path_local(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_local(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
-    result = helper.resolve_github_path(str(tmp_path))
+    result = await helper.resolve_github_path(str(tmp_path))
     assert result == tmp_path
 
 
-def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
     with patch.object(
         helper,
         "download_github_directory",
+        new_callable=AsyncMock,
         return_value=tmp_path,
     ) as mock_download:
-        result = helper.resolve_github_path("github://org/repo/configs?ref=main")
+        result = await helper.resolve_github_path("github://org/repo/configs?ref=main")
 
     assert result == tmp_path
     mock_download.assert_called_once_with("github://org/repo/configs?ref=main")
 
 
-def test_resolve_github_path_https_url(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_resolve_github_path_https_url(tmp_path: Path) -> None:
     helper = GitHubDirectoryHelper()
     with patch.object(
         helper,
         "download_github_directory",
+        new_callable=AsyncMock,
         return_value=tmp_path,
     ) as mock_download:
-        result = helper.resolve_github_path(
+        result = await helper.resolve_github_path(
             "https://github.com/owner/repo/tree/main/configs"
         )
 
@@ -167,10 +173,8 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -202,10 +206,8 @@ async def test_read_models_from_https_github_url(
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -257,10 +259,8 @@ async def test_github_uri_resolves_mcp_via_fetcher(
         [],
     )
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -295,10 +295,8 @@ async def test_read_model_configs_async_with_github_uri(
     mock_helper = MagicMock(spec=GitHubDirectoryHelper)
     mock_helper.resolve_github_path.return_value = local_dir
 
-    cache = ConfigExpiringCache(ttl_seconds=0)
     prompt_mgr = _make_prompt_library_manager(tmp_path)
     reader = ConfigReader(
-        cache=cache,
         prompt_library_manager=prompt_mgr,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
         github_directory_helper=mock_helper,
@@ -338,3 +336,149 @@ def test_join_path_works_without_query_params() -> None:
         base_uri="github://org/repo/configs", suffix="clients/client-123"
     )
     assert result == "github://org/repo/configs/clients/client-123"
+
+
+# --- _resolve_content_dir tests ---
+
+
+def test_resolve_content_dir_descends_into_last_component(tmp_path: Path) -> None:
+    """When fsspec creates a subdirectory matching the last path component, return it."""
+    target_dir = tmp_path / "cache-abc123"
+    target_dir.mkdir()
+    content_subdir = target_dir / "prompts"
+    content_subdir.mkdir()
+    (content_subdir / "system_prompt.txt").write_text("hello")
+
+    result = GithubDirectoryDownloader._resolve_content_dir(
+        target_dir=target_dir, source_path="bailey/prompts"
+    )
+
+    assert result == content_subdir.resolve()
+
+
+def test_resolve_content_dir_falls_back_when_no_subdir(tmp_path: Path) -> None:
+    """When the expected subdirectory doesn't exist, return target_dir itself."""
+    target_dir = tmp_path / "cache-abc123"
+    target_dir.mkdir()
+    (target_dir / "file.txt").write_text("content")
+
+    result = GithubDirectoryDownloader._resolve_content_dir(
+        target_dir=target_dir, source_path="bailey/prompts"
+    )
+
+    assert result == target_dir.resolve()
+
+
+def test_resolve_content_dir_with_empty_source_path(tmp_path: Path) -> None:
+    """When source_path is empty (root fetch), return target_dir."""
+    target_dir = tmp_path / "cache-abc123"
+    target_dir.mkdir()
+
+    result = GithubDirectoryDownloader._resolve_content_dir(
+        target_dir=target_dir, source_path=""
+    )
+
+    assert result == target_dir.resolve()
+
+
+def test_resolve_content_dir_with_single_segment_path(tmp_path: Path) -> None:
+    """When source_path is a single segment, descend into that directory."""
+    target_dir = tmp_path / "cache-abc123"
+    target_dir.mkdir()
+    content_subdir = target_dir / "configs"
+    content_subdir.mkdir()
+    (content_subdir / "model.json").write_text("{}")
+
+    result = GithubDirectoryDownloader._resolve_content_dir(
+        target_dir=target_dir, source_path="configs"
+    )
+
+    assert result == content_subdir.resolve()
+
+
+# --- End-to-end: PromptLibraryManager with GitHub-like nested directories ---
+
+
+@pytest.mark.asyncio
+async def test_prompt_library_resolves_github_nested_directory(
+    tmp_path: Path,
+) -> None:
+    """PromptLibraryManager finds prompts when GitHub download nests them."""
+    # Simulate what GithubDirectoryDownloader produces: target_dir/prompts/files
+    cache_dir = tmp_path / "cache-abc123"
+    cache_dir.mkdir()
+    prompts_subdir = cache_dir / "prompts"
+    prompts_subdir.mkdir()
+    (prompts_subdir / "bailey_system_prompt.txt").write_text("You are Bailey.")
+    (prompts_subdir / "skills.md").write_text("# Skills")
+
+    # The helper should return the prompts_subdir (with the fix)
+    mock_helper = MagicMock(spec=GitHubDirectoryHelper)
+    mock_helper.resolve_github_path.return_value = prompts_subdir
+
+    mgr = PromptLibraryManager(
+        environment_variables=_StubPromptLibraryEnv(
+            "github://org/repo/bailey/prompts?ref=2.0.3"
+        ),
+        github_directory_helper=mock_helper,
+    )
+
+    content = await mgr.get_prompt_async("bailey_system_prompt")
+    assert content == "You are Bailey."
+
+    content_md = await mgr.get_prompt_async("skills")
+    assert content_md == "# Skills"
+
+
+@pytest.mark.asyncio
+async def test_download_returns_content_subdir(tmp_path: Path) -> None:
+    """download() returns the nested content directory, not the cache root."""
+    cache_path = tmp_path / "cache"
+    cache_path.mkdir()
+
+    downloader = GithubDirectoryDownloader()
+
+    def fake_fetch(
+        *, git_location: Any, source_path: str, github_token: Any, target_dir: Path
+    ) -> None:
+        subdir = target_dir / Path(source_path).name
+        subdir.mkdir(parents=True, exist_ok=True)
+        (subdir / "system_prompt.txt").write_text("hello")
+
+    with patch.object(downloader, "_fetch_to_directory", side_effect=fake_fetch):
+        result = await downloader.download(
+            source_uri="github://org/repo/bailey/prompts?ref=main",
+            github_token="fake-token",
+            cache_path=cache_path,
+        )
+
+    assert result is not None
+    assert result.name == "prompts"
+    assert (result / "system_prompt.txt").read_text() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_download_cached_returns_content_subdir(tmp_path: Path) -> None:
+    """download() always re-downloads (no local freshness check)."""
+    cache_path = tmp_path / "cache"
+    cache_path.mkdir()
+
+    downloader = GithubDirectoryDownloader()
+
+    def fake_fetch(
+        *, git_location: Any, source_path: str, github_token: Any, target_dir: Path
+    ) -> None:
+        subdir = target_dir / Path(source_path).name
+        subdir.mkdir(parents=True, exist_ok=True)
+        (subdir / "my_prompt.txt").write_text("fresh content")
+
+    with patch.object(downloader, "_fetch_to_directory", side_effect=fake_fetch):
+        result = await downloader.download(
+            source_uri="github://org/repo/bailey/prompts?ref=main",
+            github_token="fake-token",
+            cache_path=cache_path,
+        )
+
+    assert result is not None
+    assert result.name == "prompts"
+    assert (result / "my_prompt.txt").read_text() == "fresh content"

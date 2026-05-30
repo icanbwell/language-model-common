@@ -35,19 +35,47 @@ class _StubPromptLibraryEnv(PromptLibraryEnvironmentVariables):
         return self._prompt_library_path
 
 
-def _make_snapshot_store_mock() -> AsyncMock:
+class _AsyncCursorStub:
+    """Simulates an async MongoDB cursor yielding key documents."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    def __aiter__(self) -> "_AsyncCursorStub":
+        self._iter = iter(self._keys)
+        return self
+
+    async def __anext__(self) -> dict[str, str]:
+        try:
+            return {"key": next(self._iter)}
+        except StopIteration:
+            raise StopAsyncIteration
+
+
+class _MockMongoCollection:
+    """Simulates a MongoDB collection with find() returning cached keys."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    def find(self, *args: Any, **kwargs: Any) -> _AsyncCursorStub:
+        return _AsyncCursorStub(self._keys)
+
+
+def _make_model_config_store_mock(*, cached_keys: list[str] | None = None) -> AsyncMock:
     """Create an AsyncMock that quacks like key_value BaseStore."""
     store = AsyncMock()
     store.get = AsyncMock(return_value=None)
+    store.get_many = AsyncMock(return_value=[])
     store.put = AsyncMock()
+    store.delete = AsyncMock(return_value=True)
+    store.delete_many = AsyncMock(return_value=0)
+    keys = cached_keys or []
+    if keys:
+        store._collections_by_name = {"models": _MockMongoCollection(keys)}
+    else:
+        store._collections_by_name = {"models": _MockMongoCollection([])}
     return store
-
-
-@pytest.fixture
-def cache_mock() -> AsyncMock:
-    mock = AsyncMock()
-    mock.get.return_value = None
-    return mock
 
 
 @pytest.fixture
@@ -64,46 +92,38 @@ def environment_variables() -> LanguageModelCommonEnvironmentVariables:
 
 @pytest.fixture
 def config_reader(
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
     environment_variables: LanguageModelCommonEnvironmentVariables,
 ) -> ConfigReader:
     return ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=environment_variables,
     )
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_hit(
+async def test_model_config_cache_hit(
     monkeypatch: Any,
-    cache_mock: AsyncMock,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [ChatModelConfig(id="1", name="Test", description="").model_dump()],
-    }
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:Test"])
+    model_data = ChatModelConfig(id="1", name="Test", description="").model_dump()
+    cache_store.get_many.return_value = [model_data]
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "Test"
 
 
 @pytest.mark.asyncio
-async def test_env_var_missing(
-    cache_mock: AsyncMock, prompt_library_manager: PromptLibraryManager
-) -> None:
+async def test_env_var_missing(prompt_library_manager: PromptLibraryManager) -> None:
     if "MODELS_OFFICIAL_PATH" in os.environ:
         del os.environ["MODELS_OFFICIAL_PATH"]
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -115,7 +135,6 @@ async def test_env_var_missing(
 @pytest.mark.asyncio
 async def test_read_from_file(
     FileConfigReaderMock: Any,
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
@@ -124,7 +143,6 @@ async def test_read_from_file(
         ChatModelConfig(id="1", name="FileModel", description="")
     ]
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -136,7 +154,6 @@ async def test_read_from_file(
 @pytest.mark.asyncio
 async def test_read_from_s3(
     S3ConfigReaderMock: Any,
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
@@ -146,7 +163,6 @@ async def test_read_from_s3(
         return_value=[ChatModelConfig(id="2", name="S3Model", description="")]
     )
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -156,12 +172,10 @@ async def test_read_from_s3(
 
 @pytest.mark.asyncio
 async def test_disabled_models_filtered(
-    cache_mock: AsyncMock,
     monkeypatch: Any,
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
     os.environ["MODELS_OFFICIAL_PATH"] = tempfile.gettempdir()
-    cache_mock.get.return_value = None
     with patch(
         "languagemodelcommon.configs.config_reader.config_reader.FileConfigReader"
     ) as FileConfigReaderMock:
@@ -170,7 +184,6 @@ async def test_disabled_models_filtered(
             ChatModelConfig(id="2", name="Disabled", description="", disabled=True),
         ]
         reader = ConfigReader(
-            cache=cache_mock,
             prompt_library_manager=prompt_library_manager,
             environment_variables=LanguageModelCommonEnvironmentVariables(),
         )
@@ -180,7 +193,7 @@ async def test_disabled_models_filtered(
 
 @pytest.mark.asyncio
 async def test_client_override_merges_with_default(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     client_dir = tmp_path / "clients" / "client-a"
     client_dir.mkdir(parents=True)
@@ -197,7 +210,6 @@ async def test_client_override_merges_with_default(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -210,9 +222,7 @@ async def test_client_override_merges_with_default(
 
 
 @pytest.mark.asyncio
-async def test_prompt_name_resolves_from_library(
-    cache_mock: AsyncMock, tmp_path: Any
-) -> None:
+async def test_prompt_name_resolves_from_library(tmp_path: Any) -> None:
     prompt_library = tmp_path / "prompt_library" / "prompt_library" / "prompts"
     prompt_library.mkdir(parents=True)
     (prompt_library / "support_prompt.txt").write_text(
@@ -229,7 +239,6 @@ async def test_prompt_name_resolves_from_library(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(str(prompt_library))
         ),
@@ -245,7 +254,7 @@ async def test_prompt_name_resolves_from_library(
 
 @pytest.mark.asyncio
 async def test_override_does_not_clobber_default_fields(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     client_dir = tmp_path / "clients" / "client-b"
     client_dir.mkdir(parents=True)
@@ -262,7 +271,6 @@ async def test_override_does_not_clobber_default_fields(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -274,9 +282,7 @@ async def test_override_does_not_clobber_default_fields(
 
 
 @pytest.mark.asyncio
-async def test_prompt_auto_discovered_from_prompts_folder(
-    cache_mock: AsyncMock, tmp_path: Any
-) -> None:
+async def test_prompt_auto_discovered_from_prompts_folder(tmp_path: Any) -> None:
     """When no PROMPT_LIBRARY_PATH is set, prompts/ alongside configs is used."""
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir()
@@ -293,7 +299,6 @@ async def test_prompt_auto_discovered_from_prompts_folder(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=PromptLibraryManager(
             environment_variables=_StubPromptLibraryEnv(None)
         ),
@@ -307,7 +312,7 @@ async def test_prompt_auto_discovered_from_prompts_folder(
 
 @pytest.mark.asyncio
 async def test_inline_prompt_content_still_works(
-    cache_mock: AsyncMock, tmp_path: Any, prompt_library_manager: PromptLibraryManager
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
     """Inline content in PromptConfig is preserved (backward compat)."""
     (tmp_path / "model.json").write_text(
@@ -319,7 +324,6 @@ async def test_inline_prompt_content_still_works(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
     )
@@ -329,32 +333,28 @@ async def test_inline_prompt_content_still_works(
     assert configs[0].system_prompts[0].content == "You are a helpful assistant."
 
 
-# ── Snapshot cache tests ────────────────────────────────────────────
+# ── Model config cache tests ───────────────────────────────────────
 
 
 _SAMPLE_MODEL = ChatModelConfig(id="snap-1", name="SnapModel", description="cached")
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_hit_short_circuits_disk(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_hit_short_circuits_disk(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When the snapshot store returns data, disk/GitHub is never consulted."""
+    """When the model config cache store returns data, disk/GitHub is never consulted."""
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [_SAMPLE_MODEL.model_dump()],
-    }
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:SnapModel"])
+    cache_store.get_many.return_value = [_SAMPLE_MODEL.model_dump()]
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
 
     with patch(
@@ -368,12 +368,11 @@ async def test_snapshot_cache_hit_short_circuits_disk(
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_returns_none_falls_through(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_returns_none_falls_through(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When the snapshot store returns None, configs are read from disk."""
+    """When the model config cache store has no keys, configs are read from disk."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -381,26 +380,23 @@ async def test_snapshot_cache_returns_none_falls_through(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = None
+    cache_store = _make_model_config_store_mock(cached_keys=[])
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "DiskModel"
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_get_error_propagates(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_get_error_propagates(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If the snapshot store .get() raises, the error propagates (fail-fast)."""
+    """If the cache store collection.find() raises, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -408,22 +404,22 @@ async def test_snapshot_cache_get_error_propagates(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.side_effect = ConnectionError("MongoDB unavailable")
+    cache_store = _make_model_config_store_mock()
+    error_collection = MagicMock()
+    error_collection.find.side_effect = ConnectionError("MongoDB unavailable")
+    cache_store._collections_by_name = {"models": error_collection}
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     with pytest.raises(ConnectionError, match="MongoDB unavailable"):
         await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_deserialization_error_propagates(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_deserialization_error_propagates(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
@@ -435,26 +431,24 @@ async def test_snapshot_cache_deserialization_error_propagates(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {"models": [{"bad": "data"}]}
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:BadModel"])
+    cache_store.get_many.return_value = [{"bad": "data"}]
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     with pytest.raises(Exception):
         await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_put_error_propagates(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_put_error_propagates(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """If snapshot .put() raises, the error propagates (fail-fast)."""
+    """If cache .put() raises, the error propagates (fail-fast)."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -462,27 +456,24 @@ async def test_snapshot_cache_put_error_propagates(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = None  # miss → read from disk
-    snapshot_store.put.side_effect = TimeoutError("MongoDB write timeout")
+    cache_store = _make_model_config_store_mock(cached_keys=[])
+    cache_store.put.side_effect = TimeoutError("MongoDB write timeout")
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     with pytest.raises(TimeoutError, match="MongoDB write timeout"):
         await reader.read_model_configs_async()
 
 
 @pytest.mark.asyncio
-async def test_snapshot_cache_none_store_skips_entirely(
-    cache_mock: AsyncMock,
+async def test_model_config_cache_none_store_skips_entirely(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When no snapshot_cache_store is provided, cache logic is a no-op."""
+    """When no model_config_cache_store is provided, cache logic is a no-op."""
     (tmp_path / "model.json").write_text(
         '{"id": "disk-1", "name": "DiskModel", "description": "from disk"}',
         encoding="utf-8",
@@ -491,49 +482,43 @@ async def test_snapshot_cache_none_store_skips_entirely(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=None,
+        model_config_cache_store=None,
     )
     result = await reader.read_model_configs_async()
     assert result[0].name == "DiskModel"
 
 
 @pytest.mark.asyncio
-async def test_clear_cache_deletes_snapshot_entry(
-    cache_mock: AsyncMock,
+async def test_clear_cache_deletes_entries(
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
-    """clear_cache() should delete the snapshot cache entry."""
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.delete = AsyncMock(return_value=True)
+    """clear_cache() should delete cached model config entries."""
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:ModelA", "v1:ModelB"])
 
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     await reader.clear_cache()
 
-    snapshot_store.delete.assert_awaited_once_with(
-        "model_configs:v1",
-        collection=None,
+    cache_store.delete_many.assert_awaited_once_with(
+        ["v1:ModelA", "v1:ModelB"],
+        collection="models",
     )
 
 
 @pytest.mark.asyncio
-async def test_clear_cache_without_snapshot_store(
-    cache_mock: AsyncMock,
+async def test_clear_cache_without_cache_store(
     prompt_library_manager: PromptLibraryManager,
 ) -> None:
-    """clear_cache() with no snapshot store is a no-op."""
+    """clear_cache() with no model config cache store is a no-op."""
     reader = ConfigReader(
-        cache=cache_mock,
         prompt_library_manager=prompt_library_manager,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=None,
+        model_config_cache_store=None,
     )
     await reader.clear_cache()
 
@@ -574,15 +559,13 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     prompt_library_manager: PromptLibraryManager,
     tmp_path: Path,
 ) -> None:
-    """When snapshot returns models with unresolved mcp_server refs, retry resolves them."""
+    """When cache returns models with unresolved mcp_server refs, retry resolves them."""
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [unresolved_model.model_dump()],
-    }
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:UnresolvedModel"])
+    cache_store.get_many.return_value = [unresolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher._url = "http://localhost:5000/plugin-marketplace/"
@@ -594,7 +577,7 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     result = await reader.read_model_configs_async()
 
@@ -603,8 +586,8 @@ async def test_retry_resolves_cached_models_with_unresolved_mcp(
     assert len(agents) == 2
     assert all(a.url for a in agents), "All agents should have resolved URLs"
 
-    # Snapshot cache should have been updated with resolved models
-    assert snapshot_store.put.await_count >= 1
+    # Cache should have been updated with resolved models
+    assert cache_store.put.await_count >= 1
 
 
 @pytest.mark.asyncio
@@ -627,10 +610,8 @@ async def test_first_request_always_resolves_mcp(
             ),
         ],
     )
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [resolved_model.model_dump()],
-    }
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:Test"])
+    cache_store.get_many.return_value = [resolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher._url = "http://localhost:5000/plugin-marketplace/"
@@ -642,7 +623,7 @@ async def test_first_request_always_resolves_mcp(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     await reader.read_model_configs_async()
 
@@ -660,10 +641,8 @@ async def test_retry_still_fails_gracefully(
     os.environ.pop("MODELS_TESTING_PATH", None)
 
     unresolved_model = _model_with_unresolved_mcp()
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [unresolved_model.model_dump()],
-    }
+    cache_store = _make_model_config_store_mock(cached_keys=["v1:UnresolvedModel"])
+    cache_store.get_many.return_value = [unresolved_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher._url = "http://localhost:5000/plugin-marketplace/"
@@ -673,7 +652,7 @@ async def test_retry_still_fails_gracefully(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     result = await reader.read_model_configs_async()
 
@@ -692,10 +671,9 @@ async def test_no_retry_when_no_mcp_refs(
     os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
     os.environ.pop("MODELS_TESTING_PATH", None)
 
-    snapshot_store = _make_snapshot_store_mock()
-    snapshot_store.get.return_value = {
-        "models": [_model_without_mcp().model_dump()],
-    }
+    no_mcp_model = _model_without_mcp()
+    cache_store = _make_model_config_store_mock(cached_keys=[f"v1:{no_mcp_model.name}"])
+    cache_store.get_many.return_value = [no_mcp_model.model_dump()]
 
     fetcher = MagicMock(spec=McpJsonFetcher)
     fetcher.fetch_plugins_async = AsyncMock()
@@ -704,7 +682,7 @@ async def test_no_retry_when_no_mcp_refs(
         prompt_library_manager=prompt_library_manager,
         mcp_json_fetcher=fetcher,
         environment_variables=LanguageModelCommonEnvironmentVariables(),
-        snapshot_cache_store=snapshot_store,
+        model_config_cache_store=cache_store,
     )
     await reader.read_model_configs_async()
 

@@ -11,9 +11,10 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 import logging
 import os
 import tempfile
-import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
+
+from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -28,22 +29,23 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 class GitHubDirectoryHelper:
     """Encapsulates GitHub directory download, caching, and URI manipulation.
 
-    Environment-dependent configuration (token, cache dir, TTL) is read
+    Environment-dependent configuration (token, cache dir) is read
     from the injected ``environment_variables`` instance rather than from
     ``os.environ`` directly, keeping this class testable and DI-friendly.
 
-    The in-memory ``_cache`` dict is per-instance (and therefore
-    per-worker when registered as a singleton in the container), which
-    avoids cross-worker state issues under Gunicorn prefork.
+    Caching is handled at the on-disk level by ``GithubDirectoryDownloader``
+    (with advisory lock coordination) and at the application level by the
+    MongoDB model config cache. There is no in-memory cache layer.
     """
 
     def __init__(
         self,
         *,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
+        store: AsyncKeyValueProtocol | None = None,
     ) -> None:
         self._environment_variables = environment_variables
-        self._cache: dict[str, tuple[Path, float]] = {}
+        self._store = store
 
     # ------------------------------------------------------------------
     # Pure / static helpers — no env vars or instance state needed
@@ -126,44 +128,31 @@ class GitHubDirectoryHelper:
     # Instance methods — use environment variables and instance cache
     # ------------------------------------------------------------------
 
-    def resolve_github_path(self, path: str) -> Path:
+    async def resolve_github_path(self, path: str) -> Path | None:
         """Resolve a GitHub path to a local directory.
 
         Accepts ``github://`` URIs, ``https://github.com/`` URLs, or local paths.
         GitHub paths are downloaded via fsspec; local paths are returned as-is.
+
+        Returns None if another worker holds the download lock.
         """
         if self.is_github_path(path):
-            return self.download_github_directory(self.to_github_uri(path))
+            return await self.download_github_directory(self.to_github_uri(path))
         return Path(path)
 
-    def download_github_directory(self, github_uri: str) -> Path:
+    async def download_github_directory(self, github_uri: str) -> Path | None:
         """Download a ``github://`` URI to a local cache directory using fsspec.
 
-        Results are cached for ``config_cache_timeout_seconds``.
         The cache directory defaults to ``{tempdir}/github_config_cache`` and can
         be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
-        Caching is checked at two levels:
-
-        1. **In-memory** (per-instance / per-worker) — avoids filesystem stat
-           calls on hot paths within the same Gunicorn worker.
-        2. **On-disk timestamp file** — checked by ``GithubDirectoryDownloader``
-           after acquiring its per-URI lock, allowing workers that lost the lock
-           race to skip redundant downloads.
-
-        The downloader itself handles locking, atomic swap, and retry so this
-        method no longer needs its own file lock.
+        Returns None if another worker holds the download lock.
         """
         from languagemodelcommon.configs.config_reader.github_directory_downloader import (
             GithubDirectoryDownloader,
         )
 
         env = self._environment_variables
-        cache_ttl = (
-            env.config_cache_timeout_seconds
-            if env
-            else int(os.environ.get("CONFIG_CACHE_TIMEOUT_SECONDS", "3600"))
-        )
         cache_dir = Path(
             env.github_config_cache_dir
             if env
@@ -173,29 +162,14 @@ class GitHubDirectoryHelper:
             )
         )
 
-        now = time.monotonic()
-        cached = self._cache.get(github_uri)
-
-        if cached is not None:
-            cached_path, cached_time = cached
-            if (now - cached_time) < cache_ttl and cached_path.is_dir():
-                logger.debug(
-                    "Using cached GitHub download for %s (age: %.0fs)",
-                    github_uri,
-                    now - cached_time,
-                )
-                return cached_path
-
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         github_token = env.github_token if env else os.environ.get("GITHUB_TOKEN")
         downloader = GithubDirectoryDownloader()
-        result: Path = downloader.download(
+        result = await downloader.download(
             source_uri=github_uri,
             github_token=github_token,
             cache_path=cache_dir,
-            cache_ttl_seconds=cache_ttl,
+            store=self._store,
         )
-        self._cache[github_uri] = (result, time.monotonic())
-        logger.info("Downloaded and cached GitHub content from %s", github_uri)
         return result

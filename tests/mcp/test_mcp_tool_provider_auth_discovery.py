@@ -42,6 +42,7 @@ def _make_provider(
 
     from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
 
+    provider._default_headers = {}
     provider.tool_list_cache = ToolListCache(ttl_seconds=300.0)
     return provider
 

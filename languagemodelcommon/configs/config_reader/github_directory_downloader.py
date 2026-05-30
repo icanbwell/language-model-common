@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -7,6 +8,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import fsspec  # type: ignore[import-untyped]
+from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
+
+from languagemodelcommon.utilities.cache.advisory_lock import AdvisoryLock
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +33,29 @@ class GithubDirectoryDownloader:
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 2.0
 
-    def download(
+    async def download(
         self,
         *,
         source_uri: str,
         github_token: str | None,
         cache_path: Path,
-        cache_ttl_seconds: int = 0,
-    ) -> Path:
+        store: AsyncKeyValueProtocol | None = None,
+        lock_ttl_seconds: int = 300,
+    ) -> Path | None:
         """Download a github:// URI to a local directory.
 
         Args:
             source_uri: github://owner/repo/path?ref=branch
             github_token: Optional GitHub token for private repos.
             cache_path: Local directory for cached downloads.
-            cache_ttl_seconds: If > 0, skip download when existing cache
-                is younger than this many seconds.
+            store: Optional key-value store for advisory locking.
+                When provided, acquires a distributed lock before
+                downloading. Returns None if lock is held by another worker.
+            lock_ttl_seconds: TTL for the advisory lock.
 
         Returns:
-            Resolved path to the downloaded directory.
+            Resolved path to the downloaded content directory,
+            or None if another worker holds the download lock.
 
         Raises:
             ValueError: If the URI is malformed or download fails.
@@ -59,57 +67,73 @@ class GithubDirectoryDownloader:
         cache_root = cache_path.expanduser().resolve()
         cache_root.mkdir(parents=True, exist_ok=True)
         key = f"{git_location.owner}/{git_location.repository}:{ref}:{source_path}"
-        cache_dir_name = f"{git_location.owner}-{git_location.repository}-{sha256(key.encode('utf-8')).hexdigest()[:12]}"
+        cache_dir_name = (
+            f"{git_location.owner}-{git_location.repository}"
+            f"-{sha256(key.encode('utf-8')).hexdigest()[:12]}"
+        )
         target_dir = (cache_root / cache_dir_name).resolve()
         if not str(target_dir).startswith(str(cache_root)):
             raise ValueError(f"Path traversal detected in github:// URI: {source_uri}")
 
-        # If the on-disk cache is fresh, skip the download.  Multiple
-        # workers may check this concurrently — that is fine; the worst
-        # case is a few redundant downloads whose atomic swaps are harmless.
-        if cache_ttl_seconds > 0 and self._is_cache_fresh(
-            target_dir=target_dir, ttl_seconds=cache_ttl_seconds
-        ):
-            logger.debug(
-                "Cache for %s is fresh — skipping download",
-                source_uri,
-            )
-            return target_dir.resolve()
-
-        try:
-            self._download_with_retry(
+        if store is not None:
+            lock_key = f"github_download:{sha256(key.encode('utf-8')).hexdigest()[:16]}"
+            async with AdvisoryLock(
+                store, lock_key, ttl_seconds=lock_ttl_seconds
+            ) as acquired:
+                if not acquired:
+                    logger.info(
+                        "Download lock held for %s — skipping download",
+                        source_uri,
+                    )
+                    if target_dir.is_dir():
+                        return self._resolve_content_dir(
+                            target_dir=target_dir, source_path=source_path
+                        )
+                    return None
+                self._do_download(
+                    git_location=git_location,
+                    source_path=source_path,
+                    github_token=github_token,
+                    target_dir=target_dir,
+                )
+        else:
+            self._do_download(
                 git_location=git_location,
                 source_path=source_path,
                 github_token=github_token,
                 target_dir=target_dir,
             )
-            self._mark_cache_fresh(target_dir)
-        except ValueError:
-            # Download failed — fall back to stale cache if it exists.
-            if target_dir.is_dir():
-                logger.warning(
-                    "Download failed for %s — serving stale cache from %s",
-                    source_uri,
-                    target_dir,
-                )
-            else:
-                raise
+
+        return self._resolve_content_dir(target_dir=target_dir, source_path=source_path)
+
+    def _do_download(
+        self,
+        *,
+        git_location: GitLocation,
+        source_path: str,
+        github_token: str | None,
+        target_dir: Path,
+    ) -> None:
+        self._download_with_retry(
+            git_location=git_location,
+            source_path=source_path,
+            github_token=github_token,
+            target_dir=target_dir,
+        )
+
+    @staticmethod
+    def _resolve_content_dir(*, target_dir: Path, source_path: str) -> Path:
+        """Return the actual content directory within the cache.
+
+        fsspec's ``get()`` preserves the last component of ``source_path``
+        as a subdirectory inside ``target_dir``.
+        """
+        if source_path:
+            last_component = Path(source_path).name
+            content_dir = target_dir / last_component
+            if content_dir.is_dir():
+                return content_dir.resolve()
         return target_dir.resolve()
-
-    @staticmethod
-    def _is_cache_fresh(*, target_dir: Path, ttl_seconds: int) -> bool:
-        """Return True if the cache directory exists and was refreshed recently."""
-        ts_file = target_dir.with_name(target_dir.name + ".ts")
-        if not ts_file.exists() or not target_dir.is_dir():
-            return False
-        age = time.time() - ts_file.stat().st_mtime
-        return age < ttl_seconds
-
-    @staticmethod
-    def _mark_cache_fresh(target_dir: Path) -> None:
-        """Write a timestamp marker so other workers know the cache is fresh."""
-        ts_file = target_dir.with_name(target_dir.name + ".ts")
-        ts_file.write_text(str(time.time()))
 
     def _download_with_retry(
         self,
@@ -119,7 +143,11 @@ class GithubDirectoryDownloader:
         github_token: str | None,
         target_dir: Path,
     ) -> None:
-        """Try the download up to ``_MAX_RETRIES`` times with exponential backoff."""
+        """Try the download up to ``_MAX_RETRIES`` times with exponential backoff.
+
+        FileNotFoundError is never retried — it indicates the path does not
+        exist in the repository (e.g. a missing client-override directory).
+        """
         last_exc: Exception | None = None
         for attempt in range(self._MAX_RETRIES):
             try:
@@ -130,22 +158,37 @@ class GithubDirectoryDownloader:
                     target_dir=target_dir,
                 )
                 return
+            except FileNotFoundError:
+                raise
             except Exception as exc:
                 last_exc = exc
                 if attempt < self._MAX_RETRIES - 1:
                     delay = self._RETRY_BASE_DELAY * (2**attempt)
+                    exc_type = type(exc).__name__
                     logger.warning(
-                        "Download attempt %d/%d failed for %s/%s (retrying in %.1fs): %s",
+                        "Download attempt %d/%d failed for %s/%s "
+                        "(retrying in %.1fs): [%s] %s",
                         attempt + 1,
                         self._MAX_RETRIES,
                         git_location.owner,
                         git_location.repository,
                         delay,
+                        exc_type,
                         exc,
                     )
                     time.sleep(delay)
+        source_uri = (
+            f"github://{git_location.owner}/{git_location.repository}/{source_path}"
+        )
+        if git_location.branch:
+            source_uri += f"?ref={git_location.branch}"
+        token_status = (
+            "GITHUB_TOKEN is set" if github_token else "GITHUB_TOKEN is NOT set"
+        )
+        exc_type = type(last_exc).__name__ if last_exc else "unknown"
         raise ValueError(
-            f"Download failed after {self._MAX_RETRIES} attempts: {last_exc}"
+            f"Download failed after {self._MAX_RETRIES} attempts for {source_uri} "
+            f"({token_status}): [{exc_type}] {last_exc}"
         ) from last_exc
 
     def _fetch_to_directory(
@@ -156,14 +199,10 @@ class GithubDirectoryDownloader:
         github_token: str | None,
         target_dir: Path,
     ) -> None:
-        """Download remote content into *target_dir* using atomic swap.
-
-        Downloads into a staging directory first, then swaps it into place.
-        If the download fails, the existing *target_dir* is left untouched
-        so callers can fall back to stale-but-valid cached data.
-        """
-        staging_dir = target_dir.with_name(target_dir.name + ".staging")
-        old_dir = target_dir.with_name(target_dir.name + ".old")
+        """Download remote content into *target_dir* using atomic swap."""
+        pid = os.getpid()
+        staging_dir = target_dir.with_name(f"{target_dir.name}.staging.{pid}")
+        old_dir = target_dir.with_name(f"{target_dir.name}.old.{pid}")
 
         if staging_dir.exists():
             shutil.rmtree(staging_dir)
@@ -190,13 +229,24 @@ class GithubDirectoryDownloader:
                         continue
                     destination = staging_dir / Path(item_path).name
                     filesystem.get(item_path, str(destination), recursive=True)
-        except ValueError:
+        except (ValueError, FileNotFoundError):
             shutil.rmtree(staging_dir, ignore_errors=True)
             raise
         except Exception as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
+            source_uri = (
+                f"github://{git_location.owner}/{git_location.repository}/{source_path}"
+            )
+            if git_location.branch:
+                source_uri += f"?ref={git_location.branch}"
+            exc_type = type(exc).__name__
+            exc_detail = str(exc) or "(no message)"
+            status_code = ""
+            if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+                status_code = f" [HTTP {exc.response.status_code}]"
             raise ValueError(
-                "Unable to download github:// directory into cache"
+                f"Unable to download github:// directory into cache: {source_uri} — "
+                f"{exc_type}{status_code}: {exc_detail}"
             ) from exc
 
         # Atomic swap: staging → target, target → old
@@ -228,7 +278,8 @@ class GithubDirectoryDownloader:
         if unsupported_query_params:
             unsupported = ", ".join(sorted(unsupported_query_params))
             raise ValueError(
-                f"github:// URI supports only '?ref=' query parameter; got: {unsupported}"
+                f"github:// URI supports only '?ref=' query parameter; "
+                f"got: {unsupported}"
             )
 
         ref_values = query_values.get("ref")
@@ -245,12 +296,14 @@ class GithubDirectoryDownloader:
             repository_without_ref, separator, branch = owner.partition("@")
             if ":" not in repository_without_ref:
                 raise ValueError(
-                    f"github:// URI must include owner and repo, e.g. {cls._github_uri_example}"
+                    f"github:// URI must include owner and repo, "
+                    f"e.g. {cls._github_uri_example}"
                 )
             legacy_owner, repo = repository_without_ref.split(":", 1)
             if not legacy_owner or not repo:
                 raise ValueError(
-                    f"github:// URI must include owner and repo, e.g. {cls._github_uri_example}"
+                    f"github:// URI must include owner and repo, "
+                    f"e.g. {cls._github_uri_example}"
                 )
             if (
                 branch_from_query is not None
@@ -271,7 +324,8 @@ class GithubDirectoryDownloader:
         else:
             if not owner or not path_parts:
                 raise ValueError(
-                    f"github:// URI must include owner and repo, e.g. {cls._github_uri_example}"
+                    f"github:// URI must include owner and repo, "
+                    f"e.g. {cls._github_uri_example}"
                 )
             repo = path_parts[0]
             path_value = "/".join(path_parts[1:])
@@ -279,7 +333,8 @@ class GithubDirectoryDownloader:
 
         if not owner or not repo:
             raise ValueError(
-                f"github:// URI must include owner and repo, e.g. {cls._github_uri_example}"
+                f"github:// URI must include owner and repo, "
+                f"e.g. {cls._github_uri_example}"
             )
 
         return GitLocation(

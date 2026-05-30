@@ -21,9 +21,6 @@ from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
 )
 from key_value.aio.stores.base import BaseStore
 
-from languagemodelcommon.utilities.cache.config_expiring_cache import (
-    ConfigExpiringCache,  # kept for backwards-compatible constructor signature
-)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -41,12 +38,11 @@ class ConfigReader:
     def __init__(
         self,
         *,
-        cache: ConfigExpiringCache | None = None,
         prompt_library_manager: PromptLibraryManager,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         mcp_json_fetcher: McpJsonFetcher | None = None,
         github_directory_helper: GitHubDirectoryHelper | None = None,
-        snapshot_cache_store: BaseStore | None = None,
+        model_config_cache_store: BaseStore | None = None,
         file_config_reader: FileConfigReader | None = None,
         s3_config_reader: S3ConfigReader | None = None,
     ) -> None:
@@ -60,11 +56,11 @@ class ConfigReader:
             or GitHubDirectoryHelper(environment_variables=self._environment_variables)
         )
         self._mcp_json_fetcher = mcp_json_fetcher
-        self._snapshot_cache_store = snapshot_cache_store
+        self._model_config_cache_store = model_config_cache_store
         self._file_config_reader = file_config_reader or FileConfigReader()
         self._s3_config_reader = s3_config_reader or S3ConfigReader()
-        self._snapshot_cache_collection = (
-            self._environment_variables.snapshot_cache_model_configs_collection
+        self._model_config_cache_collection = (
+            self._environment_variables.model_config_cache_collection_name
         )
 
     async def read_model_configs_async(
@@ -78,7 +74,7 @@ class ConfigReader:
             models_testing_path=models_testing_path,
         )
 
-        # Re-resolve MCP servers on first request (snapshot may be stale)
+        # Re-resolve MCP servers on first request (cache may be stale)
         # and on subsequent requests if servers remain unresolved.
         if not self._mcp_resolved_once or self._has_unresolved_mcp_servers(base_models):
             await self._retry_mcp_resolution(
@@ -98,7 +94,9 @@ class ConfigReader:
                 )
 
         base_models = [model for model in base_models if not model.disabled]
-        self._resolve_prompt_library(models=base_models, config_path=config_path)
+        await self._resolve_prompt_library_async(
+            models=base_models, config_path=config_path
+        )
         return base_models
 
     async def _read_base_models_async(
@@ -107,19 +105,19 @@ class ConfigReader:
         config_path: str,
         models_testing_path: Optional[str],
     ) -> List[ChatModelConfig]:
-        # Read from MongoDB snapshot cache
-        models = await self._read_from_snapshot_cache()
+        # Read from MongoDB model config cache
+        models = await self._read_from_model_config_cache()
         if models:
             return models
 
         logger.info(
-            "ConfigReader with id: %s no snapshot cache, reading from source",
+            "ConfigReader with id: %s no model config cache, reading from source",
             self._identifier,
         )
 
         async with self._lock:
             # Double-check after acquiring lock
-            models = await self._read_from_snapshot_cache()
+            models = await self._read_from_model_config_cache()
             if models:
                 return models
 
@@ -139,62 +137,93 @@ class ConfigReader:
             if not models:
                 logger.warning(
                     "ConfigReader with id: %s read 0 model configurations "
-                    "from %s and no snapshot cache available",
+                    "from %s and no model config cache available",
                     self._identifier,
                     default_config_path,
                 )
                 return models
 
-            await self._write_to_snapshot_cache(models)
+            await self._write_to_model_config_cache(models)
             return models
 
-    @property
-    def _snapshot_cache_key(self) -> str:
-        version = self._environment_variables.snapshot_cache_schema_version
-        return f"model_configs:v{version}"
+    def _model_config_cache_key(self, *, model_name: str) -> str:
+        version = self._environment_variables.model_config_cache_schema_version
+        return f"v{version}:{model_name}"
 
-    async def _read_from_snapshot_cache(self) -> List[ChatModelConfig] | None:
-        """Load model configs from the snapshot cache.
+    async def _read_from_model_config_cache(self) -> List[ChatModelConfig] | None:
+        """Load model configs from the model config cache (one row per model).
 
-        Returns ``None`` when the cache has no entry for the key.
+        Scans the collection for all entries matching the current schema
+        version prefix.
+
+        Returns ``None`` when the cache has no entries.
         Raises on store or deserialization errors so that a misconfigured
         cache backend surfaces immediately (fail-fast).
         """
-        if not self._snapshot_cache_store:
+        if not self._model_config_cache_store:
             return None
-        data = await self._snapshot_cache_store.get(
-            self._snapshot_cache_key,
-            collection=self._snapshot_cache_collection,
+        version = self._environment_variables.model_config_cache_schema_version
+        prefix = f"v{version}:"
+        model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
+        if not model_keys:
+            return None
+        results = await self._model_config_cache_store.get_many(
+            model_keys,
+            collection=self._model_config_cache_collection,
         )
-        if data is None:
-            return None
-        models_data: list[dict[str, Any]] = data.get("models", [])
-        models = [ChatModelConfig.model_validate(d) for d in models_data]
+        models: List[ChatModelConfig] = []
+        for data in results:
+            if data is not None:
+                models.append(ChatModelConfig.model_validate(data))
         logger.info(
-            "ConfigReader with id: %s loaded %d configs from snapshot cache",
+            "ConfigReader with id: %s loaded %d configs from model config cache",
             self._identifier,
             len(models),
         )
         return models if models else None
 
-    async def _write_to_snapshot_cache(self, models: List[ChatModelConfig]) -> None:
-        """Store parsed model configs in the snapshot cache.
+    async def _get_cache_keys_by_prefix(self, *, prefix: str) -> list[str]:
+        """Return all cache keys in the collection that start with *prefix*.
+
+        Uses the underlying MongoDB collection's ``find`` when available,
+        falling back to the store's ``keys()`` method for other backends.
+        """
+        store = self._model_config_cache_store
+        if store is None:
+            return []
+
+        collection_name = self._model_config_cache_collection
+        # MongoDBStore exposes the raw collection via _collections_by_name
+        collections_map = getattr(store, "_collections_by_name", None)
+        if collections_map and collection_name in collections_map:
+            mongo_collection = collections_map[collection_name]
+            cursor = mongo_collection.find(
+                {"key": {"$regex": f"^{prefix}"}},
+                projection={"key": 1, "_id": 0},
+            )
+            return [doc["key"] async for doc in cursor]
+
+        return []
+
+    async def _write_to_model_config_cache(self, models: List[ChatModelConfig]) -> None:
+        """Store each model config as a separate row in the cache.
 
         Raises on write errors so that a misconfigured cache backend
         surfaces immediately (fail-fast).
         """
-        if not self._snapshot_cache_store:
+        if not self._model_config_cache_store:
             return
-        data = {"models": [m.model_dump() for m in models]}
-        ttl = self._environment_variables.snapshot_cache_ttl_seconds
-        await self._snapshot_cache_store.put(
-            self._snapshot_cache_key,
-            data,
-            ttl=ttl,
-            collection=self._snapshot_cache_collection,
-        )
+        ttl = self._environment_variables.model_config_cache_ttl_seconds
+        for model in models:
+            key = self._model_config_cache_key(model_name=model.name)
+            await self._model_config_cache_store.put(
+                key,
+                model.model_dump(),
+                ttl=ttl,
+                collection=self._model_config_cache_collection,
+            )
         logger.info(
-            "ConfigReader with id: %s wrote %d configs to snapshot cache",
+            "ConfigReader with id: %s wrote %d configs to model config cache",
             self._identifier,
             len(models),
         )
@@ -278,6 +307,17 @@ class ConfigReader:
             return []
         try:
             return await self.read_models_from_path_async(config_path=override_path)
+        except (FileNotFoundError, ValueError) as e:
+            if "FileNotFoundError" in str(e) or isinstance(e, FileNotFoundError):
+                logger.debug(
+                    "No client overrides found at %s (path does not exist)",
+                    override_path,
+                )
+            else:
+                logger.warning(
+                    "Failed to load client overrides from %s: %s", override_path, e
+                )
+            return []
         except Exception as e:
             logger.warning(
                 "Failed to load client overrides from %s: %s", override_path, e
@@ -297,7 +337,16 @@ class ConfigReader:
                 len(models),
             )
         elif GitHubDirectoryHelper.is_github_path(config_path):
-            resolved = self._github_directory_helper.resolve_github_path(config_path)
+            resolved = await self._github_directory_helper.resolve_github_path(
+                config_path
+            )
+            if resolved is None:
+                logger.info(
+                    "ConfigReader with id: %s download lock held for %s — using cache",
+                    self._identifier,
+                    config_path,
+                )
+                return []
             local_config_path = str(resolved)
             models = self._file_config_reader.read_model_configs(
                 config_path=local_config_path,
@@ -416,13 +465,13 @@ class ConfigReader:
         """Re-attempt MCP server resolution for models with unresolved refs.
 
         Called on first request (to pick up .mcp.json changes not in the
-        snapshot) and when cached configs carry ``mcp_server`` references
-        without a resolved ``url``.  Always writes back to the snapshot
+        cache) and when cached configs carry ``mcp_server`` references
+        without a resolved ``url``.  Always writes back to the model config
         cache so subsequent reads get the resolved data.
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models=models, config_path=config_path)
-        await self._write_to_snapshot_cache(models)
+        await self._write_to_model_config_cache(models)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
             fetcher_url = (
@@ -589,20 +638,20 @@ class ConfigReader:
 
         return merged_list
 
-    def _resolve_prompt_library(
+    async def _resolve_prompt_library_async(
         self, models: List[ChatModelConfig], *, config_path: str | None = None
     ) -> None:
         # Auto-discover prompts/ folder if no explicit path is configured
         if not self._prompt_library_manager.resolved_path and config_path:
-            discovered = self._discover_prompts_path(config_path)
+            discovered = await self._discover_prompts_path(config_path)
             if discovered:
                 self._prompt_library_manager.resolved_path = discovered
 
         for model in models:
-            self._resolve_prompt_list(model.system_prompts)
-            self._resolve_prompt_list(model.example_prompts)
+            await self._resolve_prompt_list_async(model.system_prompts)
+            await self._resolve_prompt_list_async(model.example_prompts)
 
-    def _discover_prompts_path(self, config_path: str) -> str | None:
+    async def _discover_prompts_path(self, config_path: str) -> str | None:
         """Discover the prompts folder from config_path, supporting GitHub paths."""
         if GitHubDirectoryHelper.is_github_path(config_path):
             from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
@@ -614,9 +663,11 @@ class ConfigReader:
                 suffix=PROMPTS_FOLDER_NAME,
             )
             try:
-                local_path = self._github_directory_helper.resolve_github_path(
+                local_path = await self._github_directory_helper.resolve_github_path(
                     prompts_uri
                 )
+                if local_path is None:
+                    return None
                 logger.info("Downloaded prompts from %s to %s", prompts_uri, local_path)
                 return str(local_path)
             except Exception as e:
@@ -624,26 +675,34 @@ class ConfigReader:
                 return None
         return FileConfigReader.discover_prompts_path(config_path)
 
-    def _resolve_prompt_list(self, prompts: List[PromptConfig] | None) -> None:
+    async def _resolve_prompt_list_async(
+        self, prompts: List[PromptConfig] | None
+    ) -> None:
         if not prompts:
             return
         for prompt in prompts:
             if not prompt.name:
                 continue
             try:
-                prompt.content = self._prompt_library_manager.get_prompt(prompt.name)
+                prompt.content = await self._prompt_library_manager.get_prompt_async(
+                    prompt.name
+                )
             except FileNotFoundError as exc:
                 raise ValueError(
                     f"Prompt not found in prompt library: {prompt.name}"
                 ) from exc
 
     async def clear_cache(self) -> None:
-        if self._snapshot_cache_store:
-            await self._snapshot_cache_store.delete(
-                self._snapshot_cache_key,
-                collection=self._snapshot_cache_collection,
-            )
+        if self._model_config_cache_store:
+            version = self._environment_variables.model_config_cache_schema_version
+            prefix = f"v{version}:"
+            model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
+            if model_keys:
+                await self._model_config_cache_store.delete_many(
+                    model_keys,
+                    collection=self._model_config_cache_collection,
+                )
         logger.info(
-            "ConfigReader with id: %s cleared snapshot cache",
+            "ConfigReader with id: %s cleared model config cache",
             self._identifier,
         )
