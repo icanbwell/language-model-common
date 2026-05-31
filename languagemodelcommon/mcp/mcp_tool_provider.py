@@ -163,9 +163,9 @@ class MCPToolProvider:
             ),
             store=tool_list_cache_store,
         )
-        self._server_card_discovery = server_card_discovery or ServerCardDiscovery(
-            httpx_client_factory=self.get_httpx_async_client,
-        )
+        if server_card_discovery is None:
+            raise ValueError("ServerCardDiscovery must be provided")
+        self._server_card_discovery = server_card_discovery
 
     @staticmethod
     def get_httpx_async_client(

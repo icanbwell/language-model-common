@@ -32,7 +32,13 @@ from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
+from languagemodelcommon.mcp.auth.auth_server_metadata_discovery import (
+    McpAuthServerDiscovery,
+)
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
+from languagemodelcommon.mcp.mcp_client.server_card_discovery import (
+    ServerCardDiscovery,
+)
 from languagemodelcommon.utilities.cache.model_config_cache_store import (
     create_cache_store,
 )
@@ -117,6 +123,14 @@ class LanguageModelCommonContainerFactory:
 
         container.singleton(
             service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
+        )
+        container.singleton(
+            service_type=McpAuthServerDiscovery,
+            factory=lambda c: McpAuthServerDiscovery(),
+        )
+        container.singleton(
+            service_type=ServerCardDiscovery,
+            factory=lambda c: ServerCardDiscovery(),
         )
         container.singleton(
             service_type=McpToolListStore,
