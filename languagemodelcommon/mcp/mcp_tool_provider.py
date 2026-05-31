@@ -45,6 +45,9 @@ from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
     _sanitize_tool_name,
     mcp_tool_to_langchain_tool,
 )
+from languagemodelcommon.mcp.mcp_client.server_card_discovery import (
+    ServerCardDiscovery,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
     create_mcp_session,
@@ -97,6 +100,7 @@ class MCPToolProvider:
         auth_server_metadata_discovery: McpAuthServerDiscoveryProtocol,
         tool_list_cache_store: "ToolListStoreProtocol | None" = None,
         default_headers: Dict[str, str] | None = None,
+        server_card_discovery: ServerCardDiscovery | None = None,
     ) -> None:
         """
         Initialize the MCPToolProvider with authentication and token management.
@@ -158,6 +162,9 @@ class MCPToolProvider:
                 environment_variables.mcp_tools_metadata_cache_ttl_seconds
             ),
             store=tool_list_cache_store,
+        )
+        self._server_card_discovery = server_card_discovery or ServerCardDiscovery(
+            httpx_client_factory=self.get_httpx_async_client,
         )
 
     @staticmethod
@@ -416,16 +423,29 @@ class MCPToolProvider:
                         len(mcp_tools),
                     )
                 else:
-                    async with create_mcp_session(
-                        discovery_config, mcp_callbacks=mcp_callbacks
-                    ) as session:
-                        await session.initialize()
-                        mcp_tools = await list_all_tools_cached(
-                            session,
-                            url=tool_url,
-                            cache=self.tool_list_cache,
-                            cache_key=cache_key,
+                    # Try server card discovery first (SEP-1649)
+                    server_card_tools = (
+                        await self._server_card_discovery.fetch_tools_from_server_card(
+                            mcp_server_url=tool_url,
+                            headers=discovery_config.get("headers"),
                         )
+                    )
+                    if server_card_tools is not None:
+                        mcp_tools = server_card_tools
+                        await self.tool_list_cache.put_async(
+                            key=cache_key, tools=mcp_tools
+                        )
+                    else:
+                        async with create_mcp_session(
+                            discovery_config, mcp_callbacks=mcp_callbacks
+                        ) as session:
+                            await session.initialize()
+                            mcp_tools = await list_all_tools_cached(
+                                session,
+                                url=tool_url,
+                                cache=self.tool_list_cache,
+                                cache_key=cache_key,
+                            )
 
                 logger.info(
                     "MCP tools discovered from '%s': %s",
@@ -868,53 +888,64 @@ class MCPToolProvider:
         if cached is not None:
             mcp_tools = cached
         else:
-            try:
-                async with create_mcp_session(
-                    config, mcp_callbacks=mcp_callbacks
-                ) as session:
-                    await session.initialize()
-                    mcp_tools = await list_all_tools_cached(
-                        session,
-                        url=tool_url,
-                        cache=self.tool_list_cache,
-                        cache_key=cache_key,
-                    )
-            except BaseException as e:
-                if self._contains_http_auth_error(e):
-                    await self.tool_list_cache.invalidate_async(key=cache_key)
-                else:
-                    raise
-
-                if (
-                    tool_config.oauth is None
-                    and not tool_config.oauth_providers
-                    and tool_url != "unknown"
-                ):
-                    discovered = await self._attempt_auth_server_discovery(
-                        tool_config=tool_config,
-                    )
-                    if discovered:
-                        login_message = await self._build_login_message_or_fallback(
-                            auth_interceptor=auth_interceptor,
-                            tool_config=tool_config,
-                            tool_url=tool_url,
-                        )
-                        raise AuthorizationMcpToolTokenInvalidException(
-                            message=login_message,
-                            tool_url=tool_url,
-                            token=None,
-                        ) from e
-
-                login_message = await self._build_login_message_or_fallback(
-                    auth_interceptor=auth_interceptor,
-                    tool_config=tool_config,
-                    tool_url=tool_url,
+            # Try server card discovery first (SEP-1649)
+            server_card_tools = (
+                await self._server_card_discovery.fetch_tools_from_server_card(
+                    mcp_server_url=tool_url,
+                    headers=config.get("headers"),
                 )
-                raise AuthorizationMcpToolTokenInvalidException(
-                    message=login_message,
-                    tool_url=tool_url,
-                    token=None,
-                ) from e
+            )
+            if server_card_tools is not None:
+                mcp_tools = server_card_tools
+                await self.tool_list_cache.put_async(key=cache_key, tools=mcp_tools)
+            else:
+                try:
+                    async with create_mcp_session(
+                        config, mcp_callbacks=mcp_callbacks
+                    ) as session:
+                        await session.initialize()
+                        mcp_tools = await list_all_tools_cached(
+                            session,
+                            url=tool_url,
+                            cache=self.tool_list_cache,
+                            cache_key=cache_key,
+                        )
+                except BaseException as e:
+                    if self._contains_http_auth_error(e):
+                        await self.tool_list_cache.invalidate_async(key=cache_key)
+                    else:
+                        raise
+
+                    if (
+                        tool_config.oauth is None
+                        and not tool_config.oauth_providers
+                        and tool_url != "unknown"
+                    ):
+                        discovered = await self._attempt_auth_server_discovery(
+                            tool_config=tool_config,
+                        )
+                        if discovered:
+                            login_message = await self._build_login_message_or_fallback(
+                                auth_interceptor=auth_interceptor,
+                                tool_config=tool_config,
+                                tool_url=tool_url,
+                            )
+                            raise AuthorizationMcpToolTokenInvalidException(
+                                message=login_message,
+                                tool_url=tool_url,
+                                token=None,
+                            ) from e
+
+                    login_message = await self._build_login_message_or_fallback(
+                        auth_interceptor=auth_interceptor,
+                        tool_config=tool_config,
+                        tool_url=tool_url,
+                    )
+                    raise AuthorizationMcpToolTokenInvalidException(
+                        message=login_message,
+                        tool_url=tool_url,
+                        token=None,
+                    ) from e
 
         # Filter by tool names if specified
         if tool_config.tools:
