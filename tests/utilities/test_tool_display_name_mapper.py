@@ -15,7 +15,7 @@ def test_mapper_prefers_display_name(tmp_path: Path) -> None:
 
     mapper = ToolDisplayNameMapper.from_config_path(config_path=str(config_path))
 
-    assert mapper.get_display_name(tool_name="fhir_server") == "FHIR Server"
+    assert mapper.get_display_name(tool_name="fhir_server") == "🛠️ FHIR Server"
 
 
 def test_mapper_builds_skill_start_text() -> None:
@@ -43,7 +43,7 @@ class TestRegisterFromTools:
 
         mapper.register_from_tools([tool])
 
-        assert mapper.get_display_name(tool_name="get_weather") == "Weather Info"
+        assert mapper.get_display_name(tool_name="get_weather") == "🛠️ Weather Info"
 
     def test_static_config_takes_precedence(self, tmp_path: Path) -> None:
         config_path = tmp_path / "names.json"
@@ -53,7 +53,7 @@ class TestRegisterFromTools:
         tool = _make_tool_stub("get_weather", {"mcp_title": "MCP Weather Title"})
         mapper.register_from_tools([tool])
 
-        assert mapper.get_display_name(tool_name="get_weather") == "Custom Weather"
+        assert mapper.get_display_name(tool_name="get_weather") == "🛠️ Custom Weather"
 
     def test_skips_tools_without_metadata(self) -> None:
         mapper = ToolDisplayNameMapper()
@@ -82,6 +82,6 @@ class TestRegisterFromTools:
 
         mapper.register_from_tools(tools)
 
-        assert mapper.get_display_name(tool_name="tool_a") == "Tool Alpha"
-        assert mapper.get_display_name(tool_name="tool_b") == "Tool Beta"
+        assert mapper.get_display_name(tool_name="tool_a") == "🛠️ Tool Alpha"
+        assert mapper.get_display_name(tool_name="tool_b") == "🛠️ Tool Beta"
         assert "Tool C" in mapper.get_display_name(tool_name="tool_c")
