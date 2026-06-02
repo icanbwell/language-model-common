@@ -105,7 +105,7 @@ class ToolDisplayNameMapper:
         elif tool_name == "call_tool":
             return f"\n {name_for_tool}.\n"
         elif tool_name == "search_tools":
-            return f"Search Tools: \n{name_for_tool}.\n"
+            return f"\n{name_for_tool}.\n"
         else:
             return f"\n{name_for_tool}.\n"
 
