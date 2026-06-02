@@ -80,20 +80,37 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         self._apply_debug_prefix_toggle()
 
     def _apply_debug_prefix_toggle(self) -> None:
-        debug_prefixes = self._debug_prefixes
+        from languagemodelcommon.utilities.slash_command.slash_command_processor import (
+            SlashCommandProcessor,
+        )
+        from languagemodelcommon.utilities.slash_command.handlers.debug_command_handler import (
+            DebugCommandHandler,
+            DebugCommandEffect,
+        )
+
+        processor = SlashCommandProcessor(handlers=[DebugCommandHandler()])
+        colon_prefixes = tuple(p for p in self._debug_prefixes if not p.startswith("/"))
+
         for index, message in enumerate(self._messages):
             if message.role != "user":
                 continue
             content = message.content
             if not isinstance(content, str):
                 continue
-            matched_prefix = next(
-                (p for p in debug_prefixes if content.startswith(p)), None
-            )
-            if matched_prefix is None:
-                continue
-            self._enable_debug_logging = True
-            stripped_content = content[len(matched_prefix) :].lstrip()
+
+            effect = processor.process(content=content)
+            if isinstance(effect, DebugCommandEffect):
+                self._enable_debug_logging = True
+                stripped_content = effect.stripped_content
+            else:
+                matched_prefix = next(
+                    (p for p in colon_prefixes if content.startswith(p)), None
+                )
+                if matched_prefix is None:
+                    continue
+                self._enable_debug_logging = True
+                stripped_content = content[len(matched_prefix) :].lstrip()
+
             if isinstance(message, ResponsesApiMessageWrapper):
                 self._set_message_input_text(message=message, content=stripped_content)
             self._update_request_input(index=index, content=stripped_content)
