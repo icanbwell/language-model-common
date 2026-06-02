@@ -184,6 +184,11 @@ class LanguageModelCommonContainerFactory:
         # read from the contextvar at access time.
 
         container.singleton(
+            service_type=ToolDisplayNameMapper,
+            factory=lambda c: ToolDisplayNameMapper(),
+        )
+
+        container.singleton(
             service_type=ToolEventHandler,
             factory=lambda c: ToolEventHandler(
                 debug_file_writer=c.resolve(FileWriter),
