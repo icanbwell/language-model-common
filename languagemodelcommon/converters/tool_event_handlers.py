@@ -11,6 +11,7 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
+from languagemodelcommon.converters.stream_context_mixin import StreamContextMixin
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
-class ToolEventHandler:
+class ToolEventHandler(StreamContextMixin):
     def __init__(
         self,
         *,
@@ -58,26 +59,6 @@ class ToolEventHandler:
         self._tool_display_name_mapper = tool_display_name_mapper
         self._static_stream_buffer_manager = stream_buffer_manager
         self._static_stream_debug_output_manager = stream_debug_output_manager
-
-    @property
-    def _stream_buffer_manager(self) -> StreamBufferManager:
-        if self._static_stream_buffer_manager is not None:
-            return self._static_stream_buffer_manager
-        from languagemodelcommon.context.request_context import (
-            get_stream_buffer_manager,
-        )
-
-        return get_stream_buffer_manager()
-
-    @property
-    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
-        if self._static_stream_debug_output_manager is not None:
-            return self._static_stream_debug_output_manager
-        from languagemodelcommon.context.request_context import (
-            get_stream_debug_output_manager,
-        )
-
-        return get_stream_debug_output_manager()
 
     async def handle_tool_start(
         self,

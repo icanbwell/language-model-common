@@ -43,6 +43,7 @@ from typing import (
 )
 
 from languagemodelcommon.configs.schemas.config_schema import PromptConfig
+from languagemodelcommon.converters.stream_context_mixin import StreamContextMixin
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
@@ -69,7 +70,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
-class LangGraphToOpenAIConverter:
+class LangGraphToOpenAIConverter(StreamContextMixin):
     @staticmethod
     def _is_timeout_exception(exception: Exception) -> bool:
         if isinstance(exception, (TimeoutError, ReadTimeoutError, ConnectTimeoutError)):
@@ -159,17 +160,8 @@ class LangGraphToOpenAIConverter:
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
             )
 
+        self._static_stream_buffer_manager = None
         self._static_stream_debug_output_manager = stream_debug_output_manager
-
-    @property
-    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
-        if self._static_stream_debug_output_manager is not None:
-            return self._static_stream_debug_output_manager
-        from languagemodelcommon.context.request_context import (
-            get_stream_debug_output_manager,
-        )
-
-        return get_stream_debug_output_manager()
 
     async def _stream_resp_async_generator(
         self,
