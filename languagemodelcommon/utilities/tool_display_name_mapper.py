@@ -103,7 +103,7 @@ class ToolDisplayNameMapper:
         elif tool_name == "run_python_script":
             return f"\n🐍 Running Python script: {name_for_tool}.\n"
         elif tool_name == "call_tool":
-            return f"\n🛠️ Call Tool: {name_for_tool}.\n"
+            return f"\n {name_for_tool}.\n"
         elif tool_name == "search_tools":
             return f"Search Tools: \n{name_for_tool}.\n"
         else:
