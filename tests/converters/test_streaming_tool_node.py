@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -15,12 +17,12 @@ class TestStreamingToolNode:
         expected_result = {"messages": ["tool result"]}
         with patch.object(node, "ainvoke", new_callable=AsyncMock) as mock_invoke:
             mock_invoke.return_value = expected_result
-            results = [
-                chunk
-                async for chunk in node.astream(
-                    input={"tool_call": {"name": "test_tool", "args": {}}}
-                )
-            ]
+            results: list[Any] = []
+            chunk: Any
+            async for chunk in node.astream(
+                input={"tool_call": {"name": "test_tool", "args": {}}}
+            ):
+                results.append(chunk)
         assert results == [expected_result]
 
     @pytest.mark.asyncio
@@ -31,7 +33,8 @@ class TestStreamingToolNode:
                 message="login required"
             )
             with pytest.raises(AuthorizationNeededException):
-                _ = [chunk async for chunk in node.astream(input={})]
+                async for _ in node.astream(input={}):
+                    pass
 
     @pytest.mark.asyncio
     async def test_generic_exception_wrapped_with_tool_context(self) -> None:
@@ -41,12 +44,10 @@ class TestStreamingToolNode:
             with pytest.raises(
                 Exception, match="Exception in tool my_tool"
             ) as exc_info:
-                _ = [
-                    chunk
-                    async for chunk in node.astream(
-                        input={"tool_call": {"name": "my_tool", "args": {"x": 1}}}
-                    )
-                ]
+                async for _ in node.astream(
+                    input={"tool_call": {"name": "my_tool", "args": {"x": 1}}}
+                ):
+                    pass
             assert "something broke" in str(exc_info.value)
             assert isinstance(exc_info.value.__cause__, ValueError)
 
@@ -56,4 +57,5 @@ class TestStreamingToolNode:
         with patch.object(node, "ainvoke", new_callable=AsyncMock) as mock_invoke:
             mock_invoke.side_effect = RuntimeError("fail")
             with pytest.raises(Exception, match="Exception in tool None"):
-                _ = [chunk async for chunk in node.astream(input="not_a_dict")]
+                async for _ in node.astream(input="not_a_dict"):
+                    pass
