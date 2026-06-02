@@ -46,13 +46,14 @@ class ContextCompactor:
         Returns:
             A compacted list of messages preserving the most recent turn.
         """
-        if not messages:
+        if len(messages) <= 1:
             return messages
 
         original_tokens = self._count_tokens(messages)
+        original_count = len(messages)
         logger.info(
             "[CONTEXT_COMPACTOR] Starting compaction: %d messages, ~%d tokens",
-            len(messages),
+            original_count,
             original_tokens,
         )
 
@@ -71,7 +72,14 @@ class ContextCompactor:
         )
 
         if tokens_after_pass1 < original_tokens * 0.5:
-            return system_messages + compacted
+            compaction_notice = self._build_compaction_notice(
+                original_messages=original_count,
+                original_tokens=original_tokens,
+                final_messages=len(system_messages) + len(compacted),
+                final_tokens=tokens_after_pass1,
+                passes_applied=["truncate_tool_results"],
+            )
+            return [compaction_notice] + system_messages + compacted
 
         # Pass 2: Drop older tool call/result pairs entirely
         compacted = self._drop_old_tool_pairs(messages=compacted)
@@ -84,7 +92,14 @@ class ContextCompactor:
         )
 
         if tokens_after_pass2 < original_tokens * 0.5:
-            return system_messages + compacted
+            compaction_notice = self._build_compaction_notice(
+                original_messages=original_count,
+                original_tokens=original_tokens,
+                final_messages=len(system_messages) + len(compacted),
+                final_tokens=tokens_after_pass2,
+                passes_applied=["truncate_tool_results", "drop_tool_pairs"],
+            )
+            return [compaction_notice] + system_messages + compacted
 
         # Pass 3: Summarize older exchanges, keep only recent turn
         compacted = self._summarize_old_exchanges(messages=compacted)
@@ -96,7 +111,38 @@ class ContextCompactor:
             tokens_after_pass3,
         )
 
-        return system_messages + compacted
+        compaction_notice = self._build_compaction_notice(
+            original_messages=original_count,
+            original_tokens=original_tokens,
+            final_messages=len(system_messages) + len(compacted),
+            final_tokens=tokens_after_pass3,
+            passes_applied=[
+                "truncate_tool_results",
+                "drop_tool_pairs",
+                "summarize_old_exchanges",
+            ],
+        )
+        return [compaction_notice] + system_messages + compacted
+
+    @staticmethod
+    def _build_compaction_notice(
+        *,
+        original_messages: int,
+        original_tokens: int,
+        final_messages: int,
+        final_tokens: int,
+        passes_applied: List[str],
+    ) -> SystemMessage:
+        return SystemMessage(
+            content=(
+                f"[CONTEXT COMPACTED] The conversation was automatically compacted "
+                f"to fit the model's context window. "
+                f"Original: {original_messages} messages (~{original_tokens} tokens) → "
+                f"Compacted: {final_messages} messages (~{final_tokens} tokens). "
+                f"Passes applied: {', '.join(passes_applied)}. "
+                f"Some earlier tool results and message details may have been summarized or removed."
+            )
+        )
 
     def _split_system_messages(
         self, *, messages: List[AnyMessage]

@@ -241,6 +241,11 @@ class LanguageModelCommonEnvironmentVariables(
             return DEFAULT_LANGGRAPH_RECURSION_LIMIT
 
     @property
+    def context_compaction_enabled(self) -> bool:
+        """When True, automatically compact conversation context on input-too-long errors."""
+        return self.str2bool(os.environ.get("CONTEXT_COMPACTION_ENABLED", "true"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 

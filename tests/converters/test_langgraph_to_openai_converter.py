@@ -341,3 +341,44 @@ async def test_stream_graph_compacts_and_retries_on_input_too_long(
     # The retry succeeded and yielded events
     assert len(events) == 1
     assert fake_graph._call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_graph_skips_compaction_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When CONTEXT_COMPACTION_ENABLED=false, raises immediately without retry."""
+    monkeypatch.setenv("CONTEXT_COMPACTION_ENABLED", "false")
+    converter = _build_converter(monkeypatch)
+
+    messages: list[AnyMessage] = [
+        HumanMessage(content="What is the patient status?"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "get_patient", "args": {}, "id": "tc1"}],
+        ),
+        ToolMessage(content="x" * 5000, tool_call_id="tc1", name="get_patient"),
+        AIMessage(content="The patient is stable."),
+        HumanMessage(content="Tell me more details"),
+    ]
+
+    fake_graph = _FakeCompiledStateGraph(
+        events=[{"event": "on_chain_start"}],
+        error=RuntimeError("Input is too long for requested model."),
+        fail_count=1,
+    )
+
+    with pytest.raises(BaileyException, match="context window"):
+        _ = [
+            event
+            async for event in converter._stream_graph_with_messages_async(
+                messages=messages,
+                compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+                request_information=_request_information(),
+                config=None,
+                state=None,
+            )
+        ]
+
+    # Only called once — no retry
+    assert fake_graph._call_count == 1

@@ -706,6 +706,9 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             if "context window" not in str(e):
                 raise
 
+            if not self.environment_variables.context_compaction_enabled:
+                raise
+
             # Compact and retry once
             compacted_messages = self._context_compactor.compact(messages=messages)
             if compacted_messages is messages or compacted_messages == messages:

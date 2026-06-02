@@ -173,3 +173,22 @@ class TestEdgeCases:
 
         system_msgs = [m for m in result if isinstance(m, SystemMessage)]
         assert any("helpful assistant" in str(m.content) for m in system_msgs)
+
+    def test_includes_compaction_notice(self, *, compactor: ContextCompactor) -> None:
+        messages: list[AnyMessage] = [
+            HumanMessage(content="first question"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "search", "args": {}, "id": "tc1"}],
+            ),
+            ToolMessage(content="x" * 5000, tool_call_id="tc1", name="search"),
+            AIMessage(content="answer"),
+            HumanMessage(content="second question"),
+        ]
+
+        result = compactor.compact(messages=messages)
+
+        system_msgs = [m for m in result if isinstance(m, SystemMessage)]
+        assert any("CONTEXT COMPACTED" in str(m.content) for m in system_msgs)
+        notice = next(m for m in system_msgs if "CONTEXT COMPACTED" in str(m.content))
+        assert "truncate_tool_results" in str(notice.content)
