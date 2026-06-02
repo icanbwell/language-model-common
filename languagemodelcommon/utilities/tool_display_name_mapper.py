@@ -79,10 +79,20 @@ class ToolDisplayNameMapper:
                 if stripped_title:
                     self._name_to_display_name[tool.name] = stripped_title
 
+    @staticmethod
+    def _starts_with_emoji(text: str) -> bool:
+        if not text:
+            return False
+        first_char = text[0]
+        cp = ord(first_char)
+        return cp > 0x2000
+
     def get_display_name(self, *, tool_name: str) -> str:
         display_name = self._name_to_display_name.get(tool_name)
         if display_name:
-            return display_name
+            if self._starts_with_emoji(display_name):
+                return display_name
+            return "🛠️ " + display_name
         return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
 
     def get_message_for_tool(
@@ -103,7 +113,9 @@ class ToolDisplayNameMapper:
         prefix = _SKILL_PREFIXES.get(tool_name)
         if prefix:
             return f"\n{prefix} {name_for_tool}.\n"
-        return f"\n{name_for_tool}.\n"
+        if self._starts_with_emoji(name_for_tool):
+            return f"\n{name_for_tool}.\n"
+        return f"\n🛠️ {name_for_tool}.\n"
 
     def get_name_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
