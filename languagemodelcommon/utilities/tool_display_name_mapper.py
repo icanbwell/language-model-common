@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
@@ -18,7 +19,7 @@ class ToolDisplayNameMapper:
         self._name_to_display_name: Dict[str, str] = {
             name: display_name
             for name, display_name in (name_to_display_name or {}).items()
-            if display_name
+            if display_name is not None
         }
 
     @classmethod
@@ -56,7 +57,7 @@ class ToolDisplayNameMapper:
         mapping: Dict[str, str] = {
             str(key): value
             for key, value in data.items()
-            if isinstance(value, str) and value.strip()
+            if isinstance(value, str)
         }
         return cls(name_to_display_name=mapping)
 
@@ -87,13 +88,37 @@ class ToolDisplayNameMapper:
         cp = ord(first_char)
         return cp > 0x2000
 
-    def get_display_name(self, *, tool_name: str) -> str:
+    @staticmethod
+    def _substitute_params(*, template: str, params: Dict[str, Any]) -> str:
+        """Replace {param} placeholders in template with values from params.
+
+        Unresolved placeholders are left as-is.
+        """
+        if "{" not in template:
+            return template
+        safe_params: Dict[str, Any] = defaultdict(
+            lambda: None, {k: v for k, v in params.items() if v is not None}
+        )
+        try:
+            return template.format_map(safe_params)
+        except (KeyError, ValueError, IndexError):
+            return template
+
+    def get_display_name(
+        self, *, tool_name: str, tool_input: Dict[str, Any] | None = None
+    ) -> str:
         display_name = self._name_to_display_name.get(tool_name)
-        if display_name:
-            if self._starts_with_emoji(display_name):
-                return display_name
-            return "🛠️ " + display_name
-        return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
+        if display_name is None:
+            return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
+        if display_name == "":
+            return ""
+        if tool_input:
+            display_name = self._substitute_params(
+                template=display_name, params=tool_input
+            )
+        if self._starts_with_emoji(display_name):
+            return display_name
+        return "🛠️ " + display_name
 
     def get_message_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
@@ -123,17 +148,18 @@ class ToolDisplayNameMapper:
         elif tool_name == "search_tools":
             return self._get_name_for_search_tools(inputs=inputs)
         else:
-            return self.get_display_name(tool_name=tool_name)
+            return self.get_display_name(tool_name=tool_name, tool_input=inputs)
 
     def _get_name_for_call_tool(self, *, inputs: Dict[str, Any]) -> str:
         target_tool_name = str(inputs.get("name") or "")
         if target_tool_name:
             configured = self._name_to_display_name.get(target_tool_name)
-            return (
-                configured
-                if configured
-                else Humanizer.humanize_tool_name(key=target_tool_name)
-            )
+            if configured:
+                tool_arguments = inputs.get("arguments") or {}
+                return self._substitute_params(
+                    template=configured, params=tool_arguments
+                )
+            return Humanizer.humanize_tool_name(key=target_tool_name)
         return "Call Tool"
 
     def _get_name_for_search_tools(self, *, inputs: Dict[str, Any]) -> str:
