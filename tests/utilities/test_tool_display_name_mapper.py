@@ -18,17 +18,6 @@ def test_mapper_prefers_display_name(tmp_path: Path) -> None:
     assert mapper.get_display_name(tool_name="fhir_server") == "🛠️ FHIR Server"
 
 
-def test_mapper_builds_skill_start_text() -> None:
-    mapper = ToolDisplayNameMapper()
-
-    text = mapper.get_message_for_tool(
-        tool_name="load_skill", tool_input={"skill_name": "medication_review"}
-    )
-
-    assert "Using skill" in text
-    assert "Medication Review" in text
-
-
 def _make_tool_stub(name: str, metadata: Dict[str, Any] | None = None) -> BaseTool:
     stub = MagicMock(spec=BaseTool)
     stub.name = name

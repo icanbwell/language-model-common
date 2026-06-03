@@ -104,15 +104,9 @@ class ToolDisplayNameMapper:
         name_for_tool: str = self.get_name_for_tool(
             tool_name=tool_name, tool_input=tool_input
         )
-        _SKILL_PREFIXES: Dict[str, str] = {
-            "load_skill": "🧠 Using skill:",
-            "run_skill_script": "⚡ Running script from skill:",
-            "read_skill_resource": "📖 Reading resource from skill:",
-            "run_python_script": "🐍 Running Python script:",
-        }
-        prefix = _SKILL_PREFIXES.get(tool_name)
-        if prefix:
-            return f"\n{prefix} {name_for_tool}.\n"
+        if not name_for_tool:
+            return ""
+
         if self._starts_with_emoji(name_for_tool):
             return f"\n{name_for_tool}.\n"
         return f"\n🛠️ {name_for_tool}.\n"
@@ -124,33 +118,26 @@ class ToolDisplayNameMapper:
             return ""
 
         inputs = tool_input or {}
-        if tool_name == "load_skill":
-            skill_name = str(inputs.get("skill_name") or "")
-            return Humanizer.humanize_tool_name(key=skill_name)
-        elif tool_name == "run_skill_script":
-            skill_name = str(inputs.get("skill_name") or "")
-            script_name = str(inputs.get("script_name") or "")
-            return f"{Humanizer.humanize_tool_name(key=skill_name)} ({script_name})"
-        elif tool_name == "read_skill_resource":
-            skill_name = str(inputs.get("skill_name") or "")
-            resource_name = str(inputs.get("resource_name") or "")
-            return f"{Humanizer.humanize_tool_name(key=skill_name)} {Humanizer.humanize_tool_name(key=resource_name)}"
-        elif tool_name == "run_python_script":
-            return str(inputs.get("skill_name") or "")
-        elif tool_name == "call_tool":
-            target_tool_name = str(inputs.get("name") or "")
-            if target_tool_name:
-                configured = self._name_to_display_name.get(target_tool_name)
-                return (
-                    configured
-                    if configured
-                    else Humanizer.humanize_tool_name(key=target_tool_name)
-                )
-            return "Call Tool"
+        if tool_name == "call_tool":
+            return self._get_name_for_call_tool(inputs=inputs)
         elif tool_name == "search_tools":
-            query = str(inputs.get("query") or "")
-            if query:
-                return f"🔍 Search Tools ({query})"
-            return "🔍 Search Tools"
+            return self._get_name_for_search_tools(inputs=inputs)
         else:
             return self.get_display_name(tool_name=tool_name)
+
+    def _get_name_for_call_tool(self, *, inputs: Dict[str, Any]) -> str:
+        target_tool_name = str(inputs.get("name") or "")
+        if target_tool_name:
+            configured = self._name_to_display_name.get(target_tool_name)
+            return (
+                configured
+                if configured
+                else Humanizer.humanize_tool_name(key=target_tool_name)
+            )
+        return "Call Tool"
+
+    def _get_name_for_search_tools(self, *, inputs: Dict[str, Any]) -> str:
+        query = str(inputs.get("query") or "")
+        if query:
+            return f"🔍 Search Tools ({query})"
+        return "🔍 Search Tools"
