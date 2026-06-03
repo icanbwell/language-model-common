@@ -1,3 +1,5 @@
+import pytest
+
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import MagicMock
@@ -16,9 +18,7 @@ def test_empty_string_suppresses_display(tmp_path: Path) -> None:
     mapper = ToolDisplayNameMapper.from_config_path(config_path=str(config_path))
 
     assert mapper.get_display_name(tool_name="hidden_tool") == ""
-    assert (
-        mapper.get_message_for_tool(tool_name="hidden_tool", tool_input={}) == ""
-    )
+    assert mapper.get_message_for_tool(tool_name="hidden_tool", tool_input={}) == ""
 
 
 def test_mapper_prefers_display_name(tmp_path: Path) -> None:
@@ -35,9 +35,6 @@ def _make_tool_stub(name: str, metadata: Dict[str, Any] | None = None) -> BaseTo
     stub.name = name
     stub.metadata = metadata
     return stub
-
-
-import pytest
 
 
 class TestParameterSubstitution:
@@ -74,9 +71,7 @@ class TestParameterSubstitution:
     def test_substitutes_params_in_display_name(
         self, template: str, params: Dict[str, Any], expected: str
     ) -> None:
-        mapper = ToolDisplayNameMapper(
-            name_to_display_name={"my_tool": template}
-        )
+        mapper = ToolDisplayNameMapper(name_to_display_name={"my_tool": template})
         result = mapper.get_display_name(tool_name="my_tool", tool_input=params)
         assert result == expected
 
@@ -96,14 +91,23 @@ class TestParameterSubstitution:
         )
         assert result == "🧠 Using skill scheduling"
 
-    def test_missing_param_resolves_to_none(self) -> None:
+    def test_missing_param_leaves_placeholder(self) -> None:
         mapper = ToolDisplayNameMapper(
             name_to_display_name={"my_tool": "🧠 Skill {name} with {missing}"}
         )
         result = mapper.get_display_name(
             tool_name="my_tool", tool_input={"name": "test"}
         )
-        assert result == "🧠 Skill test with None"
+        assert result == "🧠 Skill test with {missing}"
+
+    def test_missing_param_with_default(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🧠 Skill {name} with {missing|fallback}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool", tool_input={"name": "test"}
+        )
+        assert result == "🧠 Skill test with fallback"
 
     def test_call_tool_substitutes_from_arguments(self) -> None:
         mapper = ToolDisplayNameMapper(

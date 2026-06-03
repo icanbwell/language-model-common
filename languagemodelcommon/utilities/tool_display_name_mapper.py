@@ -1,6 +1,6 @@
 import json
 import logging
-from collections import defaultdict
+import re
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
@@ -55,9 +55,7 @@ class ToolDisplayNameMapper:
             )
             return cls()
         mapping: Dict[str, str] = {
-            str(key): value
-            for key, value in data.items()
-            if isinstance(value, str)
+            str(key): value for key, value in data.items() if isinstance(value, str)
         }
         return cls(name_to_display_name=mapping)
 
@@ -88,21 +86,32 @@ class ToolDisplayNameMapper:
         cp = ord(first_char)
         return cp > 0x2000
 
-    @staticmethod
-    def _substitute_params(*, template: str, params: Dict[str, Any]) -> str:
-        """Replace {param} placeholders in template with values from params.
+    _PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
 
-        Unresolved placeholders are left as-is.
+    @classmethod
+    def _substitute_params(cls, *, template: str, params: Dict[str, Any]) -> str:
+        """Replace {param} or {param|default} placeholders with values from params.
+
+        Supports: {name}, {name|fallback text}
+        If a param is missing and no default is specified, the placeholder is left as-is.
         """
         if "{" not in template:
             return template
-        safe_params: Dict[str, Any] = defaultdict(
-            lambda: None, {k: v for k, v in params.items() if v is not None}
-        )
-        try:
-            return template.format_map(safe_params)
-        except (KeyError, ValueError, IndexError):
-            return template
+
+        def _replace(match: re.Match[str]) -> str:
+            token = match.group(1)
+            if "|" in token:
+                key, default = token.split("|", 1)
+            else:
+                key, default = token, None
+            value = params.get(key)
+            if value is not None:
+                return str(value)
+            if default is not None:
+                return default
+            return match.group(0)
+
+        return cls._PLACEHOLDER_RE.sub(_replace, template)
 
     def get_display_name(
         self, *, tool_name: str, tool_input: Dict[str, Any] | None = None
@@ -145,25 +154,16 @@ class ToolDisplayNameMapper:
         inputs = tool_input or {}
         if tool_name == "call_tool":
             return self._get_name_for_call_tool(inputs=inputs)
-        elif tool_name == "search_tools":
-            return self._get_name_for_search_tools(inputs=inputs)
-        else:
-            return self.get_display_name(tool_name=tool_name, tool_input=inputs)
+        return self.get_display_name(tool_name=tool_name, tool_input=inputs)
 
     def _get_name_for_call_tool(self, *, inputs: Dict[str, Any]) -> str:
         target_tool_name = str(inputs.get("name") or "")
-        if target_tool_name:
-            configured = self._name_to_display_name.get(target_tool_name)
-            if configured:
-                tool_arguments = inputs.get("arguments") or {}
-                return self._substitute_params(
-                    template=configured, params=tool_arguments
-                )
+        if not target_tool_name:
+            return "Call Tool"
+        configured = self._name_to_display_name.get(target_tool_name)
+        if configured is None:
             return Humanizer.humanize_tool_name(key=target_tool_name)
-        return "Call Tool"
-
-    def _get_name_for_search_tools(self, *, inputs: Dict[str, Any]) -> str:
-        query = str(inputs.get("query") or "")
-        if query:
-            return f"🔍 Search Tools ({query})"
-        return "🔍 Search Tools"
+        if configured == "":
+            return ""
+        tool_arguments = inputs.get("arguments") or {}
+        return self._substitute_params(template=configured, params=tool_arguments)
