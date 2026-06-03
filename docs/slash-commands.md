@@ -49,11 +49,11 @@ Dynamic commands whose names come from a `SkillContentResolver`. When matched, t
 
 **Adding a new skill command:** Register the skill name in the `SkillContentResolver` implementation. No code changes needed in the handler itself.
 
-### 2. Reload Commands (`ReloadCommandHandler`)
+### 2. Reload Commands (implemented in baileyai)
 
-Static action commands that trigger side effects (cache clearing, server reloads). Produces a `ReloadCommandEffect` with a `ReloadTarget`.
+Static action commands that trigger side effects (cache clearing, server reloads). The `ReloadCommandHandler` lives in `baileyai/services/message_preprocessing/handlers/reload_command_handler.py` — not in this library. It produces a `ReloadCommandEffect` with a `ReloadTarget` enum.
 
-**Current commands:**
+**Current commands (defined in baileyai):**
 | Command | Target | Behavior |
 |---------|--------|----------|
 | `/reload` | `ReloadTarget.MODELS` | Clears model config + tool caches |
@@ -73,10 +73,10 @@ If the new command fits an existing handler category (e.g., a new reload target)
 2. Add test coverage
 3. Handle the new target in the caller's callback
 
-**Example: Adding `/reload-prompts`**
+**Example: Adding `/reload-prompts` (in baileyai)**
 
 ```python
-# In reload_command_handler.py
+# In baileyai/services/message_preprocessing/handlers/reload_command_handler.py
 class ReloadTarget(Enum):
     MODELS = "models"
     SKILLS = "skills"
@@ -129,10 +129,10 @@ class MyCommandHandler:
         return MyCommandEffect(some_data=context.remaining_message)
 ```
 
-Then register in the preprocessor:
+Then register in the preprocessor (in baileyai):
 
 ```python
-# In SlashCommandPreprocessor.__init__
+# In baileyai SlashCommandPreprocessor.__init__
 handlers: list[SlashCommandHandler] = [
     ReloadCommandHandler(),
     MyCommandHandler(),  # ← add
@@ -150,11 +150,11 @@ If the command loads content (instructions, context) rather than performing an a
 
 ## Effect Types
 
-| Effect | Behavior in baileyai |
-|--------|---------------------|
-| `SkillCommandEffect` | Loads skill content as a system message before the user's message |
-| `ReloadCommandEffect` | Executes reload callback, short-circuits LLM with confirmation |
-| `DebugCommandEffect` | Strips debug prefix (handling depends on consumer) |
+| Effect | Source | Behavior in baileyai |
+|--------|--------|---------------------|
+| `SkillCommandEffect` | language-model-common | Loads skill content as a system message before the user's message |
+| `ReloadCommandEffect` | baileyai | Executes reload callback, short-circuits LLM with confirmation |
+| `DebugCommandEffect` | language-model-common | Strips debug prefix (handling depends on consumer) |
 
 ### Action effects vs. content effects
 
@@ -176,6 +176,12 @@ Tests for the preprocessor should cover:
 - Edge cases (empty messages, no human message, resolver returns None)
 
 Test files:
-- `language-model-common/tests/utilities/slash_command/test_reload_command_handler.py`
-- `language-model-common/tests/utilities/slash_command/test_skill_command_handler.py`
+- `tests/utilities/slash_command/test_skill_command_handler.py`
+- `tests/utilities/slash_command/test_debug_command_handler.py`
+- `tests/utilities/slash_command/test_slash_command_parser.py`
+- `tests/utilities/slash_command/test_slash_command_processor.py`
+- `tests/utilities/message_preprocessing/test_composite_message_preprocessor.py`
+
+Reload handler tests live in baileyai:
+- `baileyai/tests/services/message_preprocessing/handlers/test_reload_command_handler.py`
 - `baileyai/tests/services/message_preprocessing/test_slash_command_preprocessor.py`
