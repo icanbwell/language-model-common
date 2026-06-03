@@ -126,6 +126,16 @@ class ToolListCache:
         if self._store is not None:
             await self._store.invalidate(key=key)
 
+    def get_all_tool_names(self) -> set[str]:
+        """Return a set of all tool names currently cached in-memory."""
+        names: set[str] = set()
+        for entry in self._cache.values():
+            if entry.expires_at is not None and time.monotonic() > entry.expires_at:
+                continue
+            for tool in entry.tools:
+                names.add(tool.name)
+        return names
+
     def clear(self) -> None:
         """Clear in-memory cache only (synchronous)."""
         self._cache.clear()
