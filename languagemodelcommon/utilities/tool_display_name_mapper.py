@@ -98,6 +98,16 @@ class ToolDisplayNameMapper:
         if "{" not in template:
             return template
 
+        def _format_value(value: Any) -> str | None:
+            if isinstance(value, list):
+                if not value:
+                    return None
+                joined = ", ".join(str(item) for item in value)
+                if len(value) > 1:
+                    return f"({joined})"
+                return joined
+            return str(value)
+
         def _replace(match: re.Match[str]) -> str:
             token = match.group(1)
             if "|" in token:
@@ -106,7 +116,9 @@ class ToolDisplayNameMapper:
                 key, default = token, None
             value = params.get(key)
             if value is not None:
-                return str(value)
+                formatted = _format_value(value)
+                if formatted is not None:
+                    return formatted
             if default is not None:
                 return default
             return match.group(0)

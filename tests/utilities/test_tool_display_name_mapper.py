@@ -109,6 +109,33 @@ class TestParameterSubstitution:
         )
         assert result == "🧠 Skill test with fallback"
 
+    def test_list_multiple_elements_wrapped_in_parens(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool",
+            tool_input={"vitals": ["blood_pressure", "heart_rate"]},
+        )
+        assert result == "🩺 Checking your (blood_pressure, heart_rate)"
+
+    def test_list_single_element_no_parens(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool",
+            tool_input={"vitals": ["blood_pressure"]},
+        )
+        assert result == "🩺 Checking your blood_pressure"
+
+    def test_empty_list_uses_default(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}
+        )
+        result = mapper.get_display_name(tool_name="my_tool", tool_input={"vitals": []})
+        assert result == "🩺 Checking your vitals"
+
     def test_call_tool_substitutes_from_arguments(self) -> None:
         mapper = ToolDisplayNameMapper(
             name_to_display_name={
