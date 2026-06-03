@@ -41,8 +41,14 @@ def _make_provider() -> MCPToolProvider:
     provider.pass_through_token_manager = MagicMock()
 
     from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
+    from languagemodelcommon.mcp.mcp_client.server_card_discovery import (
+        ServerCardDiscovery,
+    )
 
     provider.tool_list_cache = ToolListCache(ttl_seconds=300.0)
+    mock_server_card = MagicMock(spec=ServerCardDiscovery)
+    mock_server_card.fetch_tools_from_server_card = AsyncMock(return_value=None)
+    provider._server_card_discovery = mock_server_card
     return provider
 
 

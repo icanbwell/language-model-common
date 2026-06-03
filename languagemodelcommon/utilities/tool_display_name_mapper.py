@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
@@ -18,7 +19,7 @@ class ToolDisplayNameMapper:
         self._name_to_display_name: Dict[str, str] = {
             name: display_name
             for name, display_name in (name_to_display_name or {}).items()
-            if display_name
+            if display_name is not None
         }
 
     @classmethod
@@ -54,9 +55,7 @@ class ToolDisplayNameMapper:
             )
             return cls()
         mapping: Dict[str, str] = {
-            str(key): value
-            for key, value in data.items()
-            if isinstance(value, str) and value.strip()
+            str(key): value for key, value in data.items() if isinstance(value, str)
         }
         return cls(name_to_display_name=mapping)
 
@@ -79,11 +78,68 @@ class ToolDisplayNameMapper:
                 if stripped_title:
                     self._name_to_display_name[tool.name] = stripped_title
 
-    def get_display_name(self, *, tool_name: str) -> str:
+    @staticmethod
+    def _starts_with_emoji(text: str) -> bool:
+        if not text:
+            return False
+        first_char = text[0]
+        cp = ord(first_char)
+        return cp > 0x2000
+
+    _PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
+
+    @classmethod
+    def _substitute_params(cls, *, template: str, params: Dict[str, Any]) -> str:
+        """Replace {param} or {param|default} placeholders with values from params.
+
+        Supports: {name}, {name|fallback text}
+        If a param is missing and no default is specified, the placeholder is left as-is.
+        """
+        if "{" not in template:
+            return template
+
+        def _format_value(value: Any) -> str | None:
+            if isinstance(value, list):
+                if not value:
+                    return None
+                joined = ", ".join(str(item) for item in value)
+                if len(value) > 1:
+                    return f"({joined})"
+                return joined
+            return str(value)
+
+        def _replace(match: re.Match[str]) -> str:
+            token = match.group(1)
+            if "|" in token:
+                key, default = token.split("|", 1)
+            else:
+                key, default = token, None
+            value = params.get(key)
+            if value is not None:
+                formatted = _format_value(value)
+                if formatted is not None:
+                    return formatted
+            if default is not None:
+                return default
+            return match.group(0)
+
+        return cls._PLACEHOLDER_RE.sub(_replace, template)
+
+    def get_display_name(
+        self, *, tool_name: str, tool_input: Dict[str, Any] | None = None
+    ) -> str:
         display_name = self._name_to_display_name.get(tool_name)
-        if display_name:
+        if display_name is None:
+            return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
+        if display_name == "":
+            return ""
+        if tool_input:
+            display_name = self._substitute_params(
+                template=display_name, params=tool_input
+            )
+        if self._starts_with_emoji(display_name):
             return display_name
-        return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
+        return "🛠️ " + display_name
 
     def get_message_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
@@ -94,20 +150,12 @@ class ToolDisplayNameMapper:
         name_for_tool: str = self.get_name_for_tool(
             tool_name=tool_name, tool_input=tool_input
         )
-        if tool_name == "load_skill":
-            return f"\n🧠 Using skill: {name_for_tool}.\n"
-        elif tool_name == "run_skill_script":
-            return f"\n⚡ Running script from skill: {name_for_tool}.\n"
-        elif tool_name == "read_skill_resource":
-            return f"\n📖 Reading resource from skill: {name_for_tool}.\n"
-        elif tool_name == "run_python_script":
-            return f"\n🐍 Running Python script: {name_for_tool}.\n"
-        elif tool_name == "call_tool":
-            return f"\n🛠️ Call Tool: {name_for_tool}.\n"
-        elif tool_name == "search_tools":
-            return f"Search Tools: \n{name_for_tool}.\n"
-        else:
+        if not name_for_tool:
+            return ""
+
+        if self._starts_with_emoji(name_for_tool):
             return f"\n{name_for_tool}.\n"
+        return f"\n🛠️ {name_for_tool}.\n"
 
     def get_name_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
@@ -116,38 +164,18 @@ class ToolDisplayNameMapper:
             return ""
 
         inputs = tool_input or {}
-        if tool_name == "load_skill":
-            skill_name = str(inputs.get("skill_name") or "")
-            display_name = Humanizer.humanize_tool_name(key=skill_name)
-        elif tool_name == "run_skill_script":
-            skill_name = str(inputs.get("skill_name") or "")
-            script_name = str(inputs.get("script_name") or "")
-            display_name = (
-                f"{Humanizer.humanize_tool_name(key=skill_name)} ({script_name})"
-            )
-        elif tool_name == "read_skill_resource":
-            skill_name = str(inputs.get("skill_name") or "")
-            resource_name = str(inputs.get("resource_name") or "")
-            display_name = f"{Humanizer.humanize_tool_name(key=skill_name)} {Humanizer.humanize_tool_name(key=resource_name)}"
-        elif tool_name == "run_python_script":
-            display_name = str(inputs.get("skill_name") or "")
-        elif tool_name == "call_tool":
-            target_tool_name = str(inputs.get("name") or "")
-            if target_tool_name:
-                configured = self._name_to_display_name.get(target_tool_name)
-                display_name = (
-                    configured
-                    if configured
-                    else Humanizer.humanize_tool_name(target_tool_name)
-                )
-            else:
-                display_name = "Call Tool"
-        elif tool_name == "search_tools":
-            query = str(inputs.get("query") or "")
-            if query:
-                display_name = f"🔍 Search Tools ({query})"
-            else:
-                display_name = "🔍 Search Tools"
-        else:
-            display_name = self.get_display_name(tool_name=tool_name)
-        return f"{display_name}"
+        if tool_name == "call_tool":
+            return self._get_name_for_call_tool(inputs=inputs)
+        return self.get_display_name(tool_name=tool_name, tool_input=inputs)
+
+    def _get_name_for_call_tool(self, *, inputs: Dict[str, Any]) -> str:
+        target_tool_name = str(inputs.get("name") or "")
+        if not target_tool_name:
+            return "Call Tool"
+        configured = self._name_to_display_name.get(target_tool_name)
+        if configured is None:
+            return Humanizer.humanize_tool_name(key=target_tool_name)
+        if configured == "":
+            return ""
+        tool_arguments = inputs.get("arguments") or {}
+        return self._substitute_params(template=configured, params=tool_arguments)

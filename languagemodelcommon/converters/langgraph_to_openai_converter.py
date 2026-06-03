@@ -43,6 +43,8 @@ from typing import (
 )
 
 from languagemodelcommon.configs.schemas.config_schema import PromptConfig
+from languagemodelcommon.history.context_compactor import ContextCompactor
+from languagemodelcommon.converters.stream_context_mixin import StreamContextMixin
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
@@ -69,7 +71,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
-class LangGraphToOpenAIConverter:
+class LangGraphToOpenAIConverter(StreamContextMixin):
     @staticmethod
     def _is_timeout_exception(exception: Exception) -> bool:
         if isinstance(exception, (TimeoutError, ReadTimeoutError, ConnectTimeoutError)):
@@ -85,6 +87,26 @@ class LangGraphToOpenAIConverter:
             or "Timeout" in class_name
             or "Timeout" in cause_class_name
         )
+
+    _INPUT_TOO_LONG_PATTERNS: tuple[str, ...] = (
+        "input is too long",
+        "context_length_exceeded",
+        "maximum context length",
+        "prompt is too long",
+    )
+
+    @staticmethod
+    def _is_input_too_long_error(exception: BaseException) -> bool:
+        """Check if any exception in the cause chain indicates input exceeded model context."""
+        current: BaseException | None = exception
+        while current is not None:
+            msg = str(current).lower()
+            if any(
+                p in msg for p in LangGraphToOpenAIConverter._INPUT_TOO_LONG_PATTERNS
+            ):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     _CREDENTIAL_ERROR_PATTERNS: tuple[str, ...] = (
         "could not resolve credentials",
@@ -159,17 +181,9 @@ class LangGraphToOpenAIConverter:
                 f"streaming_manager must be LangGraphStreamingManager, got {type(self.streaming_manager)}"
             )
 
+        self._static_stream_buffer_manager = None
         self._static_stream_debug_output_manager = stream_debug_output_manager
-
-    @property
-    def _stream_debug_output_manager(self) -> StreamDebugOutputManager:
-        if self._static_stream_debug_output_manager is not None:
-            return self._static_stream_debug_output_manager
-        from languagemodelcommon.context.request_context import (
-            get_stream_debug_output_manager,
-        )
-
-        return get_stream_debug_output_manager()
+        self._context_compactor = ContextCompactor()
 
     async def _stream_resp_async_generator(
         self,
@@ -285,6 +299,23 @@ class LangGraphToOpenAIConverter:
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("Exception in _stream_resp_async_generator: %s\n%s", e, tb)
+
+            # Check if this is an input-too-long error (context window exceeded)
+            if self._is_input_too_long_error(e):
+                message = (
+                    "The conversation input exceeds the model's context window. "
+                    "Please start a new conversation or shorten your message."
+                )
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_id,
+                    usage_metadata=None,
+                    content=message,
+                    source="error",
+                )
+                yield chat_request_wrapper.create_final_sse_message(
+                    request_id=request_id, usage_metadata=None, source="final"
+                )
+                return
 
             # Check if a TokenRetrievalError is wrapped inside another exception
             token_retrieval_error = self._find_cause(
@@ -643,6 +674,9 @@ class LangGraphToOpenAIConverter:
         """
         Stream the graph with the provided messages asynchronously.
 
+        If the input exceeds the model's context window, compacts the
+        conversation and retries once before raising.
+
         Args:
             messages: The list of role and incoming message type tuples.
             compiled_state_graph: The compiled state graph.
@@ -658,6 +692,68 @@ class LangGraphToOpenAIConverter:
             request_information=request_information,
             config=config,
         )
+
+        try:
+            async for event in self._attempt_stream(
+                messages=messages,
+                compiled_state_graph=compiled_state_graph,
+                request_information=request_information,
+                config=config,
+                state=state,
+            ):
+                yield event
+        except BaileyException as e:
+            if "context window" not in str(e):
+                raise
+
+            if not self.environment_variables.context_compaction_enabled:
+                raise
+
+            # Compact and retry once
+            compacted_messages = self._context_compactor.compact(messages=messages)
+            if compacted_messages is messages or compacted_messages == messages:
+                raise
+
+            logger.info(
+                "Retrying after compaction. request_id=%s original_messages=%d compacted_messages=%d",
+                request_information.request_id,
+                len(messages),
+                len(compacted_messages),
+            )
+
+            try:
+                async for event in self._attempt_stream(
+                    messages=compacted_messages,
+                    compiled_state_graph=compiled_state_graph,
+                    request_information=request_information,
+                    config=config,
+                    state=None,
+                ):
+                    yield event
+            except BaileyException:
+                raise
+            except Exception as retry_error:
+                raise BaileyException(
+                    "The conversation input exceeds the model's context window "
+                    "even after compaction. Please start a new conversation."
+                ) from retry_error
+
+    async def _attempt_stream(
+        self,
+        *,
+        messages: List[AnyMessage],
+        compiled_state_graph: CompiledStateGraph[MyMessagesState],
+        request_information: RequestInformation,
+        config: RunnableConfig,
+        state: Optional[MyMessagesState],
+    ) -> AsyncGenerator[StandardStreamEvent | CustomStreamEvent, None]:
+        """
+        Single attempt to stream the graph. Classifies exceptions into
+        domain-specific errors.
+
+        Yields:
+            The standard or custom stream event.
+        """
         runtime_context = {"user_id": request_information.user_id}
         try:
             event: StandardStreamEvent | CustomStreamEvent
@@ -713,6 +809,17 @@ class LangGraphToOpenAIConverter:
                 )
                 raise BaileyException(
                     "Upstream model timed out while streaming. Please try again."
+                ) from e
+            if self._is_input_too_long_error(e):
+                logger.warning(
+                    "Input too long for model. request_id=%s message_count=%d error=%s",
+                    request_information.request_id,
+                    len(messages),
+                    e,
+                )
+                raise BaileyException(
+                    "The conversation input exceeds the model's context window. "
+                    "Please start a new conversation or shorten your message."
                 ) from e
             if "toolUse.name" in str(e) or "tool_use" in str(e).lower():
                 tool_names_in_messages = []

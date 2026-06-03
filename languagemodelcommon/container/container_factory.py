@@ -32,7 +32,13 @@ from languagemodelcommon.ocr.ocr_extractor_factory import OCRExtractorFactory
 from languagemodelcommon.persistence.persistence_factory import PersistenceFactory
 from key_value.aio.stores.base import BaseStore as KeyValueBaseStore
 
+from languagemodelcommon.mcp.auth.auth_server_metadata_discovery import (
+    McpAuthServerDiscovery,
+)
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
+from languagemodelcommon.mcp.mcp_client.server_card_discovery import (
+    ServerCardDiscovery,
+)
 from languagemodelcommon.utilities.cache.model_config_cache_store import (
     create_cache_store,
 )
@@ -119,6 +125,14 @@ class LanguageModelCommonContainerFactory:
             service_type=McpJsonFetcher, factory=_create_mcp_json_fetcher
         )
         container.singleton(
+            service_type=McpAuthServerDiscovery,
+            factory=lambda c: McpAuthServerDiscovery(),
+        )
+        container.singleton(
+            service_type=ServerCardDiscovery,
+            factory=lambda c: ServerCardDiscovery(),
+        )
+        container.singleton(
             service_type=McpToolListStore,
             factory=lambda c: McpToolListStore(
                 store=create_cache_store(
@@ -168,6 +182,11 @@ class LanguageModelCommonContainerFactory:
         # StreamBufferManager and StreamDebugOutputManager are created per-request
         # and set into contextvars by init_request_context(). These singletons
         # read from the contextvar at access time.
+
+        container.singleton(
+            service_type=ToolDisplayNameMapper,
+            factory=lambda c: ToolDisplayNameMapper(),
+        )
 
         container.singleton(
             service_type=ToolEventHandler,
