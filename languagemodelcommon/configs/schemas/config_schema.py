@@ -271,9 +271,13 @@ class AuthenticationConfig(BaseModel):
         None, description="Headers to pass with requests (map of header name to value)."
     )
 
-    auth: Literal["None", "jwt_token", "oauth", "headers"] | None = Field(
-        None,
-        description="Authentication mode. Auto-set to 'jwt_token' when oauth is present, or 'headers' when headers contain an Authorization key.",
+    auth: Literal["None", "jwt_token", "oauth", "headers", "pass_through"] | None = (
+        Field(
+            None,
+            description="Authentication mode. Auto-set to 'jwt_token' when oauth is present, "
+            "or 'headers' when headers contain an Authorization key. "
+            "'pass_through' forwards the caller's token to the MCP server.",
+        )
     )
 
     auth_optional: bool | None = Field(
