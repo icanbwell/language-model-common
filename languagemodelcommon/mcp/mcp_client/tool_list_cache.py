@@ -25,6 +25,8 @@ class ToolListStoreProtocol(Protocol):
 
     async def get_tools(self, *, key: str) -> list[MCPTool] | None: ...
 
+    async def get_all_tools(self) -> list[MCPTool]: ...
+
     async def put_tools(self, *, key: str, tools: list[MCPTool]) -> None: ...
 
     async def invalidate(self, *, key: str) -> None: ...
@@ -41,15 +43,18 @@ class _CachedToolList:
 
 
 class ToolListCache:
-    """TTL cache for MCP ``list_tools`` results, keyed by server URL.
+    """Cache for MCP ``list_tools`` results, keyed by server URL.
 
     Tool schemas rarely change during runtime. Caching avoids
     redundant ``list_tools`` round-trips when the same server is queried
     multiple times.
 
-    When a persistent ``store`` is provided, the cache writes through to the
-    store on put and falls back to the store on in-memory miss. The store is
-    never expired — entries persist until explicitly cleared via ``clear_async``.
+    When a persistent ``store`` is provided, all reads and writes go through
+    the store exclusively. No in-memory layer is used because production
+    runs multiple workers — in-process caches diverge across instances.
+
+    When no store is provided (e.g., tests or single-process dev), falls back
+    to an in-memory TTL cache.
     """
 
     def __init__(
@@ -59,7 +64,7 @@ class ToolListCache:
         store: ToolListStoreProtocol | None = None,
     ) -> None:
         self._ttl = ttl_seconds
-        self._cache: dict[str, _CachedToolList] = {}
+        self._fallback_cache: dict[str, _CachedToolList] = {}
         self._store = store
 
     @staticmethod
@@ -73,78 +78,98 @@ class ToolListCache:
         return url
 
     def get(self, key: str) -> list[MCPTool] | None:
-        """Synchronous in-memory cache lookup."""
-        entry = self._cache.get(key)
+        """Synchronous cache lookup (fallback only, no-op when store is configured)."""
+        if self._store is not None:
+            return None
+        entry = self._fallback_cache.get(key)
         if entry is None:
             return None
         if entry.expires_at is not None and time.monotonic() > entry.expires_at:
-            del self._cache[key]
+            del self._fallback_cache[key]
             return None
         return list(entry.tools)
 
     async def get_async(self, *, key: str) -> list[MCPTool] | None:
-        """Async cache lookup: in-memory first, then persistent store."""
-        result = self.get(key)
-        if result is not None:
-            return result
-
+        """Async cache lookup via persistent store (or fallback)."""
         if self._store is not None:
             tools = await self._store.get_tools(key=key)
             if tools is not None:
-                self._cache[key] = _CachedToolList(tools=list(tools), expires_at=None)
                 logger.info(
                     "Tool list cache hit from persistent store for %s (%d tools)",
                     key,
                     len(tools),
                 )
                 return list(tools)
+            return None
 
-        return None
+        return self.get(key)
 
     def put(self, key: str, tools: list[MCPTool]) -> None:
-        """Write to in-memory cache (synchronous)."""
-        expires_at = time.monotonic() + self._ttl if self._store is None else None
-        self._cache[key] = _CachedToolList(
+        """Write to fallback cache (no-op when store is configured)."""
+        if self._store is not None:
+            return
+        expires_at = time.monotonic() + self._ttl
+        self._fallback_cache[key] = _CachedToolList(
             tools=list(tools),
             expires_at=expires_at,
         )
 
     async def put_async(self, *, key: str, tools: list[MCPTool]) -> None:
-        """Write to both in-memory cache and persistent store."""
-        self._cache[key] = _CachedToolList(tools=list(tools), expires_at=None)
-
+        """Write to persistent store (or fallback)."""
         if self._store is not None:
             await self._store.put_tools(key=key, tools=tools)
+        else:
+            self.put(key, tools)
 
     def invalidate(self, key: str) -> None:
-        """Remove from in-memory cache (synchronous)."""
-        self._cache.pop(key, None)
+        """Remove from fallback cache (no-op when store is configured)."""
+        if self._store is not None:
+            return
+        self._fallback_cache.pop(key, None)
 
     async def invalidate_async(self, *, key: str) -> None:
-        """Remove from both in-memory cache and persistent store."""
-        self._cache.pop(key, None)
+        """Remove from persistent store (or fallback)."""
         if self._store is not None:
             await self._store.invalidate(key=key)
+        else:
+            self._fallback_cache.pop(key, None)
 
     def get_all_tool_names(self) -> set[str]:
-        """Return a set of all tool names currently cached in-memory."""
+        """Return tool names from fallback cache (no-op when store is configured).
+
+        When a persistent store is used, callers should use
+        ``get_all_tool_names_async`` instead.
+        """
+        if self._store is not None:
+            return set()
         names: set[str] = set()
-        for entry in self._cache.values():
+        for entry in self._fallback_cache.values():
             if entry.expires_at is not None and time.monotonic() > entry.expires_at:
                 continue
             for tool in entry.tools:
                 names.add(tool.name)
         return names
 
+    async def get_all_tool_names_async(self) -> set[str]:
+        """Return all tool names from the persistent store."""
+        if self._store is None:
+            return self.get_all_tool_names()
+        names: set[str] = set()
+        tools = await self._store.get_all_tools()
+        for tool in tools:
+            names.add(tool.name)
+        return names
+
     def clear(self) -> None:
-        """Clear in-memory cache only (synchronous)."""
-        self._cache.clear()
+        """Clear fallback cache (no-op when store is configured)."""
+        self._fallback_cache.clear()
 
     async def clear_async(self) -> None:
-        """Clear both in-memory cache and persistent store."""
-        self._cache.clear()
+        """Clear persistent store (or fallback)."""
         if self._store is not None:
             await self._store.clear()
+        else:
+            self._fallback_cache.clear()
 
 
 async def list_all_tools(session: ClientSession) -> list[MCPTool]:

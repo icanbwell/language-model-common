@@ -80,7 +80,7 @@ def _server_supports_tool_tasks(session: Any) -> bool:
         return False
 
 
-def _tool_supports_tasks(
+async def _tool_supports_tasks(
     *,
     session: Any,
     tool_name: str,
@@ -102,7 +102,7 @@ def _tool_supports_tasks(
     if tool_list_cache is None or cache_key is None:
         return False
 
-    tools = tool_list_cache.get(cache_key)
+    tools = await tool_list_cache.get_async(key=cache_key)
     if tools is None:
         return False
 
@@ -264,7 +264,7 @@ def _make_execute_tool(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
-                if _tool_supports_tasks(
+                if await _tool_supports_tasks(
                     session=session,
                     tool_name=request.name,
                     tool_list_cache=tool_list_cache,
@@ -284,7 +284,7 @@ def _make_execute_tool(
                             server_url,
                         )
                         if tool_list_cache is not None:
-                            tool_list_cache.invalidate(cache_key)
+                            await tool_list_cache.invalidate_async(key=cache_key)
                 return await session.call_tool(
                     request.name,
                     request.args,
@@ -293,7 +293,7 @@ def _make_execute_tool(
             except Exception:
                 await session_pool.evict(effective_config)
                 if tool_list_cache is not None:
-                    tool_list_cache.invalidate(cache_key)
+                    await tool_list_cache.invalidate_async(key=cache_key)
                 raise
 
         # Fallback: create a one-shot session (original behavior)
@@ -303,7 +303,7 @@ def _make_execute_tool(
         ) as session:
             await session.initialize()
             try:
-                if _tool_supports_tasks(
+                if await _tool_supports_tasks(
                     session=session,
                     tool_name=request.name,
                     tool_list_cache=tool_list_cache,
@@ -323,7 +323,7 @@ def _make_execute_tool(
                             server_url,
                         )
                         if tool_list_cache is not None:
-                            tool_list_cache.invalidate(cache_key)
+                            await tool_list_cache.invalidate_async(key=cache_key)
                         result = await session.call_tool(
                             request.name,
                             request.args,

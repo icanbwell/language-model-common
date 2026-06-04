@@ -48,6 +48,32 @@ class McpToolListStore:
             )
             return None
 
+    async def get_all_tools(self) -> list[MCPTool]:
+        all_tools: list[MCPTool] = []
+        try:
+            keys = await self._get_all_keys()
+            for key in keys:
+                tools = await self.get_tools(key=key)
+                if tools:
+                    all_tools.extend(tools)
+        except Exception:
+            logger.warning(
+                "Failed to retrieve all tools from persistent store",
+                exc_info=True,
+            )
+        return all_tools
+
+    async def _get_all_keys(self) -> list[str]:
+        from key_value.aio.stores.mongodb import MongoDBStore
+
+        if isinstance(self._store, MongoDBStore):
+            mongo_collection = self._store._collections_by_name.get(self._collection)
+            if mongo_collection is None:
+                return []
+            cursor = mongo_collection.find({}, {"key": 1})
+            return [doc["key"] async for doc in cursor if "key" in doc]
+        return []
+
     async def put_tools(self, *, key: str, tools: list[MCPTool]) -> None:
         value: dict[str, Any] = {
             "tools": [t.model_dump(mode="python") for t in tools],
