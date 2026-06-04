@@ -40,6 +40,31 @@ def derive_well_known_url(*, mcp_server_url: str) -> str:
     )
 
 
+def derive_path_relative_well_known_url(*, mcp_server_url: str) -> str | None:
+    """Derive a path-relative .well-known URL for servers behind a path-based gateway.
+
+    For ``http://dev:5000/skills-library/`` this returns
+    ``http://dev:5000/skills-library/.well-known/mcp/server-card.json``.
+
+    Returns None when the MCP server URL has no meaningful path prefix
+    (i.e. it is already at the origin root).
+    """
+    parsed = urlparse(mcp_server_url)
+    path = parsed.path.rstrip("/")
+    if not path or path == "/":
+        return None
+    return urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            path + WELL_KNOWN_PATH,
+            "",
+            "",
+            "",
+        )
+    )
+
+
 def _parse_tools_from_card(*, card: dict[str, Any]) -> list[MCPTool] | None:
     """Extract tool definitions from a server card response.
 
@@ -101,9 +126,38 @@ class ServerCardDiscovery:
         - The response declares tools as "dynamic"
         - Any parsing error occurs
 
+        Tries the origin-level .well-known URL first (RFC 8615), then
+        falls back to a path-relative .well-known URL for servers behind
+        a path-based gateway.
+
         This method never raises — all failures are logged and return None.
         """
-        well_known_url = derive_well_known_url(mcp_server_url=mcp_server_url)
+        urls_to_try: list[str] = [derive_well_known_url(mcp_server_url=mcp_server_url)]
+        path_relative_url = derive_path_relative_well_known_url(
+            mcp_server_url=mcp_server_url
+        )
+        if path_relative_url is not None:
+            urls_to_try.append(path_relative_url)
+
+        for well_known_url in urls_to_try:
+            tools = await self._try_fetch_server_card(
+                well_known_url=well_known_url,
+                mcp_server_url=mcp_server_url,
+                headers=headers,
+            )
+            if tools is not None:
+                return tools
+
+        return None
+
+    async def _try_fetch_server_card(
+        self,
+        *,
+        well_known_url: str,
+        mcp_server_url: str,
+        headers: dict[str, str] | None = None,
+    ) -> list[MCPTool] | None:
+        """Attempt a single server card fetch at the given URL."""
         logger.info(
             "Attempting server card discovery at %s (for MCP server %s)",
             well_known_url,
@@ -129,7 +183,7 @@ class ServerCardDiscovery:
 
             if response.status_code != 200:
                 logger.info(
-                    "Server card endpoint returned %d for %s, falling back to tools/list",
+                    "Server card endpoint returned %d for %s",
                     response.status_code,
                     well_known_url,
                 )
@@ -146,7 +200,7 @@ class ServerCardDiscovery:
                 )
             else:
                 logger.info(
-                    "Server card at %s did not provide static tools, falling back to tools/list",
+                    "Server card at %s did not provide static tools",
                     well_known_url,
                 )
 
@@ -154,15 +208,14 @@ class ServerCardDiscovery:
 
         except httpx.TimeoutException:
             logger.info(
-                "Server card request timed out for %s (timeout=%.1fs), "
-                "falling back to tools/list",
+                "Server card request timed out for %s (timeout=%.1fs)",
                 well_known_url,
                 self._timeout_seconds,
             )
             return None
         except Exception as e:
             logger.info(
-                "Server card discovery failed for %s: %s, falling back to tools/list",
+                "Server card discovery failed for %s: %s",
                 well_known_url,
                 e,
             )
