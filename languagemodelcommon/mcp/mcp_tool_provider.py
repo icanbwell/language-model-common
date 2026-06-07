@@ -716,7 +716,6 @@ class MCPToolProvider:
             ],
         )
 
-
     # ---------- Resource support ----------
 
     async def _list_mcp_resources_for_config(
@@ -762,11 +761,8 @@ class MCPToolProvider:
                 await session.initialize()
 
                 # Check if server supports resources
-                server_capabilities = session.server_capabilities
-                if (
-                    server_capabilities is None
-                    or server_capabilities.resources is None
-                ):
+                server_capabilities = session.get_server_capabilities()
+                if server_capabilities is None or server_capabilities.resources is None:
                     logger.info(
                         "Server %s does not advertise resource capabilities",
                         tool_config.name,

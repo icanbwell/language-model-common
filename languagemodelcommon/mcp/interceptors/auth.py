@@ -177,7 +177,9 @@ class AuthMcpCallInterceptor:
     def get_resource_interceptor_auth(self) -> ResourceReadInterceptor:
         async def resource_interceptor_auth(
             request: MCPResourceReadRequest,
-            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+            handler: Callable[
+                [MCPResourceReadRequest], Awaitable[MCPResourceReadResult]
+            ],
         ) -> MCPResourceReadResult:
             tool_config = self._tool_configs_by_server_name.get(request.server_name)
             if tool_config is None or tool_config.auth != "jwt_token":

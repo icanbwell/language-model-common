@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
-import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
+from languagemodelcommon.mcp.bm25 import BM25Index, tokenize
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -57,93 +56,25 @@ class ToolCatalogEntry:
     agent_config: AgentConfig
 
 
-@dataclass
-class _BM25Index:
-    """In-memory BM25 Okapi index over tool documents."""
-
-    k1: float = 1.5
-    b: float = 0.75
-    corpus: list[list[str]] = field(default_factory=list)
-    doc_lengths: list[int] = field(default_factory=list)
-    avgdl: float = 0.0
-    n_docs: int = 0
-    # term -> list of (doc_index, term_freq) pairs
-    inverted_index: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
-    # term -> idf score
-    idf: dict[str, float] = field(default_factory=dict)
-
-    def build(self, corpus: list[list[str]]) -> None:
-        self.corpus = corpus
-        self.n_docs = len(corpus)
-        self.doc_lengths = [len(doc) for doc in corpus]
-        self.avgdl = sum(self.doc_lengths) / self.n_docs if self.n_docs > 0 else 0.0
-
-        # Build inverted index
-        self.inverted_index = {}
-        for doc_idx, doc in enumerate(corpus):
-            term_freqs: dict[str, int] = {}
-            for term in doc:
-                term_freqs[term] = term_freqs.get(term, 0) + 1
-            for term, freq in term_freqs.items():
-                if term not in self.inverted_index:
-                    self.inverted_index[term] = []
-                self.inverted_index[term].append((doc_idx, freq))
-
-        # Compute IDF for each term
-        self.idf = {}
-        for term, postings in self.inverted_index.items():
-            df = len(postings)
-            # Standard BM25 IDF formula
-            self.idf[term] = math.log((self.n_docs - df + 0.5) / (df + 0.5) + 1.0)
-
-    def search(
-        self, query_tokens: list[str], top_k: int = 10
-    ) -> list[tuple[int, float]]:
-        """Return (doc_index, score) pairs sorted by descending score."""
-        scores: dict[int, float] = {}
-
-        for token in query_tokens:
-            if token not in self.inverted_index:
-                continue
-            idf = self.idf[token]
-            for doc_idx, tf in self.inverted_index[token]:
-                dl = self.doc_lengths[doc_idx]
-                numerator = tf * (self.k1 + 1)
-                denominator = tf + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
-                score = idf * numerator / denominator
-                scores[doc_idx] = scores.get(doc_idx, 0.0) + score
-
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return ranked[:top_k]
-
-
-_TOKENIZE_RE = re.compile(r"[_\-\s/.,;:]+")
-
-
-def _tokenize(text: str) -> list[str]:
-    """Lowercase and split on whitespace, underscores, hyphens, and punctuation."""
-    return [t for t in _TOKENIZE_RE.split(text.lower()) if t]
-
-
 def _build_tool_document(tool: MCPTool) -> list[str]:
     """Build a searchable token list from a tool's metadata."""
     parts: list[str] = []
 
     # Tool name (split on underscores for compound names)
-    parts.extend(_tokenize(tool.name))
+    parts.extend(tokenize(tool.name))
 
     # Description
     if tool.description:
-        parts.extend(_tokenize(tool.description))
+        parts.extend(tokenize(tool.description))
 
     # Parameter names and descriptions from inputSchema
     schema = tool.inputSchema
     if isinstance(schema, dict):
         properties: dict[str, Any] = schema.get("properties", {})
         for param_name, param_info in properties.items():
-            parts.extend(_tokenize(param_name))
+            parts.extend(tokenize(param_name))
             if isinstance(param_info, dict) and "description" in param_info:
-                parts.extend(_tokenize(str(param_info["description"])))
+                parts.extend(tokenize(str(param_info["description"])))
 
     return parts
 
@@ -189,7 +120,7 @@ class ToolCatalog:
 
     def __init__(self) -> None:
         self._entries: list[ToolCatalogEntry] = []
-        self._index: _BM25Index | None = None
+        self._index: BM25Index | None = None
         self._entries_by_name: dict[str, ToolCatalogEntry] = {}
         self._servers: dict[str, ServerRegistration] = {}
 
@@ -285,11 +216,11 @@ class ToolCatalog:
             len(self._entries),
         )
 
-    def _ensure_index(self) -> _BM25Index:
+    def _ensure_index(self) -> BM25Index:
         """Lazily build or return the BM25 index."""
         if self._index is None:
             corpus = [_build_tool_document(entry.tool) for entry in self._entries]
-            self._index = _BM25Index()
+            self._index = BM25Index()
             self._index.build(corpus)
             logger.info("Built BM25 index over %d tools", len(self._entries))
         return self._index
@@ -325,9 +256,9 @@ class ToolCatalog:
                 return []
             # Build a temporary index for the filtered subset
             corpus = [_build_tool_document(e.tool) for e in filtered_entries]
-            index = _BM25Index()
+            index = BM25Index()
             index.build(corpus)
-            query_tokens = _tokenize(query)
+            query_tokens = tokenize(query)
             ranked = index.search(query_tokens, top_k=max_results)
             return [
                 {
@@ -340,7 +271,7 @@ class ToolCatalog:
 
         # Search across all tools
         index = self._ensure_index()
-        query_tokens = _tokenize(query)
+        query_tokens = tokenize(query)
         ranked = index.search(query_tokens, top_k=max_results)
         return [
             {

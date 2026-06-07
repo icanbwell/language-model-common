@@ -144,9 +144,11 @@ class TracingMcpCallInterceptor:
 
         async def resource_interceptor_tracing(
             request: MCPResourceReadRequest,
-            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+            handler: Callable[
+                [MCPResourceReadRequest], Awaitable[MCPResourceReadResult]
+            ],
         ) -> MCPResourceReadResult:
-            span_name = f"mcp.resource.read"
+            span_name = "mcp.resource.read"
             tracer = get_tracer(__name__)
             with tracer.start_as_current_span(span_name, kind=SpanKind.CLIENT) as span:
                 try:

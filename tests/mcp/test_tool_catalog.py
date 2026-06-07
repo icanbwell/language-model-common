@@ -7,10 +7,9 @@ import pytest
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
+from languagemodelcommon.mcp.bm25 import BM25Index, tokenize
 from languagemodelcommon.mcp.tool_catalog import (
     ToolCatalog,
-    _BM25Index,
-    _tokenize,
     _build_tool_document,
     _format_tool_schema,
 )
@@ -34,19 +33,19 @@ def _agent_config(name: str = "server1") -> AgentConfig:
 
 class TestTokenize:
     def test_splits_on_underscores(self) -> None:
-        assert _tokenize("get_user_info") == ["get", "user", "info"]
+        assert tokenize("get_user_info") == ["get", "user", "info"]
 
     def test_splits_on_hyphens(self) -> None:
-        assert _tokenize("get-user-info") == ["get", "user", "info"]
+        assert tokenize("get-user-info") == ["get", "user", "info"]
 
     def test_lowercases(self) -> None:
-        assert _tokenize("GetUser") == ["getuser"]
+        assert tokenize("GetUser") == ["getuser"]
 
     def test_splits_on_whitespace(self) -> None:
-        assert _tokenize("get user info") == ["get", "user", "info"]
+        assert tokenize("get user info") == ["get", "user", "info"]
 
     def test_empty_string(self) -> None:
-        assert _tokenize("") == []
+        assert tokenize("") == []
 
 
 class TestBuildToolDocument:
@@ -102,7 +101,7 @@ class TestFormatToolSchema:
 
 class TestBM25Index:
     def test_search_returns_relevant_doc(self) -> None:
-        index = _BM25Index()
+        index = BM25Index()
         index.build(
             [
                 ["patient", "search", "fhir"],
@@ -118,17 +117,17 @@ class TestBM25Index:
         assert 2 in doc_indices
 
     def test_empty_corpus(self) -> None:
-        index = _BM25Index()
+        index = BM25Index()
         index.build([])
         assert index.search(["anything"]) == []
 
     def test_no_matching_terms(self) -> None:
-        index = _BM25Index()
+        index = BM25Index()
         index.build([["alpha", "beta"]])
         assert index.search(["gamma"]) == []
 
     def test_respects_top_k(self) -> None:
-        index = _BM25Index()
+        index = BM25Index()
         corpus = [[f"term{i}"] for i in range(20)]
         corpus[0].append("common")
         corpus[1].append("common")

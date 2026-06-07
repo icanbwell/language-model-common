@@ -386,9 +386,7 @@ async def read_mcp_resource_raw(
     converting to LangChain format.
     """
     mcp_callbacks = (
-        callbacks.to_mcp_format(
-            context=CallbackContext(server_name=server_name)
-        )
+        callbacks.to_mcp_format(context=CallbackContext(server_name=server_name))
         if callbacks is not None
         else _MCPCallbacks()
     )

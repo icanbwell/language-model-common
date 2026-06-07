@@ -10,11 +10,7 @@ import logging
 from typing import Literal, Type
 
 from langchain_core.tools import BaseTool
-from mcp.types import (
-    ReadResourceResult,
-    TextResourceContents,
-    BlobResourceContents,
-)
+from mcp.types import ReadResourceResult
 from pydantic import BaseModel, ConfigDict, Field
 
 from oidcauthlib.auth.exceptions.authorization_needed_exception import (
@@ -22,6 +18,7 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
+from languagemodelcommon.mcp.mcp_client import convert_resource_contents_to_text
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.resource_catalog import ResourceCatalog
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
@@ -36,20 +33,6 @@ class ReadResourceInput(BaseModel):
         ...,
         description="The URI of the resource to read (from search_resources results).",
     )
-
-
-def _read_resource_result_to_text(result: ReadResourceResult) -> str:
-    """Convert a ReadResourceResult to a text representation for the LLM."""
-    parts: list[str] = []
-    for content in result.contents:
-        if isinstance(content, TextResourceContents):
-            parts.append(content.text)
-        elif isinstance(content, BlobResourceContents):
-            mime_type = content.mimeType or "application/octet-stream"
-            parts.append(f"[Binary content: {mime_type}, uri: {content.uri}]")
-        else:
-            parts.append(f"[Resource content: {content.uri}]")
-    return "\n".join(parts)
 
 
 class ReadResourceTool(BaseTool):
@@ -88,7 +71,7 @@ class ReadResourceTool(BaseTool):
                     auth_interceptor=self.auth_interceptor,
                 )
             )
-            return _read_resource_result_to_text(result)
+            return convert_resource_contents_to_text(result)
         except AuthorizationNeededException:
             raise
         except Exception as e:

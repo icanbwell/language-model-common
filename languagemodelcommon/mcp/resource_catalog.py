@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
-import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from mcp.types import Resource as MCPResource, ResourceTemplate as MCPResourceTemplate
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
+from languagemodelcommon.mcp.bm25 import BM25Index, tokenize
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
 logger = logging.getLogger(__name__)
@@ -68,90 +67,27 @@ class ResourceTemplateCatalogEntry:
     agent_config: AgentConfig
 
 
-@dataclass
-class _BM25Index:
-    """In-memory BM25 Okapi index over resource documents."""
-
-    k1: float = 1.5
-    b: float = 0.75
-    corpus: list[list[str]] = field(default_factory=list)
-    doc_lengths: list[int] = field(default_factory=list)
-    avgdl: float = 0.0
-    n_docs: int = 0
-    inverted_index: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
-    idf: dict[str, float] = field(default_factory=dict)
-
-    def build(self, corpus: list[list[str]]) -> None:
-        self.corpus = corpus
-        self.n_docs = len(corpus)
-        self.doc_lengths = [len(doc) for doc in corpus]
-        self.avgdl = sum(self.doc_lengths) / self.n_docs if self.n_docs > 0 else 0.0
-
-        self.inverted_index = {}
-        for doc_idx, doc in enumerate(corpus):
-            term_freqs: dict[str, int] = {}
-            for term in doc:
-                term_freqs[term] = term_freqs.get(term, 0) + 1
-            for term, freq in term_freqs.items():
-                if term not in self.inverted_index:
-                    self.inverted_index[term] = []
-                self.inverted_index[term].append((doc_idx, freq))
-
-        self.idf = {}
-        for term, postings in self.inverted_index.items():
-            df = len(postings)
-            self.idf[term] = math.log((self.n_docs - df + 0.5) / (df + 0.5) + 1.0)
-
-    def search(
-        self, query_tokens: list[str], top_k: int = 10
-    ) -> list[tuple[int, float]]:
-        """Return (doc_index, score) pairs sorted by descending score."""
-        scores: dict[int, float] = {}
-
-        for token in query_tokens:
-            if token not in self.inverted_index:
-                continue
-            idf = self.idf[token]
-            for doc_idx, tf in self.inverted_index[token]:
-                dl = self.doc_lengths[doc_idx]
-                numerator = tf * (self.k1 + 1)
-                denominator = tf + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
-                score = idf * numerator / denominator
-                scores[doc_idx] = scores.get(doc_idx, 0.0) + score
-
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        return ranked[:top_k]
-
-
-_TOKENIZE_RE = re.compile(r"[_\-\s/.,;:]+")
-
-
-def _tokenize(text: str) -> list[str]:
-    """Lowercase and split on whitespace, underscores, hyphens, and punctuation."""
-    return [t for t in _TOKENIZE_RE.split(text.lower()) if t]
-
-
 def _build_resource_document(resource: MCPResource) -> list[str]:
     """Build a searchable token list from a resource's metadata."""
     parts: list[str] = []
-    parts.extend(_tokenize(resource.name))
+    parts.extend(tokenize(resource.name))
     if resource.description:
-        parts.extend(_tokenize(resource.description))
-    parts.extend(_tokenize(str(resource.uri)))
+        parts.extend(tokenize(resource.description))
+    parts.extend(tokenize(str(resource.uri)))
     if resource.mimeType:
-        parts.extend(_tokenize(resource.mimeType))
+        parts.extend(tokenize(resource.mimeType))
     return parts
 
 
 def _build_template_document(template: MCPResourceTemplate) -> list[str]:
     """Build a searchable token list from a resource template's metadata."""
     parts: list[str] = []
-    parts.extend(_tokenize(template.name))
+    parts.extend(tokenize(template.name))
     if template.description:
-        parts.extend(_tokenize(template.description))
-    parts.extend(_tokenize(template.uriTemplate))
+        parts.extend(tokenize(template.description))
+    parts.extend(tokenize(template.uriTemplate))
     if template.mimeType:
-        parts.extend(_tokenize(template.mimeType))
+        parts.extend(tokenize(template.mimeType))
     return parts
 
 
@@ -193,7 +129,7 @@ class ResourceCatalog:
     def __init__(self) -> None:
         self._entries: list[ResourceCatalogEntry] = []
         self._template_entries: list[ResourceTemplateCatalogEntry] = []
-        self._index: _BM25Index | None = None
+        self._index: BM25Index | None = None
         self._entries_by_uri: dict[str, ResourceCatalogEntry] = {}
         self._servers: dict[str, ResourceServerRegistration] = {}
 
@@ -303,7 +239,7 @@ class ResourceCatalog:
             len(self._template_entries),
         )
 
-    def _ensure_index(self) -> _BM25Index:
+    def _ensure_index(self) -> BM25Index:
         """Lazily build or return the BM25 index over resources and templates."""
         if self._index is None:
             corpus: list[list[str]] = []
@@ -314,7 +250,7 @@ class ResourceCatalog:
                 _build_template_document(entry.template)
                 for entry in self._template_entries
             )
-            self._index = _BM25Index()
+            self._index = BM25Index()
             self._index.build(corpus)
             logger.info(
                 "Built BM25 index over %d resources and %d templates",
@@ -374,9 +310,9 @@ class ResourceCatalog:
             corpus.extend(
                 _build_template_document(e.template) for e in filtered_templates
             )
-            index = _BM25Index()
+            index = BM25Index()
             index.build(corpus)
-            query_tokens = _tokenize(query)
+            query_tokens = tokenize(query)
             ranked = index.search(query_tokens, top_k=max_results)
 
             results: list[dict[str, Any]] = []
@@ -403,7 +339,7 @@ class ResourceCatalog:
             return results
 
         index = self._ensure_index()
-        query_tokens = _tokenize(query)
+        query_tokens = tokenize(query)
         ranked = index.search(query_tokens, top_k=max_results)
         return [self._get_result_at_index(idx) for idx, _score in ranked]
 
@@ -454,12 +390,12 @@ class ResourceCatalog:
             categories[key]["resource_count"] += 1
             categories[key]["resolved"] = True
 
-        for entry in self._template_entries:
-            key = entry.server_name
+        for t_entry in self._template_entries:
+            key = t_entry.server_name
             if key not in categories:
                 categories[key] = {
                     "name": key,
-                    "description": entry.category or entry.server_name,
+                    "description": t_entry.category or t_entry.server_name,
                     "resource_count": 0,
                     "template_count": 0,
                     "resolved": True,
@@ -490,20 +426,20 @@ class ResourceCatalog:
                 }
             )
 
-        templates = self._template_entries
+        template_entries = self._template_entries
         if category:
-            templates = [
-                e
-                for e in templates
-                if (e.category and category.lower() in e.category.lower())
-                or category.lower() in e.server_name.lower()
+            template_entries = [
+                t
+                for t in template_entries
+                if (t.category and category.lower() in t.category.lower())
+                or category.lower() in t.server_name.lower()
             ]
-        for e in templates:
+        for t in template_entries:
             results.append(
                 {
-                    **_format_template_schema(e.template),
-                    "server_name": e.server_name,
-                    "category": e.category,
+                    **_format_template_schema(t.template),
+                    "server_name": t.server_name,
+                    "category": t.category,
                 }
             )
 

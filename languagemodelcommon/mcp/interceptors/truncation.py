@@ -12,6 +12,7 @@ from languagemodelcommon.mcp.interceptors.types import (
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from mcp.types import (
+    BlobResourceContents,
     ContentBlock,
     TextContent,
     EmbeddedResource,
@@ -181,7 +182,9 @@ class TruncationMcpCallInterceptor:
 
         async def resource_interceptor_truncation(
             request: MCPResourceReadRequest,
-            handler: Callable[[MCPResourceReadRequest], Awaitable[MCPResourceReadResult]],
+            handler: Callable[
+                [MCPResourceReadRequest], Awaitable[MCPResourceReadResult]
+            ],
         ) -> MCPResourceReadResult:
             from mcp.types import ReadResourceResult, TextResourceContents
 
@@ -197,7 +200,7 @@ class TruncationMcpCallInterceptor:
                 return result
 
             tokens_limit_left: int = max_token_limit
-            truncated_contents = []
+            truncated_contents: list[TextResourceContents | BlobResourceContents] = []
 
             for content_item in result.contents:
                 if tokens_limit_left <= 0:
