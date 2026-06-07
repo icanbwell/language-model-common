@@ -154,8 +154,8 @@ class TracingMcpCallInterceptor:
                 try:
                     span.set_attribute("mcp.server_name", request.server_name)
                     span.set_attribute("mcp.resource_uri", request.uri)
-                except Exception:
-                    pass
+                except Exception as attr_err:
+                    logger.debug("Failed to set span attributes: %s", attr_err)
 
                 try:
                     current_context: Context = otel_context.get_current()

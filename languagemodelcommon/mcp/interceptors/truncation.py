@@ -13,11 +13,12 @@ from languagemodelcommon.mcp.interceptors.types import (
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from mcp.types import (
     BlobResourceContents,
-    ContentBlock,
-    TextContent,
-    EmbeddedResource,
-    TextResourceContents,
     CallToolResult,
+    ContentBlock,
+    EmbeddedResource,
+    ReadResourceResult,
+    TextContent,
+    TextResourceContents,
 )
 
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -186,8 +187,6 @@ class TruncationMcpCallInterceptor:
                 [MCPResourceReadRequest], Awaitable[MCPResourceReadResult]
             ],
         ) -> MCPResourceReadResult:
-            from mcp.types import ReadResourceResult, TextResourceContents
-
             result: MCPResourceReadResult = await handler(request)
 
             if not isinstance(result, ReadResourceResult):
@@ -206,29 +205,29 @@ class TruncationMcpCallInterceptor:
                 if tokens_limit_left <= 0:
                     break
 
-                if isinstance(content_item, TextResourceContents):
-                    text = content_item.text
-                    token_count = self.token_reducer.count_tokens(text=text)
-
-                    if token_count > tokens_limit_left:
-                        truncated_text = self.token_reducer.reduce_tokens(
-                            text=text,
-                            max_tokens=tokens_limit_left,
-                            preserve_start=0,
-                        )
-                        truncated_count = self.token_reducer.count_tokens(
-                            text=truncated_text
-                        )
-                        if truncated_count > 0:
-                            content_item.text = truncated_text
-                            truncated_contents.append(content_item)
-                            tokens_limit_left -= truncated_count
-                        break
-                    else:
-                        truncated_contents.append(content_item)
-                        tokens_limit_left -= token_count
-                else:
+                if not isinstance(content_item, TextResourceContents):
                     truncated_contents.append(content_item)
+                    continue
+
+                text = content_item.text
+                token_count = self.token_reducer.count_tokens(text=text)
+
+                if token_count <= tokens_limit_left:
+                    truncated_contents.append(content_item)
+                    tokens_limit_left -= token_count
+                    continue
+
+                truncated_text = self.token_reducer.reduce_tokens(
+                    text=text,
+                    max_tokens=tokens_limit_left,
+                    preserve_start=0,
+                )
+                truncated_count = self.token_reducer.count_tokens(text=truncated_text)
+                if truncated_count > 0:
+                    content_item.text = truncated_text
+                    truncated_contents.append(content_item)
+                    tokens_limit_left -= truncated_count
+                break
 
             result.contents = truncated_contents
             return result

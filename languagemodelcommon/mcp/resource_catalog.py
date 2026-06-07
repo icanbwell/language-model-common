@@ -276,6 +276,14 @@ class ResourceCatalog:
             "category": entry_t.category,
         }
 
+    def _matches_category(
+        self, category_lower: str, entry_category: str | None, server_name: str
+    ) -> bool:
+        """Check if an entry matches the given category filter."""
+        if entry_category and category_lower in entry_category.lower():
+            return True
+        return category_lower in server_name.lower()
+
     def search(
         self,
         query: str,
@@ -287,61 +295,27 @@ class ResourceCatalog:
         if total == 0:
             return []
 
-        if category:
-            filtered_resources = [
-                e
-                for e in self._entries
-                if (e.category and category.lower() in e.category.lower())
-                or category.lower() in e.server_name.lower()
-            ]
-            filtered_templates = [
-                e
-                for e in self._template_entries
-                if (e.category and category.lower() in e.category.lower())
-                or category.lower() in e.server_name.lower()
-            ]
-            if not filtered_resources and not filtered_templates:
-                return []
-
-            corpus: list[list[str]] = []
-            corpus.extend(
-                _build_resource_document(e.resource) for e in filtered_resources
-            )
-            corpus.extend(
-                _build_template_document(e.template) for e in filtered_templates
-            )
-            index = BM25Index()
-            index.build(corpus)
-            query_tokens = tokenize(query)
-            ranked = index.search(query_tokens, top_k=max_results)
-
-            results: list[dict[str, Any]] = []
-            for idx, _score in ranked:
-                if idx < len(filtered_resources):
-                    e_r = filtered_resources[idx]
-                    results.append(
-                        {
-                            **_format_resource_schema(e_r.resource),
-                            "server_name": e_r.server_name,
-                            "category": e_r.category,
-                        }
-                    )
-                else:
-                    t_idx = idx - len(filtered_resources)
-                    e_t = filtered_templates[t_idx]
-                    results.append(
-                        {
-                            **_format_template_schema(e_t.template),
-                            "server_name": e_t.server_name,
-                            "category": e_t.category,
-                        }
-                    )
-            return results
-
         index = self._ensure_index()
         query_tokens = tokenize(query)
-        ranked = index.search(query_tokens, top_k=max_results)
-        return [self._get_result_at_index(idx) for idx, _score in ranked]
+
+        if not category:
+            ranked = index.search(query_tokens, top_k=max_results)
+            return [self._get_result_at_index(idx) for idx, _score in ranked]
+
+        category_lower = category.lower()
+        ranked = index.search(query_tokens, top_k=total)
+        results: list[dict[str, Any]] = []
+        for idx, _score in ranked:
+            if len(results) >= max_results:
+                break
+            result = self._get_result_at_index(idx)
+            if self._matches_category(
+                category_lower,
+                result.get("category"),
+                result.get("server_name", ""),
+            ):
+                results.append(result)
+        return results
 
     def get_resource(self, uri: str) -> ResourceCatalogEntry | None:
         """Look up a resource by exact URI."""
