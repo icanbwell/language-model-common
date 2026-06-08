@@ -35,6 +35,15 @@ setup-pre-commit:
 run-pre-commit: setup-pre-commit
 	./.git/hooks/pre-commit
 
+.PHONY:update-fast
+update-fast: ## Re-locks uv.lock quickly using a simple container (skips full rebuild)
+	docker run --rm \
+		-v "$$(pwd)/pyproject.toml:/app/pyproject.toml" \
+		-v "$$(pwd)/uv.lock:/app/uv.lock" \
+		-w /app \
+		ghcr.io/astral-sh/uv:python3.12-alpine \
+		uv lock --upgrade
+
 .PHONY:update
 update: down uv.lock setup-pre-commit  ## Updates all the packages using pyproject.toml
 	make devdocker
