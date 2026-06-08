@@ -159,16 +159,6 @@ class LanguageModelCommonEnvironmentVariables(
         return int(os.environ.get("MODEL_CONFIG_CACHE_TTL_SECONDS", "3600"))
 
     @property
-    def model_config_cache_schema_version(self) -> str:
-        """Schema version for model config cache entries.
-
-        Changing this value automatically obsoletes all existing cache
-        entries without migration — queries use the version as part of
-        the cache key, so old-version entries are never found.
-        """
-        return os.environ.get("MODEL_CONFIG_CACHE_SCHEMA_VERSION", "1")
-
-    @property
     def mcp_tool_cache_db_name(self) -> str:
         """MongoDB database name for MCP tool list cache.
 

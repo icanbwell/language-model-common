@@ -35,6 +35,8 @@ logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 
 class ConfigReader:
+    SCHEMA_VERSION = 1
+
     def __init__(
         self,
         *,
@@ -147,8 +149,7 @@ class ConfigReader:
             return models
 
     def _model_config_cache_key(self, *, model_name: str) -> str:
-        version = self._environment_variables.model_config_cache_schema_version
-        return f"v{version}:{model_name}"
+        return f"v{self.SCHEMA_VERSION}:{model_name}"
 
     async def _read_from_model_config_cache(self) -> List[ChatModelConfig] | None:
         """Load model configs from the model config cache (one row per model).
@@ -162,8 +163,7 @@ class ConfigReader:
         """
         if not self._model_config_cache_store:
             return None
-        version = self._environment_variables.model_config_cache_schema_version
-        prefix = f"v{version}:"
+        prefix = f"v{self.SCHEMA_VERSION}:"
         model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
         if not model_keys:
             return None
@@ -694,8 +694,7 @@ class ConfigReader:
 
     async def clear_cache(self) -> None:
         if self._model_config_cache_store:
-            version = self._environment_variables.model_config_cache_schema_version
-            prefix = f"v{version}:"
+            prefix = f"v{self.SCHEMA_VERSION}:"
             model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
             if model_keys:
                 await self._model_config_cache_store.delete_many(

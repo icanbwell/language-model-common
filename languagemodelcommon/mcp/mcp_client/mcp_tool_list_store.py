@@ -24,6 +24,8 @@ class McpToolListStore:
     for storage and deserializes on retrieval.
     """
 
+    SCHEMA_VERSION = 1
+
     def __init__(self, *, store: BaseStore, collection: str) -> None:
         self._store = store
         self._collection = collection
@@ -33,6 +35,9 @@ class McpToolListStore:
             key, collection=self._collection
         )
         if result is None:
+            return None
+
+        if result.get("schema_version") != self.SCHEMA_VERSION:
             return None
 
         tools_data = result.get("tools")
@@ -76,6 +81,7 @@ class McpToolListStore:
 
     async def put_tools(self, *, key: str, tools: list[MCPTool]) -> None:
         value: dict[str, Any] = {
+            "schema_version": self.SCHEMA_VERSION,
             "tools": [t.model_dump(mode="python") for t in tools],
         }
         await self._store.put(key, value, collection=self._collection)
@@ -86,6 +92,7 @@ class McpToolListStore:
     async def clear(self) -> None:
         if isinstance(self._store, BaseDestroyCollectionStore):
             await self._store.destroy_collection(collection=self._collection)
+            self._store._setup_collection_complete[self._collection] = False
         else:
             logger.warning(
                 "Tool list cache store does not support destroy_collection; "
