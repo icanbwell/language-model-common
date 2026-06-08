@@ -15,6 +15,8 @@ class PromptStore:
     filesystem race conditions during multi-worker startup.
     """
 
+    SCHEMA_VERSION = 1
+
     def __init__(self, *, store: BaseStore, collection: str = "prompts") -> None:
         self._store = store
         self._collection = collection
@@ -26,13 +28,19 @@ class PromptStore:
         if result is None:
             return None
 
+        if result.get("schema_version") != self.SCHEMA_VERSION:
+            return None
+
         content = result.get("content")
         if not isinstance(content, str):
             return None
         return content
 
     async def put_prompt(self, *, name: str, content: str) -> None:
-        value: dict[str, Any] = {"content": content}
+        value: dict[str, Any] = {
+            "schema_version": self.SCHEMA_VERSION,
+            "content": content,
+        }
         await self._store.put(name, value, collection=self._collection)
 
     async def delete_prompt(self, *, name: str) -> None:
@@ -41,6 +49,7 @@ class PromptStore:
     async def clear(self) -> None:
         if isinstance(self._store, BaseDestroyCollectionStore):
             await self._store.destroy_collection(collection=self._collection)
+            self._store._setup_collection_complete[self._collection] = False
         else:
             logger.warning(
                 "Prompt store does not support destroy_collection; "
