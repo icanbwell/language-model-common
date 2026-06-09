@@ -47,14 +47,31 @@ class Pipeline:
         """Consume content_stream fully, populating accumulated_content and response_messages."""
         if context.content_stream is None:
             return
-        import re
+        import json as _json
 
         from langchain_core.messages import AIMessage
 
         async for chunk in context.content_stream:
-            match = re.search(r'"delta":\s*\{\s*"content":\s*"([^"]*)"', chunk)
-            if match:
-                context.accumulated_content += match.group(1)
+            for line in chunk.strip().splitlines():
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload == "[DONE]":
+                    continue
+                try:
+                    event = _json.loads(payload)
+                    if "delta" in event and isinstance(event["delta"], str):
+                        context.accumulated_content += event["delta"]
+                    elif (
+                        "choices" in event
+                        and event["choices"]
+                        and "delta" in event["choices"][0]
+                    ):
+                        delta_content = event["choices"][0]["delta"].get("content", "")
+                        if delta_content:
+                            context.accumulated_content += delta_content
+                except (ValueError, KeyError, IndexError):
+                    pass
         if context.accumulated_content:
             context.response_messages = [AIMessage(content=context.accumulated_content)]
 
