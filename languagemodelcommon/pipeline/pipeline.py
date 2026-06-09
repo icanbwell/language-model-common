@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncGenerator, Protocol
 
 from languagemodelcommon.pipeline.context import PipelineContext
 from languagemodelcommon.pipeline.step import PipelineStep
+
+logger = logging.getLogger(__name__)
 
 
 class OutputStep(Protocol):
@@ -71,7 +74,11 @@ class Pipeline:
                         if delta_content:
                             context.accumulated_content += delta_content
                 except (ValueError, KeyError, IndexError):
-                    pass
+                    # Non-content SSE events (tool calls, metadata) don't match
+                    # either delta format — safe to skip during stream draining.
+                    logger.debug(
+                        "Skipping non-content SSE event during drain: %s", payload[:100]
+                    )
         if context.accumulated_content:
             context.response_messages = [AIMessage(content=context.accumulated_content)]
 
