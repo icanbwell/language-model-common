@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
 
-from languagemodelcommon.utilities.message_preprocessing import (
+from languagemodelcommon.utilities.message_preprocessing.composite_message_preprocessor import (
     CompositeMessagePreprocessor,
 )
 
@@ -12,7 +12,9 @@ class _AppendingPreprocessor:
     def __init__(self, *, suffix: str) -> None:
         self._suffix = suffix
 
-    async def preprocess(self, *, messages: list[AnyMessage]) -> list[AnyMessage]:
+    async def preprocess(
+        self, *, messages: list[AnyMessage], headers: dict[str, str] | None = None
+    ) -> list[AnyMessage]:
         return [*messages, SystemMessage(content=self._suffix)]
 
 

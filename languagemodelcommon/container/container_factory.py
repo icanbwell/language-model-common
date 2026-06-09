@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from simple_container.container.simple_container import SimpleContainer
@@ -8,6 +9,11 @@ from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
 from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
+from languagemodelcommon.github.token_provider import (
+    GitHubAppTokenProvider,
+    GitHubTokenProvider,
+    StaticTokenProvider,
+)
 from languagemodelcommon.configs.prompt_library.prompt_library_manager import (
     PromptLibraryManager,
 )
@@ -50,6 +56,34 @@ from languagemodelcommon.utilities.tool_display_name_mapper import (
     ToolDisplayNameMapper,
 )
 
+_logger = logging.getLogger(__name__)
+
+
+def _build_github_token_provider(
+    *,
+    env: LanguageModelCommonEnvironmentVariables,
+) -> GitHubTokenProvider | None:
+    """Build GitHub token provider: App credentials > static PAT > None."""
+    app_id = env.github_app_id
+    private_key = env.github_app_private_key
+    installation_id = env.github_app_installation_id
+
+    if app_id and private_key and installation_id:
+        _logger.info("GitHub authentication: using GitHub App (app_id=%s)", app_id)
+        return GitHubAppTokenProvider(
+            app_id=app_id,
+            private_key=private_key,
+            installation_id=installation_id,
+        )
+
+    token = env.github_token
+    if token:
+        _logger.info("GitHub authentication: using static token (PAT)")
+        return StaticTokenProvider(token=token)
+
+    _logger.info("GitHub authentication: not configured")
+    return None
+
 
 class LanguageModelCommonContainerFactory:
     @staticmethod
@@ -83,12 +117,19 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
+            service_type=GitHubTokenProvider,
+            factory=lambda c: _build_github_token_provider(
+                env=c.resolve(LanguageModelCommonEnvironmentVariables),
+            ),
+        )
+        container.singleton(
             service_type=GitHubDirectoryHelper,
             factory=lambda c: GitHubDirectoryHelper(
                 environment_variables=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ),
                 store=c.resolve(KeyValueBaseStore),
+                token_provider=c.resolve(GitHubTokenProvider),
             ),
         )
 
