@@ -8,6 +8,10 @@ consistent pre-processing before regex matching.
 import re
 import unicodedata
 
+REFUSAL_MESSAGE = (
+    "I'm here to help you with your medical records. What can I help you with?"
+)
+
 
 _ZERO_WIDTH_RE = re.compile(
     "[​‌‍‎‏⁠⁡⁢⁣⁤﻿­]"  # nosec B613
@@ -80,7 +84,7 @@ _HOMOGLYPH_MAP: dict[str, str] = {
 _HOMOGLYPH_TRANS = str.maketrans(_HOMOGLYPH_MAP)
 
 
-def normalize_for_detection(text: str) -> str:
+def normalize_for_detection(*, text: str) -> str:
     """Normalize user input for security pattern matching.
 
     Applies in order:

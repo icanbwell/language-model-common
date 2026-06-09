@@ -3,7 +3,10 @@
 import re
 from typing import Optional
 
-from languagemodelcommon.utilities.security.normalize import normalize_for_detection
+from languagemodelcommon.utilities.security.normalize import (
+    REFUSAL_MESSAGE,
+    normalize_for_detection,
+)
 
 
 ENCODING_PATTERNS: list[re.Pattern[str]] = [
@@ -50,12 +53,10 @@ class OffTopicAttempt(Exception):
 
     def __init__(self, *, category: str) -> None:
         self.category = category
-        super().__init__(
-            "I'm here to help you with your medical records. What can I help you with?"
-        )
+        super().__init__(REFUSAL_MESSAGE)
 
 
-def detect_encoding_manipulation(text: str) -> Optional[str]:
+def detect_encoding_manipulation(*, text: str) -> Optional[str]:
     """Check if user input attempts encoding-based content manipulation.
 
     Returns the matched pattern description if detected, None otherwise.
@@ -66,7 +67,7 @@ def detect_encoding_manipulation(text: str) -> Optional[str]:
     return None
 
 
-def detect_offensive_content_request(text: str) -> Optional[str]:
+def detect_offensive_content_request(*, text: str) -> Optional[str]:
     """Check if user input requests discussion of offensive language.
 
     Returns the matched pattern description if detected, None otherwise.
@@ -77,18 +78,18 @@ def detect_offensive_content_request(text: str) -> Optional[str]:
     return None
 
 
-def detect_off_topic_manipulation(text: str) -> Optional[str]:
+def detect_off_topic_manipulation(*, text: str) -> Optional[str]:
     """Check for any off-topic manipulation attempt (encoding or offensive content).
 
     Returns the category of detection if found, None otherwise.
     """
-    cleaned = normalize_for_detection(text)
+    cleaned = normalize_for_detection(text=text)
 
-    result = detect_encoding_manipulation(cleaned)
+    result = detect_encoding_manipulation(text=cleaned)
     if result:
         return "encoding_manipulation"
 
-    result = detect_offensive_content_request(cleaned)
+    result = detect_offensive_content_request(text=cleaned)
     if result:
         return "offensive_content_request"
 

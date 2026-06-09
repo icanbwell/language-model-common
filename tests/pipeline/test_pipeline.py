@@ -3,6 +3,8 @@ from typing import Any, AsyncGenerator
 import pytest
 from unittest.mock import MagicMock
 
+from langchain_core.messages import AIMessage
+
 from languagemodelcommon.pipeline.context import PipelineContext
 from languagemodelcommon.pipeline.pipeline import Pipeline
 
@@ -131,3 +133,50 @@ class TestPipeline:
             chunks.append(chunk)
 
         assert chunks == [{"error": "stream broke"}]
+
+    @pytest.mark.asyncio
+    async def test_drain_stream_parses_openai_delta_format(self) -> None:
+        """Verify _drain_stream handles OpenAI choices[0].delta.content SSE format."""
+
+        async def fake_stream() -> AsyncGenerator[str, None]:
+            yield 'data: {"choices": [{"delta": {"content": "Hello"}}]}\n'
+            yield 'data: {"choices": [{"delta": {"content": " world"}}]}\n'
+            yield "data: [DONE]\n"
+
+        wrapper = MagicMock()
+        context = PipelineContext(chat_request_wrapper=wrapper)
+        context.content_stream = fake_stream()
+
+        await Pipeline._drain_stream(context=context)
+
+        assert context.accumulated_content == "Hello world"
+        assert len(context.response_messages) == 1
+        assert isinstance(context.response_messages[0], AIMessage)
+        assert context.response_messages[0].content == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_drain_stream_parses_simple_delta_format(self) -> None:
+        """Verify _drain_stream handles simple {"delta": "..."} SSE format."""
+
+        async def fake_stream() -> AsyncGenerator[str, None]:
+            yield 'data: {"delta": "Hi"}\ndata: {"delta": " there"}\n'
+
+        wrapper = MagicMock()
+        context = PipelineContext(chat_request_wrapper=wrapper)
+        context.content_stream = fake_stream()
+
+        await Pipeline._drain_stream(context=context)
+
+        assert context.accumulated_content == "Hi there"
+
+    @pytest.mark.asyncio
+    async def test_drain_stream_noop_when_no_stream(self) -> None:
+        """Verify _drain_stream does nothing when content_stream is None."""
+        wrapper = MagicMock()
+        context = PipelineContext(chat_request_wrapper=wrapper)
+        assert context.content_stream is None
+
+        await Pipeline._drain_stream(context=context)
+
+        assert context.accumulated_content == ""
+        assert context.response_messages == []

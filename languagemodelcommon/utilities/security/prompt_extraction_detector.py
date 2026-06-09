@@ -3,11 +3,9 @@
 import re
 from typing import Optional
 
-from languagemodelcommon.utilities.security.normalize import normalize_for_detection
-
-
-REFUSAL_MESSAGE = (
-    "I'm here to help you with your medical records. What can I help you with?"
+from languagemodelcommon.utilities.security.normalize import (
+    REFUSAL_MESSAGE,
+    normalize_for_detection,
 )
 
 
@@ -59,12 +57,12 @@ PROMPT_EXTRACTION_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 
-def detect_prompt_extraction(text: str) -> Optional[str]:
+def detect_prompt_extraction(*, text: str) -> Optional[str]:
     """Check if user input attempts to extract system instructions.
 
     Returns the matched pattern description if detected, None otherwise.
     """
-    normalized = normalize_for_detection(text)
+    normalized = normalize_for_detection(text=text)
     for pattern in PROMPT_EXTRACTION_PATTERNS:
         if pattern.search(normalized):
             return pattern.pattern
