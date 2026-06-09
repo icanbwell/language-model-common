@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Dict, Sequence
 
 from langchain_core.messages import AnyMessage
 
@@ -13,8 +13,10 @@ class CompositeMessagePreprocessor:
     def __init__(self, *, preprocessors: Sequence[MessagePreprocessor]) -> None:
         self._preprocessors = list(preprocessors)
 
-    async def preprocess(self, *, messages: list[AnyMessage]) -> list[AnyMessage]:
+    async def preprocess(
+        self, *, messages: list[AnyMessage], headers: Dict[str, str] | None = None
+    ) -> list[AnyMessage]:
         result = messages
         for preprocessor in self._preprocessors:
-            result = await preprocessor.preprocess(messages=result)
+            result = await preprocessor.preprocess(messages=result, headers=headers)
         return result
