@@ -35,11 +35,28 @@ class Pipeline:
             for step in self._pre_execution_steps:
                 await step.run(context=context)
             await self._execution_step.run(context=context)
+            await self._drain_stream(context=context)
             for step in self._post_execution_steps:
                 await step.run(context=context)
             return self._output_step.format_response(context=context)
         except Exception as e:
             return self._output_step.format_error(context=context, error=e)
+
+    @staticmethod
+    async def _drain_stream(*, context: PipelineContext) -> None:
+        """Consume content_stream fully, populating accumulated_content and response_messages."""
+        if context.content_stream is None:
+            return
+        import re
+
+        from langchain_core.messages import AIMessage
+
+        async for chunk in context.content_stream:
+            match = re.search(r'"delta":\s*\{\s*"content":\s*"([^"]*)"', chunk)
+            if match:
+                context.accumulated_content += match.group(1)
+        if context.accumulated_content:
+            context.response_messages = [AIMessage(content=context.accumulated_content)]
 
     async def run_streaming(
         self, *, context: PipelineContext
