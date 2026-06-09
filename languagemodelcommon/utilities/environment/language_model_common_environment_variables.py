@@ -360,6 +360,18 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("GITHUB_TOKEN")
 
     @property
+    def github_app_id(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_ID")
+
+    @property
+    def github_app_private_key(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_PRIVATE_KEY")
+
+    @property
+    def github_app_installation_id(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_INSTALLATION_ID")
+
+    @property
     def plugins_mcp_server(self) -> Optional[str]:
         """URL of the MCP server that returns plugin MCP configs.
 

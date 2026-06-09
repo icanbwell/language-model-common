@@ -16,6 +16,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
+from languagemodelcommon.github.token_provider import GitHubTokenProvider
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
@@ -43,9 +44,11 @@ class GitHubDirectoryHelper:
         *,
         environment_variables: LanguageModelCommonEnvironmentVariables | None = None,
         store: AsyncKeyValueProtocol | None = None,
+        token_provider: GitHubTokenProvider | None = None,
     ) -> None:
         self._environment_variables = environment_variables
         self._store = store
+        self._token_provider = token_provider
 
     # ------------------------------------------------------------------
     # Pure / static helpers — no env vars or instance state needed
@@ -164,7 +167,14 @@ class GitHubDirectoryHelper:
 
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        github_token = env.github_token if env else os.environ.get("GITHUB_TOKEN")
+        github_token: str | None = None
+        if self._token_provider is not None:
+            github_token = await self._token_provider.get_token()
+        elif env:
+            github_token = env.github_token
+        else:
+            github_token = os.environ.get("GITHUB_TOKEN")
+
         downloader = GithubDirectoryDownloader()
         result = await downloader.download(
             source_uri=github_uri,
