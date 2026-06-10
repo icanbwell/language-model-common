@@ -217,6 +217,19 @@ class ChatRequestWrapper(abc.ABC):
     @abstractmethod
     def parallel_tool_calls(self) -> Optional[bool]: ...
 
+    @property
+    @abstractmethod
+    def tool_choice(self) -> Optional[Any]:
+        """Tool-selection control for this request.
+
+        Mirrors the OpenAI ``tool_choice`` parameter. ``"none"`` instructs the
+        agent layer to bind no tools to the LLM for this request; ``"auto"``
+        (or unset) leaves the default tool-binding behavior in place. Other
+        values (e.g. a specific function name or dict) are passed through and
+        interpreted by callers that need finer-grained control.
+        """
+        ...
+
     def set_effective_parallel_tool_calls(self, *, enabled: bool) -> None:
         """Store the resolved parallel tool calls flag for response metadata."""
         self._effective_parallel_tool_calls = enabled

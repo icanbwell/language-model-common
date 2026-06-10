@@ -711,6 +711,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
 
     @override
     @property
+    def tool_choice(self) -> Optional[Any]:
+        return self.request.tool_choice
+
+    @override
+    @property
     def enable_debug_logging(self) -> bool:
         """Return whether debug logging is enabled for this request."""
         return self._enable_debug_logging

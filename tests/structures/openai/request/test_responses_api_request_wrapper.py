@@ -32,6 +32,7 @@ def _make_wrapper(
     max_output_tokens: int | None = None,
     tools: list[dict[str, Any]] | None = None,
     parallel_tool_calls: bool | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ResponsesApiRequestWrapper:
     request = ResponsesRequest(
@@ -46,6 +47,7 @@ def _make_wrapper(
         max_output_tokens=max_output_tokens,
         tools=tools,
         parallel_tool_calls=parallel_tool_calls,
+        tool_choice=tool_choice,
         metadata=metadata,
     )
     return ResponsesApiRequestWrapper(
@@ -61,6 +63,28 @@ class TestHardcodedProperties:
     def test_response_format_always_json_object(self) -> None:
         wrapper = _make_wrapper()
         assert wrapper.response_format == "json_object"
+
+
+class TestToolChoice:
+    """Tests for the tool_choice property, used by callers (e.g. baileyai's
+    AgentServiceFactory) to suppress tool binding for a specific request."""
+
+    def test_tool_choice_defaults_to_none_when_unset(self) -> None:
+        wrapper = _make_wrapper()
+        assert wrapper.tool_choice is None
+
+    def test_tool_choice_passthrough_string(self) -> None:
+        wrapper = _make_wrapper(tool_choice="none")
+        assert wrapper.tool_choice == "none"
+
+    def test_tool_choice_passthrough_dict(self) -> None:
+        wrapper = _make_wrapper(
+            tool_choice={"type": "function", "function": {"name": "lookup"}}
+        )
+        assert wrapper.tool_choice == {
+            "type": "function",
+            "function": {"name": "lookup"},
+        }
 
 
 class TestMessageConversion:
