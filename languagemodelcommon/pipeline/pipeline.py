@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncGenerator, Protocol
 
+from starlette.responses import StreamingResponse
+
 from languagemodelcommon.pipeline.context import PipelineContext
 from languagemodelcommon.pipeline.step import PipelineStep
 
@@ -90,7 +92,12 @@ class Pipeline:
                 await step.run(context=context)
             await self._execution_step.run(context=context)
         except Exception as e:
-            yield self._output_step.format_error(context=context, error=e)
+            error_result = self._output_step.format_error(context=context, error=e)
+            if isinstance(error_result, StreamingResponse):
+                async for chunk in error_result.body_iterator:
+                    yield chunk
+            else:
+                yield error_result
             return
 
         async for chunk in self._output_step.stream_response(context=context):
