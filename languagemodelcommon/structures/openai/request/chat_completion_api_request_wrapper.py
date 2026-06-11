@@ -509,8 +509,10 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
 
     @override
     @property
-    def tool_choice(self) -> Optional[Any]:
-        return self.request.tool_choice
+    def tool_choice(self) -> str | dict[str, Any] | None:
+        # OpenAI's ChatCompletionToolChoiceOptionParam resolves to a string literal
+        # or one of several TypedDicts; widen to the abstract contract's union.
+        return cast(str | dict[str, Any] | None, self.request.tool_choice)
 
     @override
     @property

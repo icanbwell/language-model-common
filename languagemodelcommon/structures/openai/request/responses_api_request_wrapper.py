@@ -543,26 +543,28 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         """
         configs: list[AgentConfig] = []
         for tool in tools_in_request:
-            if tool.get("type") != "mcp":
-                continue
-            if "server_label" not in tool:
+            if tool.get("type") != "mcp" or "server_label" not in tool:
                 continue
 
             allowed_tools = tool.get("allowed_tools")
-            tools_csv = ""
+            tools_csv: str | None = None
             if isinstance(allowed_tools, (list, tuple)):
-                tools_csv = ",".join(
-                    t["name"] if isinstance(t, dict) and "name" in t else str(t)
-                    for t in allowed_tools
+                tools_csv = (
+                    ",".join(
+                        t["name"] if isinstance(t, dict) and "name" in t else str(t)
+                        for t in allowed_tools
+                    )
+                    or None
                 )
 
+            server_label = tool["server_label"]
             server_url = tool.get("server_url")
             if server_url:
                 configs.append(
                     AgentConfig(
                         url=server_url,
-                        name=tool["server_label"],
-                        tools=tools_csv or None,
+                        name=server_label,
+                        tools=tools_csv,
                         headers=tool.get("headers"),
                         auth="headers",
                     )
@@ -570,9 +572,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             else:
                 configs.append(
                     AgentConfig(
-                        name=tool["server_label"],
-                        mcp_server=tool["server_label"],
-                        tools=tools_csv or None,
+                        name=server_label,
+                        mcp_server=server_label,
+                        tools=tools_csv,
                     )
                 )
         return configs
@@ -730,7 +732,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
 
     @override
     @property
-    def tool_choice(self) -> Optional[Any]:
+    def tool_choice(self) -> str | dict[str, Any] | None:
         return self.request.tool_choice
 
     @override
