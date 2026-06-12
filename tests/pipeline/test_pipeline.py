@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from langchain_core.messages import AIMessage
+from starlette.responses import StreamingResponse
 
 from languagemodelcommon.pipeline.context import PipelineContext
 from languagemodelcommon.pipeline.pipeline import Pipeline
@@ -133,6 +134,50 @@ class TestPipeline:
             chunks.append(chunk)
 
         assert chunks == [{"error": "stream broke"}]
+
+    @pytest.mark.asyncio
+    async def test_run_streaming_unwraps_streaming_response_on_error(self) -> None:
+        """When format_error returns a StreamingResponse, yield its body chunks."""
+
+        class FailingStep:
+            async def run(self, *, context: PipelineContext) -> None:
+                raise ValueError("overflow")
+
+        class StreamingErrorOutput:
+            def format_response(self, *, context: PipelineContext) -> Any:
+                return {}
+
+            async def stream_response(
+                self, *, context: PipelineContext
+            ) -> AsyncGenerator[str, None]:
+                yield ""
+
+            def format_error(
+                self, *, context: PipelineContext, error: Exception
+            ) -> StreamingResponse:
+                async def error_body() -> AsyncGenerator[str, None]:
+                    yield 'data: {"error": true}\n\n'
+                    yield "data: [DONE]\n\n"
+
+                return StreamingResponse(
+                    content=error_body(), media_type="text/event-stream"
+                )
+
+        pipeline = Pipeline(
+            pre_execution_steps=[FailingStep()],
+            execution_step=FakeStep(),
+            post_execution_steps=[],
+            output_step=StreamingErrorOutput(),
+        )
+
+        wrapper = MagicMock()
+        context = PipelineContext(chat_request_wrapper=wrapper)
+
+        chunks: list[str] = []
+        async for chunk in pipeline.run_streaming(context=context):
+            chunks.append(chunk)
+
+        assert chunks == ['data: {"error": true}\n\n', "data: [DONE]\n\n"]
 
     @pytest.mark.asyncio
     async def test_drain_stream_parses_openai_delta_format(self) -> None:

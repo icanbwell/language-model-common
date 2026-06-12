@@ -509,6 +509,13 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
 
     @override
     @property
+    def tool_choice(self) -> str | dict[str, Any] | None:
+        # OpenAI's ChatCompletionToolChoiceOptionParam resolves to a string literal
+        # or one of several TypedDicts; widen to the abstract contract's union.
+        return cast(str | dict[str, Any] | None, self.request.tool_choice)
+
+    @override
+    @property
     def enable_debug_logging(self) -> bool:
         """Return whether debug logging is enabled for this request."""
         return self._enable_debug_logging

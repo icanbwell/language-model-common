@@ -535,28 +535,49 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     ) -> list[AgentConfig]:
         """
         Extract AgentConfig objects for MCP tools from the tools_in_request list.
+
+        Supports two modes:
+        - Full specification: server_url + server_label + allowed_tools
+        - Label-only reference: server_label + allowed_tools (server_url resolved
+          from existing model config by the caller)
         """
-        return [
-            AgentConfig(
-                url=tool["server_url"],
-                name=tool["server_label"],
-                tools=",".join(
-                    [
+        configs: list[AgentConfig] = []
+        for tool in tools_in_request:
+            if tool.get("type") != "mcp" or "server_label" not in tool:
+                continue
+
+            allowed_tools = tool.get("allowed_tools")
+            tools_csv: str | None = None
+            if isinstance(allowed_tools, (list, tuple)):
+                tools_csv = (
+                    ",".join(
                         t["name"] if isinstance(t, dict) and "name" in t else str(t)
-                        for t in tool["allowed_tools"]
-                    ]
+                        for t in allowed_tools
+                    )
+                    or None
                 )
-                if isinstance(tool["allowed_tools"], (list, tuple))
-                else "",
-                headers=tool.get("headers"),
-                auth="headers",
-            )
-            for tool in tools_in_request
-            if tool["type"] == "mcp"
-            and "server_url" in tool
-            and "server_label" in tool
-            and "allowed_tools" in tool
-        ]
+
+            server_label = tool["server_label"]
+            server_url = tool.get("server_url")
+            if server_url:
+                configs.append(
+                    AgentConfig(
+                        url=server_url,
+                        name=server_label,
+                        tools=tools_csv,
+                        headers=tool.get("headers"),
+                        auth="headers",
+                    )
+                )
+            else:
+                configs.append(
+                    AgentConfig(
+                        name=server_label,
+                        mcp_server=server_label,
+                        tools=tools_csv,
+                    )
+                )
+        return configs
 
     @override
     def get_tools(self) -> list[AgentConfig]:
@@ -708,6 +729,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     @property
     def parallel_tool_calls(self) -> Optional[bool]:
         return self.request.parallel_tool_calls
+
+    @override
+    @property
+    def tool_choice(self) -> str | dict[str, Any] | None:
+        return self.request.tool_choice
 
     @override
     @property

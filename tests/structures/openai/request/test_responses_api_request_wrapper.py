@@ -32,6 +32,7 @@ def _make_wrapper(
     max_output_tokens: int | None = None,
     tools: list[dict[str, Any]] | None = None,
     parallel_tool_calls: bool | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ResponsesApiRequestWrapper:
     request = ResponsesRequest(
@@ -46,6 +47,7 @@ def _make_wrapper(
         max_output_tokens=max_output_tokens,
         tools=tools,
         parallel_tool_calls=parallel_tool_calls,
+        tool_choice=tool_choice,
         metadata=metadata,
     )
     return ResponsesApiRequestWrapper(
@@ -61,6 +63,24 @@ class TestHardcodedProperties:
     def test_response_format_always_json_object(self) -> None:
         wrapper = _make_wrapper()
         assert wrapper.response_format == "json_object"
+
+
+class TestToolChoice:
+    """Tests for the tool_choice property — pass-through of the OpenAI parameter."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            None,
+            "none",
+            "auto",
+            "required",
+            {"type": "function", "function": {"name": "lookup"}},
+        ],
+    )
+    def test_tool_choice_passthrough(self, value: str | dict[str, Any] | None) -> None:
+        wrapper = _make_wrapper(tool_choice=value)
+        assert wrapper.tool_choice == value
 
 
 class TestMessageConversion:
@@ -301,7 +321,7 @@ class TestConvertMessageContent:
 class TestGetTools:
     """Tests for MCP tool extraction."""
 
-    def test_mcp_tool_extracted(self) -> None:
+    def test_mcp_tool_with_server_url(self) -> None:
         wrapper = _make_wrapper(
             tools=[
                 {
@@ -309,6 +329,7 @@ class TestGetTools:
                     "server_url": "http://localhost:8080",
                     "server_label": "my-server",
                     "allowed_tools": [{"name": "tool_a"}, {"name": "tool_b"}],
+                    "headers": {"X-Token": "secret"},
                 }
             ]
         )
@@ -316,19 +337,36 @@ class TestGetTools:
         assert len(configs) == 1
         assert configs[0].url == "http://localhost:8080"
         assert configs[0].name == "my-server"
-        tools_str = configs[0].tools or ""
-        assert "tool_a" in tools_str
-        assert "tool_b" in tools_str
+        assert configs[0].mcp_server is None
+        assert configs[0].auth == "headers"
+        assert configs[0].headers == {"X-Token": "secret"}
+        assert configs[0].tools == "tool_a,tool_b"
 
-    def test_non_mcp_tool_ignored(self) -> None:
+    def test_mcp_tool_label_only_resolves_via_mcp_server_reference(self) -> None:
+        """Without server_url, the config carries mcp_server set to server_label
+        so the caller resolves the URL from .mcp.json at load time."""
         wrapper = _make_wrapper(
             tools=[
                 {
-                    "type": "function",
-                    "name": "some_function",
+                    "type": "mcp",
+                    "server_label": "github",
+                    "allowed_tools": ["search_repos", "get_issue"],
                 }
             ]
         )
+        configs = wrapper.get_tools()
+        assert len(configs) == 1
+        assert configs[0].url is None
+        assert configs[0].name == "github"
+        assert configs[0].mcp_server == "github"
+        assert configs[0].tools == "search_repos,get_issue"
+
+    def test_mcp_tool_without_server_label_is_skipped(self) -> None:
+        wrapper = _make_wrapper(tools=[{"type": "mcp", "server_url": "http://x"}])
+        assert wrapper.get_tools() == []
+
+    def test_non_mcp_tool_ignored(self) -> None:
+        wrapper = _make_wrapper(tools=[{"type": "function", "name": "some_function"}])
         assert wrapper.get_tools() == []
 
 
