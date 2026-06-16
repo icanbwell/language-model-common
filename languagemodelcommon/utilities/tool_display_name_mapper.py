@@ -154,8 +154,8 @@ class ToolDisplayNameMapper:
             return ""
 
         if self._starts_with_emoji(name_for_tool):
-            return f"\n{name_for_tool}.\n"
-        return f"\n🛠️ {name_for_tool}.\n"
+            return f"\n\n{name_for_tool}.\n\n"
+        return f"\n\n🛠️ {name_for_tool}.\n\n"
 
     def get_name_for_tool(
         self, *, tool_name: str | None, tool_input: Dict[str, Any] | None
