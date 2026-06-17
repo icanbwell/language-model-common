@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, AsyncGenerator
 
 import pytest
@@ -13,6 +14,11 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.request_information import RequestInformation
+
+
+async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
+    """Replacement for asyncio.sleep that returns immediately in tests."""
+    return None
 
 
 class _ReadTimeoutNamedException(Exception):
@@ -381,4 +387,140 @@ async def test_stream_graph_skips_compaction_when_disabled(
         ]
 
     # Only called once — no retry
+    assert fake_graph._call_count == 1
+
+
+class _AnthropicRateLimitError(Exception):
+    """Mimics anthropic.RateLimitError: carries a 429 status code."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Error code: 429 - {'message': 'Too many tokens, "
+            "please wait before trying again.'}"
+        ),
+    ) -> None:
+        super().__init__(message)
+        self.status_code = 429
+
+
+class RateLimitError(Exception):
+    """Class name alone (matches anthropic/openai) should signal rate limiting."""
+
+
+def test_is_rate_limit_error_true_for_429_status() -> None:
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(_AnthropicRateLimitError())
+
+
+def test_is_rate_limit_error_true_for_too_many_tokens_message() -> None:
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(
+        RuntimeError("Too many tokens, please wait before trying again.")
+    )
+
+
+def test_is_rate_limit_error_true_for_named_class() -> None:
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(
+        RateLimitError("rate limited")
+    )
+
+
+def test_is_rate_limit_error_true_for_wrapped_cause() -> None:
+    wrapped = _GenericException("wrapper")
+    wrapped.__cause__ = _AnthropicRateLimitError()
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(wrapped)
+
+
+def test_is_rate_limit_error_false_for_unrelated_error() -> None:
+    assert not LangGraphToOpenAIConverter._is_rate_limit_error(
+        RuntimeError("something else entirely")
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_on_rate_limit_before_first_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 raised before any event is yielded is retried with backoff."""
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    converter = _build_converter(monkeypatch)
+
+    # First two attempts hit the rate limit, third succeeds.
+    fake_graph = _FakeCompiledStateGraph(
+        events=[{"event": "on_chain_start"}],
+        error=_AnthropicRateLimitError(),
+        fail_count=2,
+    )
+
+    events = [
+        event
+        async for event in converter._stream_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+    ]
+
+    assert len(events) == 1
+    assert fake_graph._call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_after_exhausting_rate_limit_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent 429s raise once the retry budget is exhausted."""
+    monkeypatch.setenv("RATE_LIMIT_MAX_RETRIES", "2")
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        events=[{"event": "on_chain_start"}],
+        error=_AnthropicRateLimitError(),
+        fail_count=5,
+    )
+
+    with pytest.raises(BaileyException, match="rate limit"):
+        _ = [
+            event
+            async for event in converter._stream_graph_with_messages_async(
+                messages=[HumanMessage(content="hi")],
+                compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+                request_information=_request_information(),
+                config=None,
+                state=None,
+            )
+        ]
+
+    # initial attempt + 2 retries
+    assert fake_graph._call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_does_not_retry_rate_limit_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RATE_LIMIT_RETRY_ENABLED=false surfaces the 429 without retrying."""
+    monkeypatch.setenv("RATE_LIMIT_RETRY_ENABLED", "false")
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        events=[{"event": "on_chain_start"}],
+        error=_AnthropicRateLimitError(),
+        fail_count=1,
+    )
+
+    with pytest.raises(BaileyException, match="rate limit"):
+        _ = [
+            event
+            async for event in converter._stream_graph_with_messages_async(
+                messages=[HumanMessage(content="hi")],
+                compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+                request_information=_request_information(),
+                config=None,
+                state=None,
+            )
+        ]
+
     assert fake_graph._call_count == 1

@@ -236,6 +236,21 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("CONTEXT_COMPACTION_ENABLED", "true"))
 
     @property
+    def rate_limit_retry_enabled(self) -> bool:
+        """When True, retry upstream model rate limits (HTTP 429) before surfacing them."""
+        return self.str2bool(os.environ.get("RATE_LIMIT_RETRY_ENABLED", "true"))
+
+    @property
+    def rate_limit_max_retries(self) -> int:
+        """Maximum number of retries for an upstream rate limit before giving up."""
+        return int(os.environ.get("RATE_LIMIT_MAX_RETRIES", "3"))
+
+    @property
+    def rate_limit_retry_base_delay_ms(self) -> int:
+        """Base delay in milliseconds for rate-limit retry exponential backoff."""
+        return int(os.environ.get("RATE_LIMIT_RETRY_BASE_DELAY_MS", "500"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
