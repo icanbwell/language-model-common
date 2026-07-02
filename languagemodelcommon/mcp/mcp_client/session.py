@@ -121,10 +121,14 @@ async def create_mcp_session(
             f"({type(e).__name__}: {e})",
             url=url,
         ) from e
-    except Exception as e:
+    except (Exception, BaseExceptionGroup) as e:
         # Unwrap ExceptionGroups so the error message surfaces the real
         # cause (e.g. an HTTP 401) instead of the opaque "unhandled
         # errors in a TaskGroup (1 sub-exception)" wrapper.
+        # BaseExceptionGroup must be listed explicitly: anyio's TaskGroup
+        # always raises BaseExceptionGroup (not ExceptionGroup), even when
+        # all inner exceptions are plain Exceptions, so `except Exception`
+        # alone would miss it.
         msg = ExceptionLogger.format_exception_message(e)
         # Use str(e) for the URL guard — not the unwrapped msg.
         # format_exception_message recursively extracts leaf messages
