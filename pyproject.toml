@@ -108,6 +108,7 @@ module = ["setuptools.*"]
 ignore_missing_imports = true
 
 [tool.uv]
+exclude-newer = "2 days"
 index-strategy = "unsafe-best-match"
 
 [[tool.uv.index]]
