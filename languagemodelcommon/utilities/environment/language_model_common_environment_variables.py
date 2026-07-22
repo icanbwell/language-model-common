@@ -290,6 +290,22 @@ class LanguageModelCommonEnvironmentVariables(
         return int(os.environ.get("TOOL_CALL_TIMEOUT_SECONDS", "600"))
 
     @property
+    def mcp_tool_heartbeat_interval_seconds(self) -> float:
+        """Interval in seconds between synthetic heartbeat events emitted
+        while an MCP tool call is in flight without reporting progress."""
+        return float(os.environ.get("MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS", "15"))
+
+    @property
+    def emit_tool_heartbeat_in_chat_completions(self) -> bool:
+        """When True, synthetic MCP tool heartbeats are emitted as content
+        deltas in the Chat Completions streaming format. Separate from
+        emit_task_progress_in_chat_completions so enabling one does not
+        change the volume/behavior of the other."""
+        return self.str2bool(
+            os.environ.get("EMIT_TOOL_HEARTBEAT_IN_CHAT_COMPLETIONS", "false")
+        )
+
+    @property
     def app_login_uri(self) -> str:
         value = os.environ.get("APP_LOGIN_URI")
         return value if value else "/app/login"
