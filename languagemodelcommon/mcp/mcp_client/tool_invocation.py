@@ -1,6 +1,7 @@
 """Tool invocation — interceptor chain and raw MCP tool calls."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -270,6 +271,8 @@ async def _execute_tool_call_with_heartbeat(
                     )
     except asyncio.CancelledError:
         call_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await call_task
         raise
 
 

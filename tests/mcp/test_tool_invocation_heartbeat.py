@@ -105,3 +105,47 @@ async def test_outer_cancellation_cancels_inner_call_task() -> None:
         await task
 
     await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+
+
+class _CleanupError(RuntimeError):
+    """Distinct exception raised by a fake tool's cancellation cleanup path."""
+
+
+@pytest.mark.asyncio
+async def test_inner_cleanup_exception_after_cancellation_is_not_swallowed() -> None:
+    """If the inner call_task raises a different exception while handling its
+    own CancelledError (e.g. a failure during session teardown), that
+    exception must propagate rather than being silently dropped when the
+    outer coroutine is cancelled and cancels the inner task in turn.
+    """
+    session = AsyncMock()
+    started = asyncio.Event()
+
+    async def _call_tool_with_failing_cleanup(
+        name: str,
+        arguments: dict[str, Any],
+        progress_callback: Any = None,
+    ) -> None:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise _CleanupError("cleanup failed") from None
+
+    session.call_tool = _call_tool_with_failing_cleanup
+
+    task = asyncio.ensure_future(
+        _execute_tool_call_with_heartbeat(
+            session=session,
+            name="hanging_tool",
+            arguments={},
+            progress_callback=None,
+            server_name="hanging-server",
+            heartbeat_interval_seconds=5.0,
+        )
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(_CleanupError, match="cleanup failed"):
+        await task
