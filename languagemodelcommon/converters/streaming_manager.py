@@ -379,6 +379,15 @@ class LangGraphStreamingManager(StreamContextMixin):
             )
             if chunk:
                 yield chunk
+        elif name == "mcp_tool_heartbeat":
+            data = dict(event.get("data", {}))
+            chunk = chat_request_wrapper.create_tool_heartbeat_sse_event(
+                request_id=request_information.request_id,
+                tool_name=data.get("tool_name", "unknown"),
+                elapsed_seconds=float(data.get("elapsed_seconds", 0.0)),
+            )
+            if chunk:
+                yield chunk
         else:
             logger.debug("Skipped custom event: %s", name)
 
