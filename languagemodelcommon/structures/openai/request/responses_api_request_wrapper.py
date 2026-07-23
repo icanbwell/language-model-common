@@ -373,6 +373,29 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         }
         return f"data: {json.dumps(event)}\n\n"
 
+    @override
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        """Emit a synthetic heartbeat as a ``task.progress`` SSE event.
+
+        Reuses the exact same wire format as create_task_progress_sse_event
+        so existing consumers (e.g. baileyai-skills-service's frontend, which
+        already treats any `type: "task.progress"` payload as a non-content
+        trace event) require no changes.
+        """
+        event: Dict[str, Any] = {
+            "type": "task.progress",
+            "task_id": "",
+            "status": "in_progress",
+            "message": f"Still running {tool_name}... ({elapsed_seconds:.0f}s)",
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
     @staticmethod
     def _convert_usage_to_response_usage(
         usages: list[UsageMetadata],

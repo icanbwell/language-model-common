@@ -272,6 +272,21 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        """Emit a synthetic heartbeat while a tool call is in flight without
+        reporting real progress.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event in their respective SSE formats.
+        """
+        return None
+
     def create_tool_start_sse_event(
         self,
         *,
