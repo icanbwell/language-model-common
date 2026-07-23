@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 import httpx
 from httpx import HTTPStatusError
+from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.tools import BaseTool
 from mcp import ClientSession
 from mcp.types import (
@@ -210,6 +211,24 @@ class MCPToolProvider:
         logger.info(
             f"MCP Tool Progress - Server: {context.server_name}, Progress: {progress}, Total: {total}, Message: {message}"
         )
+        try:
+            await adispatch_custom_event(
+                "mcp_task_progress",
+                {
+                    "task_id": "",
+                    "status": f"{progress:g}/{total:g}" if total else f"{progress:g}",
+                    "message": message,
+                    "server_name": context.server_name,
+                    "tool_name": context.tool_name,
+                },
+            )
+        except RuntimeError as e:
+            logger.debug(
+                "Skipping mcp_task_progress event dispatch: %s (server=%s, tool=%s)",
+                e,
+                context.server_name,
+                context.tool_name,
+            )
 
     def _build_connection_config(self, tool_config: AgentConfig) -> MCPConnectionConfig:
         """Build an MCPConnectionConfig from an AgentConfig."""
