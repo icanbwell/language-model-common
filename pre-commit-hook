@@ -1,5 +1,17 @@
 #!/bin/bash
 
 GIT_PROJECT_ROOT=$(git rev-parse --show-toplevel)
-cd "$($GIT_PROJECT_ROOT "$0")"
-docker build -f ./pre-commit.Dockerfile -t pre-commit-spf . && docker run --rm --name pre-commit-spf-run -v $(pwd)/:/sourcecode -v pre-commit-cache:/root/.cache/pre-commit pre-commit-spf
+cd "$GIT_PROJECT_ROOT"
+
+# In a git worktree, the repo's real .git dir lives outside $GIT_PROJECT_ROOT
+# (the worktree only has a `.git` file pointing at it), so it must be bind
+# mounted separately at the same absolute path for git to resolve it inside
+# the container.
+GIT_COMMON_DIR=$(cd "$(git rev-parse --git-common-dir)" && pwd)
+
+docker build -f ./pre-commit.Dockerfile -t pre-commit-spf . && docker run --rm --name pre-commit-spf-run \
+  -v "$(pwd)/:/sourcecode" \
+  -v "$GIT_COMMON_DIR:$GIT_COMMON_DIR" \
+  -v pre-commit-cache:/root/.cache/pre-commit \
+  pre-commit-spf \
+  sh -c "git config --global --add safe.directory '$GIT_COMMON_DIR' && pre-commit run --all-files"
