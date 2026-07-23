@@ -1,9 +1,11 @@
 """Tool invocation — interceptor chain and raw MCP tool calls."""
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from langchain_core.callbacks.manager import adispatch_custom_event
 from mcp.types import CallToolResult
 from pydantic import ValidationError
 
@@ -174,8 +176,6 @@ async def _execute_tool_as_task(
     Raises TaskProtocolError if the server does not respond with a valid
     CreateTaskResult (e.g., returns a plain CallToolResult instead).
     """
-    from langchain_core.callbacks.manager import adispatch_custom_event
-
     try:
         create_result = await session.experimental.call_tool_as_task(
             name, arguments, ttl=60000
@@ -222,12 +222,64 @@ async def _execute_tool_as_task(
     return result
 
 
+async def _execute_tool_call_with_heartbeat(
+    *,
+    session: Any,
+    name: str,
+    arguments: dict[str, Any],
+    progress_callback: Any,
+    server_name: str,
+    heartbeat_interval_seconds: float,
+) -> CallToolResult:
+    """Call ``session.call_tool``, emitting a synthetic ``mcp_tool_heartbeat``
+    custom event every ``heartbeat_interval_seconds`` while the call is in
+    flight, regardless of whether the tool reports real progress.
+
+    Uses ``asyncio.shield`` so a heartbeat tick's wait_for timeout never
+    cancels the underlying tool call -- only the local wait is abandoned and
+    retried on the same call_task. If this coroutine itself is cancelled
+    (e.g. the overall chat turn is aborted), the inner call_task is
+    cancelled too rather than left running in the background.
+    """
+    call_task: "asyncio.Task[CallToolResult]" = asyncio.ensure_future(
+        session.call_tool(name, arguments, progress_callback=progress_callback)
+    )
+    elapsed_seconds = 0.0
+    try:
+        while True:
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(call_task), timeout=heartbeat_interval_seconds
+                )
+            except asyncio.TimeoutError:
+                elapsed_seconds += heartbeat_interval_seconds
+                try:
+                    await adispatch_custom_event(
+                        "mcp_tool_heartbeat",
+                        {
+                            "server_name": server_name,
+                            "tool_name": name,
+                            "elapsed_seconds": elapsed_seconds,
+                        },
+                    )
+                except RuntimeError as e:
+                    logger.debug(
+                        "Skipping mcp_tool_heartbeat event dispatch: %s (tool=%s)",
+                        e,
+                        name,
+                    )
+    except asyncio.CancelledError:
+        call_task.cancel()
+        raise
+
+
 def _make_execute_tool(
     *,
     config: MCPConnectionConfig,
     mcp_callbacks: _MCPCallbacks,
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
+    heartbeat_interval_seconds: float = 15.0,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -285,10 +337,13 @@ def _make_execute_tool(
                         )
                         if tool_list_cache is not None:
                             await tool_list_cache.invalidate_async(key=cache_key)
-                return await session.call_tool(
-                    request.name,
-                    request.args,
+                return await _execute_tool_call_with_heartbeat(
+                    session=session,
+                    name=request.name,
+                    arguments=request.args,
                     progress_callback=mcp_callbacks.progress_callback,
+                    server_name=request.server_name,
+                    heartbeat_interval_seconds=heartbeat_interval_seconds,
                 )
             except Exception:
                 await session_pool.evict(effective_config)
@@ -324,16 +379,22 @@ def _make_execute_tool(
                         )
                         if tool_list_cache is not None:
                             await tool_list_cache.invalidate_async(key=cache_key)
-                        result = await session.call_tool(
-                            request.name,
-                            request.args,
+                        result = await _execute_tool_call_with_heartbeat(
+                            session=session,
+                            name=request.name,
+                            arguments=request.args,
                             progress_callback=mcp_callbacks.progress_callback,
+                            server_name=request.server_name,
+                            heartbeat_interval_seconds=heartbeat_interval_seconds,
                         )
                 else:
-                    result = await session.call_tool(
-                        request.name,
-                        request.args,
+                    result = await _execute_tool_call_with_heartbeat(
+                        session=session,
+                        name=request.name,
+                        arguments=request.args,
                         progress_callback=mcp_callbacks.progress_callback,
+                        server_name=request.server_name,
+                        heartbeat_interval_seconds=heartbeat_interval_seconds,
                     )
             except Exception as e:
                 captured_exception = e
@@ -355,6 +416,7 @@ async def call_mcp_tool_raw(
     tool_interceptors: list[ToolCallInterceptor] | None = None,
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
+    heartbeat_interval_seconds: float = 15.0,
 ) -> CallToolResult:
     """Call an MCP tool and return the raw CallToolResult.
 
@@ -374,6 +436,7 @@ async def call_mcp_tool_raw(
         mcp_callbacks=mcp_callbacks,
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors

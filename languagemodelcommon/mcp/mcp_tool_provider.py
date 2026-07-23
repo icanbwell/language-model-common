@@ -304,6 +304,7 @@ class MCPToolProvider:
                 ],
                 server_name=tool_config.name,
                 tool_list_cache=self.tool_list_cache,
+                heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
             )
             tools.append(langchain_tool)
 
@@ -470,6 +471,7 @@ class MCPToolProvider:
                         server_name=tool_config.name,
                         session_pool=session_pool,
                         tool_list_cache=self.tool_list_cache,
+                        heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
                     )
                     for mcp_tool in mcp_tools
                 ]
@@ -1029,6 +1031,7 @@ class MCPToolProvider:
             ],
             session_pool=session_pool,
             tool_list_cache=self.tool_list_cache,
+            heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
         )
 
     async def fetch_mcp_app_embed(
