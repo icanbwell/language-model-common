@@ -24,6 +24,8 @@ from languagemodelcommon.utilities.tool_display_name_mapper import ToolDisplayNa
 class _FakeChatRequestWrapper:
     def __init__(self, *, enable_debug_logging: bool = False) -> None:
         self.enable_debug_logging = enable_debug_logging
+        self.last_tool_end_output: str | None = None
+        self.last_tool_end_is_error: bool = False
 
     def create_sse_message(
         self, *, request_id: str, content: str | None, usage_metadata: Any, source: str
@@ -41,8 +43,17 @@ class _FakeChatRequestWrapper:
         return None
 
     def create_tool_end_sse_event(
-        self, *, request_id: str, tool_name: str, tool_input: Any, runtime_seconds: Any
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        tool_input: Any,
+        runtime_seconds: Any,
+        output: str | None = None,
+        is_error: bool = False,
     ) -> str | None:
+        self.last_tool_end_output = output
+        self.last_tool_end_is_error = is_error
         return None
 
     def create_mcp_app_sse_event(self, **kwargs: Any) -> str | None:
@@ -138,6 +149,52 @@ async def test_tool_end_yields_content(
     ]
 
     assert isinstance(chunks, list)
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert (fake_wrapper.last_tool_end_output or "").strip() == "search results here"
+    assert fake_wrapper.last_tool_end_is_error is False
+
+
+@pytest.mark.asyncio
+async def test_tool_end_surfaces_call_tool_artifact_error(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """CallToolTool reports failures via artifact={'is_error': True} rather than
+    raising, since it catches its own exceptions — handle_tool_end must still
+    flag this as an error on the emitted tool_end SSE event."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "call_tool",
+            "data": {
+                "input": {"name": "propose_skill", "arguments": {}},
+                "output": ToolMessage(
+                    content="Tool call failed:\nSkill validation failed: missing description",
+                    tool_call_id="tc2",
+                    name="call_tool",
+                    artifact={"is_error": True},
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    async for _ in tool_event_handler.handle_tool_end(
+        event=event,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=request_information,
+        tool_start_times=tool_start_times,
+    ):
+        pass
+
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert fake_wrapper.last_tool_end_is_error is True
+    assert "Skill validation failed" in (fake_wrapper.last_tool_end_output or "")
 
 
 @pytest.mark.asyncio
