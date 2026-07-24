@@ -128,3 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 /.idea/
+
+# Claude Code local settings and worktrees
+.claude/settings.local.json
+.claude/worktrees/
