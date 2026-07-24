@@ -431,3 +431,58 @@ class TestStreamResponse:
         assert len(chunks) == 3
         delta = json.loads(chunks[1][len("data: ") :])
         assert delta["delta"] == "Real content\n"
+
+
+class TestCreateToolEndSseEvent:
+    """Tests for create_tool_end_sse_event's runtime/output/error reporting."""
+
+    def test_completed_call_includes_runtime_and_output(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_tool_end_sse_event(
+            request_id="req-1",
+            tool_name="load_skill",
+            tool_input={"skill_name": "pss"},
+            runtime_seconds=1.5,
+            output="Loaded skill pss.",
+            is_error=False,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        item = event["item"]
+        assert item["status"] == "completed"
+        assert item["runtime_seconds"] == 1.5
+        assert item["output"] == "Loaded skill pss."
+        assert item["is_error"] is False
+
+    def test_failed_call_marks_status_failed(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_tool_end_sse_event(
+            request_id="req-1",
+            tool_name="call_tool",
+            tool_input={"name": "propose_skill", "arguments": {}},
+            runtime_seconds=0.8,
+            output="Tool call failed:\nSkill validation failed: missing description",
+            is_error=True,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        item = event["item"]
+        assert item["status"] == "failed"
+        assert item["is_error"] is True
+        assert "Skill validation failed" in item["output"]
+
+    def test_defaults_to_no_output_and_not_error(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_tool_end_sse_event(
+            request_id="req-1",
+            tool_name="load_skill",
+            tool_input=None,
+            runtime_seconds=None,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        item = event["item"]
+        assert item["status"] == "completed"
+        assert item["runtime_seconds"] is None
+        assert item["output"] == ""
+        assert item["is_error"] is False

@@ -67,6 +67,7 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
         enable_debug_logging: bool,
         environment_variables: "LanguageModelCommonEnvironmentVariables",
         emit_task_progress: bool | None = None,
+        emit_tool_heartbeat: bool | None = None,
     ) -> None:
         """
         Wraps an OpenAI /chat/completions request to provide a consistent interface for different request types.
@@ -83,6 +84,11 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
             emit_task_progress
             if emit_task_progress is not None
             else environment_variables.emit_task_progress_in_chat_completions
+        )
+        self._emit_tool_heartbeat: bool = (
+            emit_tool_heartbeat
+            if emit_tool_heartbeat is not None
+            else environment_variables.emit_tool_heartbeat_in_chat_completions
         )
         self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
@@ -276,6 +282,23 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
             content=f"\n[Task progress: {display}]\n",
             usage_metadata=None,
             source="task_progress",
+        )
+
+    @override
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        if not self._emit_tool_heartbeat:
+            return None
+        return self.create_sse_message(
+            request_id=request_id,
+            content=f"\n[Still running {tool_name}... ({elapsed_seconds:.0f}s)]\n",
+            usage_metadata=None,
+            source="tool_heartbeat",
         )
 
     @override
