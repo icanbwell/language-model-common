@@ -19,7 +19,7 @@ class TestResolveAnthropicBedrockMaxTokens:
 
     def test_resolves_known_bedrock_model_id(self) -> None:
         max_tokens = ModelFactory._resolve_anthropic_bedrock_max_tokens(
-            "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+            model_name="us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         )
         assert max_tokens == 64000
 
@@ -32,12 +32,15 @@ class TestResolveAnthropicBedrockMaxTokens:
         ],
     )
     def test_resolves_across_region_prefixes(self, model_name: str) -> None:
-        assert ModelFactory._resolve_anthropic_bedrock_max_tokens(model_name) == 64000
+        assert (
+            ModelFactory._resolve_anthropic_bedrock_max_tokens(model_name=model_name)
+            == 64000
+        )
 
     def test_returns_none_for_unknown_model(self) -> None:
         assert (
             ModelFactory._resolve_anthropic_bedrock_max_tokens(
-                "us.anthropic.some-future-model-v1:0"
+                model_name="us.anthropic.some-future-model-v1:0"
             )
             is None
         )

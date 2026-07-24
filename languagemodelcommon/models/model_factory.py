@@ -152,7 +152,7 @@ class ModelFactory:
         return model_name.startswith(("anthropic.", "us.anthropic."))
 
     @staticmethod
-    def _resolve_anthropic_bedrock_max_tokens(model_name: str) -> int | None:
+    def _resolve_anthropic_bedrock_max_tokens(*, model_name: str) -> int | None:
         """Look up the real max_output_tokens for a Bedrock Anthropic model ID.
 
         ``ChatAnthropicBedrock`` inherits ``ChatAnthropic.set_default_max_tokens``,
@@ -174,6 +174,11 @@ class ModelFactory:
                 _get_default_model_profile,
             )
         except ImportError:
+            logger.warning(
+                "langchain_aws._get_default_model_profile unavailable; "
+                "falling back to unset max_tokens for %s",
+                model_name,
+            )
             return None
         profile = _get_default_model_profile(model_name)
         max_output_tokens = profile.get("max_output_tokens")
@@ -192,8 +197,12 @@ class ModelFactory:
         from pydantic import SecretStr
         import boto3
 
+        model_parameters_dict = dict(model_parameters_dict)
+
         if "max_tokens" not in model_parameters_dict:
-            resolved_max_tokens = self._resolve_anthropic_bedrock_max_tokens(model_name)
+            resolved_max_tokens = self._resolve_anthropic_bedrock_max_tokens(
+                model_name=model_name
+            )
             if resolved_max_tokens is not None:
                 model_parameters_dict["max_tokens"] = resolved_max_tokens
                 logger.info(
