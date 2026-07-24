@@ -149,3 +149,45 @@ async def test_inner_cleanup_exception_after_cancellation_is_not_swallowed() -> 
 
     with pytest.raises(_CleanupError, match="cleanup failed"):
         await task
+
+
+@pytest.mark.asyncio
+async def test_non_runtime_error_from_dispatch_still_cancels_inner_call_task() -> None:
+    """A heartbeat-dispatch exception other than RuntimeError must still
+    cancel and await the in-flight call_task rather than leaving it
+    orphaned, mirroring the cleanup already done for CancelledError.
+    """
+    session = AsyncMock()
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def _hanging_call_tool(
+        name: str,
+        arguments: dict[str, Any],
+        progress_callback: Any = None,
+    ) -> None:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    session.call_tool = _hanging_call_tool
+
+    with patch(
+        "languagemodelcommon.mcp.mcp_client.tool_invocation.adispatch_custom_event",
+        new_callable=AsyncMock,
+        side_effect=ValueError("unexpected dispatch failure"),
+    ):
+        with pytest.raises(ValueError, match="unexpected dispatch failure"):
+            await _execute_tool_call_with_heartbeat(
+                session=session,
+                name="hanging_tool",
+                arguments={},
+                progress_callback=None,
+                server_name="hanging-server",
+                heartbeat_interval_seconds=0.05,
+            )
+
+    await asyncio.wait_for(cancelled.wait(), timeout=1.0)

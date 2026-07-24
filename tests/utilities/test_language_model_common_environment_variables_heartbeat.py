@@ -21,6 +21,22 @@ def test_mcp_tool_heartbeat_interval_seconds_reads_env(
     assert env_vars.mcp_tool_heartbeat_interval_seconds == 5.0
 
 
+@pytest.mark.parametrize(
+    "raw_value, expected",
+    [
+        ("0", 1.0),
+        ("-5", 1.0),
+        ("not-a-number", 15.0),
+    ],
+)
+def test_mcp_tool_heartbeat_interval_seconds_clamps_invalid_values(
+    monkeypatch: pytest.MonkeyPatch, raw_value: str, expected: float
+) -> None:
+    monkeypatch.setenv("MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS", raw_value)
+    env_vars = LanguageModelCommonEnvironmentVariables()
+    assert env_vars.mcp_tool_heartbeat_interval_seconds == expected
+
+
 def test_emit_tool_heartbeat_in_chat_completions_defaults_to_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

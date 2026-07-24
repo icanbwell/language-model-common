@@ -269,11 +269,14 @@ async def _execute_tool_call_with_heartbeat(
                         e,
                         name,
                     )
-    except asyncio.CancelledError:
-        call_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await call_task
-        raise
+    finally:
+        # Ensure call_task is never left orphaned, whether this coroutine
+        # exits via CancelledError, a return, or any other exception raised
+        # from the loop body (e.g. adispatch_custom_event).
+        if not call_task.done():
+            call_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await call_task
 
 
 def _make_execute_tool(
