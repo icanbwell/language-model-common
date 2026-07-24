@@ -98,7 +98,7 @@ class CallToolTool(BaseTool):
         if entry is None:
             return (
                 f"Tool '{name}' not found. Use search_tools to find available tools.",
-                None,
+                {"is_error": True},
             )
 
         try:
@@ -122,9 +122,16 @@ class CallToolTool(BaseTool):
                 session_token=self.session_token,
             )
 
+            # Surface the *inner* tool's own error status (result.isError), not just
+            # transport-level failures — CallToolTool itself never raises for a
+            # rejected/invalid call, so this is the only place that signal exists.
             artifact: dict[str, Any] | None = None
-            if app_embed is not None:
-                artifact = {"mcp_app_embed": app_embed}
+            if app_embed is not None or result.isError:
+                artifact = {}
+                if app_embed is not None:
+                    artifact["mcp_app_embed"] = app_embed
+                if result.isError:
+                    artifact["is_error"] = True
 
             return text, artifact
         except AuthorizationNeededException:
@@ -138,4 +145,4 @@ class CallToolTool(BaseTool):
                 entry.server_name,
                 error_detail,
             )
-            return f"Error calling tool '{name}': {error_detail}", None
+            return f"Error calling tool '{name}': {error_detail}", {"is_error": True}
