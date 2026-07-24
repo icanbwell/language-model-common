@@ -96,7 +96,7 @@ class TestCallToolTool:
         result = await tool._arun(name="nonexistent", arguments={})
         text, artifact = result
         assert "not found" in text
-        assert artifact is None
+        assert artifact == {"is_error": True}
 
     @pytest.mark.asyncio
     async def test_successful_call(self) -> None:
@@ -145,7 +145,35 @@ class TestCallToolTool:
         text, artifact = result
         assert "RuntimeError" in text
         assert "connection lost" in text
-        assert artifact is None
+        assert artifact == {"is_error": True}
+
+    @pytest.mark.asyncio
+    async def test_inner_tool_error_result_sets_is_error_artifact(self) -> None:
+        """The wrapped MCP tool itself can return isError=True without raising —
+        CallToolTool must still flag this as an error via the artifact."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="rejecting_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="validation failed")],
+                isError=True,
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        result = await tool._arun(name="rejecting_tool", arguments={})
+        text, artifact = result
+        assert text.startswith("Tool call failed:")
+        assert artifact == {"is_error": True}
 
     def test_sync_run_raises(self) -> None:
         catalog = ToolCatalog()
