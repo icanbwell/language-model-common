@@ -57,6 +57,15 @@ class _FakeChatRequestWrapper:
     ) -> str:
         return "final"
 
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        return f"heartbeat:{tool_name}:{elapsed_seconds:.0f}"
+
 
 @pytest.fixture()
 def streaming_manager_factory(
@@ -187,3 +196,32 @@ async def test_chain_end_clears_streamed_text_when_chat_model_end_not_called(
 
     # Verify debug output was cleared
     assert manager._stream_debug_output_manager.pop_text() is None
+
+
+@pytest.mark.asyncio
+async def test_custom_event_mcp_tool_heartbeat_forwards_to_wrapper(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=False)
+
+    event = cast(
+        CustomStreamEvent,
+        {
+            "event": "on_custom_event",
+            "name": "mcp_tool_heartbeat",
+            "data": {"tool_name": "propose_skill", "elapsed_seconds": 15.0},
+        },
+    )
+
+    chunks = [
+        chunk
+        async for chunk in manager.handle_langchain_event(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+            tool_start_times={},
+        )
+    ]
+    assert chunks == ["heartbeat:propose_skill:15"]
