@@ -338,8 +338,16 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         tool_name: str,
         tool_input: Dict[str, Any] | None,
         runtime_seconds: float | None,
+        output: str | None = None,
+        is_error: bool = False,
     ) -> str | None:
-        """Emit a ``response.output_item.done`` event with a ``function_call`` item."""
+        """Emit a ``response.output_item.done`` event with a ``function_call`` item.
+
+        Includes ``runtime_seconds`` and the tool's own ``output``/``is_error``
+        so consuming UIs (e.g. baileyai-skills-service's Stream events panel)
+        can show how long a call took and surface failures, rather than only
+        ever seeing a "completed" status with no result.
+        """
         event: Dict[str, Any] = {
             "type": "response.output_item.done",
             "output_index": 0,
@@ -350,7 +358,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "call_id": f"call_{request_id}_{tool_name}",
                 "name": tool_name,
                 "arguments": json.dumps(tool_input) if tool_input else "",
-                "status": "completed",
+                "status": "failed" if is_error else "completed",
+                "runtime_seconds": runtime_seconds,
+                "output": output or "",
+                "is_error": is_error,
             },
         }
         return f"data: {json.dumps(event)}\n\n"
