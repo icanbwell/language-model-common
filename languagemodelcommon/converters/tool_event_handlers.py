@@ -36,6 +36,20 @@ from languagemodelcommon.utilities.tool_display_name_mapper import ToolDisplayNa
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
+# Cap on the tool result/error text forwarded to the response.output_item.done
+# SSE event, so a tool that echoes back large content (e.g. a full skill body)
+# doesn't bloat every trace event; full output remains available via the
+# existing debug-file-writer path for cases that need it.
+TOOL_END_OUTPUT_TRACE_MAX_CHARS = 2000
+
+
+def _truncate_for_trace(
+    text: str, *, max_chars: int = TOOL_END_OUTPUT_TRACE_MAX_CHARS
+) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
+
 
 class ToolEventHandler(StreamContextMixin):
     def __init__(
@@ -161,22 +175,31 @@ class ToolEventHandler(StreamContextMixin):
                     tool_name,
                 )
 
-            tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
-                request_id=request_information.request_id,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                runtime_seconds=runtime_seconds,
-            )
-            if tool_end_event:
-                yield tool_end_event
-
             tool_message_content: str = (
                 convert_message_content_into_string(tool_message=tool_message)
                 if tool_message
                 else ""
             )
-
             artifact: Optional[Any] = tool_message.artifact
+            # tool_message.status only flips to "error" for an uncaught exception;
+            # meta-tools like call_tool catch their own failures and report them via
+            # the artifact instead (see CallToolTool), so check both signals.
+            is_error: bool = tool_message.status == "error" or (
+                isinstance(artifact, dict) and artifact.get("is_error") is True
+            )
+
+            tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
+                request_id=request_information.request_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                runtime_seconds=runtime_seconds,
+                output=_truncate_for_trace(tool_message_content)
+                if tool_message_content
+                else None,
+                is_error=is_error,
+            )
+            if tool_end_event:
+                yield tool_end_event
 
             logger.debug(
                 "Tool %s has artifact of type %s: %s",

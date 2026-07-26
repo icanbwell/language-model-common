@@ -272,6 +272,21 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        """Emit a synthetic heartbeat while a tool call is in flight without
+        reporting real progress.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event in their respective SSE formats.
+        """
+        return None
+
     def create_tool_start_sse_event(
         self,
         *,
@@ -294,8 +309,16 @@ class ChatRequestWrapper(abc.ABC):
         tool_name: str,
         tool_input: dict[str, Any] | None,
         runtime_seconds: float | None,
+        output: str | None = None,
+        is_error: bool = False,
     ) -> str | None:
         """Emit an SSE event when a tool finishes execution.
+
+        ``output`` is the tool's own result/error text (already converted to a
+        plain string and truncated by the caller) and ``is_error`` reflects the
+        underlying ToolMessage's status, so consumers can distinguish a tool
+        that ran to completion from one that failed without having to parse
+        free-text content.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured tool events (e.g. Responses API) override this
