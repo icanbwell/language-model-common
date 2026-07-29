@@ -107,19 +107,20 @@ Depend on abstractions at module and service boundaries. Inject dependencies thr
 
 ### IoC Container (`simple_container`)
 
-This project uses the `simple_container` library for inversion of control. All service registrations live in `languagemodelcommon/container/container_factory.py`.
+This project uses the `simple_container` library for inversion of control. All service registrations live in `baileyai/container/container_factory.py`. FastAPI endpoints receive dependencies via `Annotated[T, Depends(Inject(T))]`.
 
 **Rules:**
-- Register new services as singletons in `LanguageModelCommonContainerFactory.register_services_in_container()` — do not instantiate services directly in calling code.
+- Register new services as singletons in `ContainerFactory.register_services_in_container()` — do not instantiate services directly in routers or endpoint handlers.
+- Use `Inject(T)` from `simple_container.container.inject` with FastAPI's `Depends()` to resolve dependencies in route handlers.
 - When creating a new service class, add its registration to `container_factory.py` and inject its dependencies from the container (not by constructing them inline).
 - Tests can override registrations by constructing a test container with mock implementations.
 
-### Environment Variables (`LanguageModelCommonEnvironmentVariables`)
+### Environment Variables (`BaileyAIEnvironmentVariables`)
 
-Access environment variables through the `LanguageModelCommonEnvironmentVariables` class (`languagemodelcommon/utilities/environment/language_model_common_environment_variables.py`), not via `os.environ` directly. This class is registered in the IoC container.
+Access environment variables through the `BaileyAIEnvironmentVariables` class (`baileyai/utilities/environment/baileyai_environment_variables.py`), not via `os.environ` directly. This class extends `LanguageModelCommonEnvironmentVariables` and is registered in the IoC container.
 
 **Rules:**
-- Add new environment variable access as `@property` methods on `LanguageModelCommonEnvironmentVariables`.
+- Add new environment variable access as `@property` methods on `BaileyAIEnvironmentVariables`.
 - Inject the environment variables class via the container — do not instantiate it inline or call `os.environ.get()` in business logic.
 - Provide sensible defaults in the property when the variable is optional.
 
@@ -252,6 +253,11 @@ Every external call must have an explicit timeout. Retries must use exponential 
 
 ### Circuit Breakers
 Use circuit breaker patterns for synchronous calls to external services. When a dependency is failing, fail fast rather than accumulating blocked threads and cascading the failure upstream.
+
+### No In-Memory Caching
+Services run on multiple workers in production. Each worker is a separate process with its own memory space. Do not use in-process caches (module-level dicts, class-level caches, `@lru_cache`, `@cache`, or similar) for any data that can change at runtime. An in-memory cache in one worker will not reflect updates made by another worker, causing stale reads and inconsistent behavior across requests.
+
+If caching is required, use an external shared store (Redis, database) that all workers read from. The only exception is truly immutable, statically-defined data (e.g., a frozen mapping of enum values defined at import time that never changes for the lifetime of the process).
 
 ### Performance Awareness
 Do not introduce "fetch the entire record" behavior unless it is an explicit, reviewed decision. Be aware of N+1 query patterns, unbounded list fetches, and full-collection scans. Healthcare records can be large - assume they are. In a microservice architecture, a single slow query can cascade through downstream consumers via backpressure.
@@ -439,3 +445,39 @@ Assume clients may receive unknown enum values and new fields at any time. Desig
 ## Code Style
 
 Follow whatever linter, formatter, and static analysis configuration exists in the repo. Do not duplicate what automated tooling already enforces. These instructions are for architectural and design decisions that linters cannot catch.
+
+### `__init__.py` Files
+
+All `__init__.py` files must be empty. Do not use them for re-exports, `__all__` definitions, or convenience imports. Import directly from the defining module instead (e.g., `from package.module import ClassName`, not `from package import ClassName`).
+
+<!-- SYNC:PRESERVE-BELOW (do not edit this line -- content below survives the AGENTS.md sync) -->
+
+## Repo-Specific: ai-health-optimization — Cross-Repo Impact Checklist
+
+<!-- Everything above this line is the org-wide baseline, synced from icanbwell/.github
+     (see CODEOWNERS, PR review by @icanbwell/enterprise-architecture). This section is
+     preserved across syncs automatically by the SYNC:PRESERVE-BELOW sentinel above
+     (icanbwell/.github .github/workflows/sync-agents-md.yml) -- no manual restoration
+     needed on future sync PRs. -->
+
+> Repo-specific context, additive to the baseline above. When changing aggregation, unit handling, validation, scoring, or composition output, check **both ends** of the dependency chain before merging:
+
+- **Upstream — `device-codex`** (GitHub `icanbwell/device-codex`, pip package `devicecodex`): the source of truth for LOINC metadata, unit families, canonical units, valid ranges, and FHIR unit/code normalization (`interop.normalize_fhir_unit`, `is_plausible_unit`, `normalize_code`; `registry.get_metric_by_code`). Fix unit/range/code-alias gaps upstream there rather than patching locally; this repo should consume device-codex, not re-implement it.
+- **Downstream — `bwell-databricks`** (GitHub `icanbwell/bwell-databricks`): within that repo, `bundle/device-data-ingest-job/src/bwell/device_data_ingest_job/health_insights.py` calls `aihealthoptimization.pipeline.create_compositions_from_observations` and writes the returned Compositions to FHIR. It **exact-pins** `aihealthoptimization`/`devicecodex` in that bundle's `requirements.txt`, so scoring/value changes reach production only when the pin is bumped — coordinate that as a score-recompute / data-quality event, not a silent rollout. Keep the pipeline signature and composition keys (`device_metrics` + body-system names) stable.
+
+<!-- SYNC:PRESERVE-BELOW (do not edit this line -- content below survives the AGENTS.md sync) -->
+
+## Repo-Specific: ai-care-gap-scoring — Context
+
+<!-- Everything above this line is the org-wide baseline, synced from icanbwell/.github
+     (see CODEOWNERS, PR review by @icanbwell/enterprise-architecture). This section is
+     preserved across syncs automatically by the SYNC:PRESERVE-BELOW sentinel above
+     (icanbwell/.github .github/workflows/sync-agents-md.yml) -- no manual restoration
+     needed on future sync PRs. -->
+
+> Repo-specific context, additive to the baseline above.
+
+- **Purpose & phase:** Care gap closure **propensity scoring**. Currently **Phase 0 — feasibility**: produce PHI-safe aggregate feasibility/EDA reports (no model, no FHIR writes) to decide GO/NO-GO per measure. First measure: Breast Cancer Screening. See `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+- **Data source — Databricks.** Reads normalized FHIR from `silver.fhir_lite.*` and quality-measure data from `bronze.dqm.*` via **`bwell-databricks-valet`** (`get_spark()` + env→catalog resolution). Catalogs are env-scoped (`nophi_dev` test, `silver_dev`/`silver` dev/prod). Do not read another service's private datastore directly.
+- **PHI is paramount.** Every emitted artifact is an aggregate only (counts/rates/correlations/binned distributions) with small-cell suppression (n<11) and no identifiers or exact dates. An output guard fails the run on PHI-like content. Never write row-level patient data to disk or logs.
+- **Eventual downstream (deferred to a later phase):** propensity scores will be written to the FHIR server as **`RiskAssessment`** resources, pending a new FDR ("Care Gap Propensity Score"). Nothing is written to FHIR in Phase 0.
