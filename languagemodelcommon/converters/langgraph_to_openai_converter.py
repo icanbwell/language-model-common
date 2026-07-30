@@ -1,5 +1,7 @@
+import asyncio
 import botocore
 import logging
+import random
 import re
 import traceback
 import uuid
@@ -50,6 +52,7 @@ from languagemodelcommon.converters.stream_debug_output_manager import (
 )
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
+from languagemodelcommon.exceptions.rate_limit_exception import RateLimitException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.state.messages_state import MyMessagesState
@@ -132,6 +135,53 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 return True
             current = current.__cause__ or current.__context__
         return False
+
+    _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
+        "too many tokens",
+        "rate limit",
+        "rate_limit",
+        "error code: 429",
+    )
+
+    @staticmethod
+    def _is_rate_limit_error(exception: BaseException) -> bool:
+        """Check if any exception in the cause chain is an upstream rate limit (HTTP 429).
+
+        Detects structurally rather than importing a specific vendor SDK: a
+        ``status_code``/``code`` of 429, a class named ``*RateLimitError*``
+        (Anthropic, OpenAI), or a recognizable message pattern.
+        """
+        current: BaseException | None = exception
+        while current is not None:
+            if (
+                getattr(current, "status_code", None) == 429
+                or getattr(current, "code", None) == 429
+            ):
+                return True
+            if "ratelimiterror" in current.__class__.__name__.lower():
+                return True
+            msg = str(current).lower()
+            if any(p in msg for p in LangGraphToOpenAIConverter._RATE_LIMIT_PATTERNS):
+                return True
+            current = current.__cause__ or current.__context__
+        return False
+
+    @staticmethod
+    def _get_retry_after_seconds(exception: BaseException) -> float | None:
+        """Extract a ``Retry-After`` hint (seconds) from the exception's response, if present."""
+        current: BaseException | None = exception
+        while current is not None:
+            response = getattr(current, "response", None)
+            headers = getattr(response, "headers", None)
+            if headers is not None:
+                retry_after = headers.get("retry-after") or headers.get("Retry-After")
+                if retry_after is not None:
+                    try:
+                        return float(retry_after)
+                    except (TypeError, ValueError):
+                        pass
+            current = current.__cause__ or current.__context__
+        return None
 
     @staticmethod
     def _find_cause(
@@ -693,50 +743,101 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             config=config,
         )
 
-        try:
-            async for event in self._attempt_stream(
-                messages=messages,
-                compiled_state_graph=compiled_state_graph,
-                request_information=request_information,
-                config=config,
-                state=state,
-            ):
-                yield event
-        except BaileyException as e:
-            if "context window" not in str(e):
-                raise
-
-            if not self.environment_variables.context_compaction_enabled:
-                raise
-
-            # Compact and retry once
-            compacted_messages = self._context_compactor.compact(messages=messages)
-            if compacted_messages is messages or compacted_messages == messages:
-                raise
-
-            logger.info(
-                "Retrying after compaction. request_id=%s original_messages=%d compacted_messages=%d",
-                request_information.request_id,
-                len(messages),
-                len(compacted_messages),
-            )
-
+        rate_limit_attempt = 0
+        while True:
+            yielded_any = False
             try:
                 async for event in self._attempt_stream(
-                    messages=compacted_messages,
+                    messages=messages,
                     compiled_state_graph=compiled_state_graph,
                     request_information=request_information,
                     config=config,
-                    state=None,
+                    state=state,
                 ):
+                    yielded_any = True
                     yield event
-            except BaileyException:
-                raise
-            except Exception as retry_error:
-                raise BaileyException(
-                    "The conversation input exceeds the model's context window "
-                    "even after compaction. Please start a new conversation."
-                ) from retry_error
+                return
+            except RateLimitException as e:
+                # Only safe to retry before the first token is streamed to the
+                # client; once partial output is sent, re-running would duplicate it.
+                if (
+                    yielded_any
+                    or not self.environment_variables.rate_limit_retry_enabled
+                    or rate_limit_attempt
+                    >= self.environment_variables.rate_limit_max_retries
+                ):
+                    raise
+
+                delay_seconds = self._compute_rate_limit_backoff(
+                    attempt=rate_limit_attempt,
+                    retry_after_seconds=e.retry_after_seconds,
+                )
+                logger.warning(
+                    "Retrying after rate limit before first token. "
+                    "request_id=%s attempt=%d delay_seconds=%.2f",
+                    request_information.request_id,
+                    rate_limit_attempt + 1,
+                    delay_seconds,
+                )
+                await asyncio.sleep(delay_seconds)
+                rate_limit_attempt += 1
+                continue
+            except BaileyException as e:
+                if "context window" not in str(e):
+                    raise
+
+                if not self.environment_variables.context_compaction_enabled:
+                    raise
+
+                # Compact and retry once
+                compacted_messages = self._context_compactor.compact(messages=messages)
+                if compacted_messages is messages or compacted_messages == messages:
+                    raise
+
+                logger.info(
+                    "Retrying after compaction. request_id=%s original_messages=%d compacted_messages=%d",
+                    request_information.request_id,
+                    len(messages),
+                    len(compacted_messages),
+                )
+
+                try:
+                    async for event in self._attempt_stream(
+                        messages=compacted_messages,
+                        compiled_state_graph=compiled_state_graph,
+                        request_information=request_information,
+                        config=config,
+                        state=None,
+                    ):
+                        yield event
+                    return
+                except BaileyException:
+                    raise
+                except Exception as retry_error:
+                    raise BaileyException(
+                        "The conversation input exceeds the model's context window "
+                        "even after compaction. Please start a new conversation."
+                    ) from retry_error
+
+    def _compute_rate_limit_backoff(
+        self,
+        *,
+        attempt: int,
+        retry_after_seconds: float | None,
+    ) -> float:
+        """Compute backoff delay for a rate-limit retry.
+
+        Honors an upstream ``Retry-After`` hint when present; otherwise uses
+        exponential backoff with full jitter based on the configured base delay.
+        """
+        if retry_after_seconds is not None and retry_after_seconds > 0:
+            return retry_after_seconds
+        base_delay_seconds = (
+            self.environment_variables.rate_limit_retry_base_delay_ms / 1000.0
+        )
+        exponential_delay = base_delay_seconds * (2**attempt)
+        # Full jitter: random point in [0, exponential_delay] avoids thundering herd.
+        return random.uniform(0, exponential_delay)
 
     async def _attempt_stream(
         self,
@@ -799,6 +900,17 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 raise BaileyException(
                     "The graph reached its recursion limit before completing. "
                     "Please try again with a more focused request."
+                ) from e
+            if self._is_rate_limit_error(e):
+                logger.warning(
+                    "Rate limited while streaming. request_id=%s message_count=%d error=%s",
+                    request_information.request_id,
+                    len(messages),
+                    e,
+                )
+                raise RateLimitException(
+                    f"Upstream model rate limit exceeded: {e}",
+                    retry_after_seconds=self._get_retry_after_seconds(e),
                 ) from e
             if self._is_timeout_exception(e):
                 logger.warning(

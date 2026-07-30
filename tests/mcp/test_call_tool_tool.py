@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from langchain_core.tools import ToolException
 from mcp.types import (
     CallToolResult,
     EmbeddedResource,
@@ -93,10 +94,8 @@ class TestCallToolTool:
     async def test_tool_not_found(self) -> None:
         catalog = ToolCatalog()
         tool = _make_call_tool_tool(catalog=catalog)
-        result = await tool._arun(name="nonexistent", arguments={})
-        text, artifact = result
-        assert "not found" in text
-        assert artifact is None
+        with pytest.raises(ToolException, match="not found"):
+            await tool._arun(name="nonexistent", arguments={})
 
     @pytest.mark.asyncio
     async def test_successful_call(self) -> None:
@@ -141,11 +140,83 @@ class TestCallToolTool:
         )
 
         tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
-        result = await tool._arun(name="failing_tool")
-        text, artifact = result
-        assert "RuntimeError" in text
-        assert "connection lost" in text
-        assert artifact is None
+        with pytest.raises(ToolException) as exc_info:
+            await tool._arun(name="failing_tool")
+        assert "RuntimeError" in str(exc_info.value)
+        assert "connection lost" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_inner_tool_error_result_raises_tool_exception(self) -> None:
+        """The wrapped MCP tool itself can return isError=True without raising —
+        CallToolTool must turn that into a ToolException so the resulting
+        ToolMessage carries status="error" instead of looking like a success."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="rejecting_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="validation failed")],
+                isError=True,
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        with pytest.raises(ToolException) as exc_info:
+            await tool._arun(name="rejecting_tool", arguments={})
+        assert str(exc_info.value).startswith("Tool call failed:")
+        assert "validation failed" in str(exc_info.value)
+        # fetch_mcp_app_embed is a no-op on the error path
+        mock_provider.fetch_mcp_app_embed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_inner_tool_error_result_sets_tool_message_status_error(
+        self,
+    ) -> None:
+        """End-to-end: going through the real BaseTool.arun (not just _arun
+        directly) must produce a ToolMessage with status="error", since that's
+        the actual signal the calling model/harness reacts to."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="rejecting_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="validation failed")],
+                isError=True,
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = CallToolTool.model_construct(
+            name="call_tool",
+            description="Call a specific tool by name with the given arguments.",
+            args_schema=CallToolInput,
+            response_format="content_and_artifact",
+            handle_tool_error=True,
+            catalog=catalog,
+            mcp_tool_provider=mock_provider,
+            auth_interceptor=MagicMock(),
+        )
+        message = await tool.arun(
+            tool_input={"name": "rejecting_tool", "arguments": {}},
+            tool_call_id="call-1",
+        )
+        assert message.status == "error"
+        assert "validation failed" in message.content
 
     def test_sync_run_raises(self) -> None:
         catalog = ToolCatalog()

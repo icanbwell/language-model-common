@@ -7,7 +7,7 @@ after discovering tools via search_tools.
 import logging
 from typing import Any, Literal, Type
 
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, ToolException
 from mcp.types import (
     CallToolResult,
     TextContent,
@@ -75,6 +75,10 @@ class CallToolTool(BaseTool):
     )
     args_schema: Type[BaseModel] = CallToolInput
     response_format: Literal["content", "content_and_artifact"] = "content_and_artifact"
+    # Required so a raised ToolException becomes a ToolMessage with status="error"
+    # instead of re-raising (BaseTool's default). Without this, a failed MCP tool
+    # call is indistinguishable from a successful one to the calling model.
+    handle_tool_error: bool = True
 
     catalog: ToolCatalog
     mcp_tool_provider: MCPToolProvider
@@ -96,9 +100,8 @@ class CallToolTool(BaseTool):
 
         entry = self.catalog.get_tool(name)
         if entry is None:
-            return (
-                f"Tool '{name}' not found. Use search_tools to find available tools.",
-                None,
+            raise ToolException(
+                f"Tool '{name}' not found. Use search_tools to find available tools."
             )
 
         try:
@@ -110,6 +113,15 @@ class CallToolTool(BaseTool):
                 session_pool=self.session_pool,
             )
             text = _call_tool_result_to_text(result)
+
+            # Surface the *inner* tool's own error status (result.isError), not just
+            # transport-level failures — MCP servers report rejected/invalid calls
+            # this way rather than raising, so this is the only place that signal
+            # exists. Raising here (with handle_tool_error=True) is what makes the
+            # resulting ToolMessage carry status="error" instead of looking like an
+            # ordinary successful call to the model.
+            if result.isError:
+                raise ToolException(text)
 
             app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
                 tool=entry.tool,
@@ -130,6 +142,8 @@ class CallToolTool(BaseTool):
         except AuthorizationNeededException:
             # Auth exceptions must propagate so the user sees login links
             raise
+        except ToolException:
+            raise
         except Exception as e:
             error_detail = ExceptionLogger.format_exception_message(e)
             logger.error(
@@ -138,4 +152,4 @@ class CallToolTool(BaseTool):
                 entry.server_name,
                 error_detail,
             )
-            return f"Error calling tool '{name}': {error_detail}", None
+            raise ToolException(f"Error calling tool '{name}': {error_detail}") from e

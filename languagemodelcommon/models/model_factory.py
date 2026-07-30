@@ -151,6 +151,39 @@ class ModelFactory:
     def _is_anthropic_model(model_name: str) -> bool:
         return model_name.startswith(("anthropic.", "us.anthropic."))
 
+    @staticmethod
+    def _resolve_anthropic_bedrock_max_tokens(*, model_name: str) -> int | None:
+        """Look up the real max_output_tokens for a Bedrock Anthropic model ID.
+
+        ``ChatAnthropicBedrock`` inherits ``ChatAnthropic.set_default_max_tokens``,
+        which resolves an unset ``max_tokens`` from ``langchain_anthropic``'s own
+        model-profile registry — keyed by bare Anthropic API names (e.g.
+        ``claude-sonnet-4-5-20250929``), not Bedrock cross-region inference
+        profile IDs (e.g. ``us.anthropic.claude-sonnet-4-5-20250929-v1:0``). For
+        every Bedrock-prefixed ID that lookup misses, silently capping output at
+        ``_FALLBACK_MAX_OUTPUT_TOKENS`` (4096) even when the model supports far
+        more (64000 for Claude Sonnet 4.5) — which truncates long tool-call
+        arguments (e.g. a full skill/document body) mid-generation.
+        ``langchain_aws``'s own Bedrock-aware profile registry (used elsewhere,
+        e.g. by ``ChatAnthropicBedrock._set_model_profile``, but too late to
+        affect ``max_tokens``) does have entries keyed by the full Bedrock ID, so
+        look the real limit up there and pass it through explicitly.
+        """
+        try:
+            from langchain_aws.chat_models.anthropic import (
+                _get_default_model_profile,
+            )
+        except ImportError:
+            logger.warning(
+                "langchain_aws._get_default_model_profile unavailable; "
+                "falling back to unset max_tokens for %s",
+                model_name,
+            )
+            return None
+        profile = _get_default_model_profile(model_name)
+        max_output_tokens = profile.get("max_output_tokens")
+        return int(max_output_tokens) if max_output_tokens else None
+
     def _create_anthropic_bedrock_model(
         self,
         *,
@@ -163,6 +196,21 @@ class ModelFactory:
         from langchain_aws import ChatAnthropicBedrock
         from pydantic import SecretStr
         import boto3
+
+        model_parameters_dict = dict(model_parameters_dict)
+
+        if "max_tokens" not in model_parameters_dict:
+            resolved_max_tokens = self._resolve_anthropic_bedrock_max_tokens(
+                model_name=model_name
+            )
+            if resolved_max_tokens is not None:
+                model_parameters_dict["max_tokens"] = resolved_max_tokens
+                logger.info(
+                    "Resolved max_tokens=%d for Bedrock model %s from profile "
+                    "(overriding langchain_anthropic's unprefixed-lookup default)",
+                    resolved_max_tokens,
+                    model_name,
+                )
 
         if thinking_budget and thinking_budget > 0:
             model_parameters_dict["thinking"] = {

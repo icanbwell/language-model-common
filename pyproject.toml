@@ -41,7 +41,8 @@ dependencies = [
     "fsspec>=2026.2.0",
     "authlib>=1.6.5",
     "langchain-google-genai>=4.1.3",
-    "py-key-value-aio>=0.4.4"
+    "py-key-value-aio>=0.4.4",
+    "PyJWT[crypto]>=2.8.0"
 ]
 
 [project.urls]
@@ -107,6 +108,7 @@ module = ["setuptools.*"]
 ignore_missing_imports = true
 
 [tool.uv]
+exclude-newer = "2 days"
 index-strategy = "unsafe-best-match"
 
 [[tool.uv.index]]

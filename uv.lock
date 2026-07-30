@@ -7,6 +7,10 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P2D"
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
@@ -1671,6 +1675,7 @@ dependencies = [
     { name = "openai" },
     { name = "py-key-value-aio" },
     { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pypdf" },
     { name = "simple-container" },
     { name = "tiktoken" },
@@ -1728,6 +1733,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.5.0" },
     { name = "py-key-value-aio", specifier = ">=0.4.4" },
     { name = "pydantic", specifier = ">=2.0,<3.0.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
     { name = "pypdf", specifier = ">=6.6.0" },
     { name = "simple-container", specifier = ">=1.0.2" },
     { name = "tiktoken", specifier = ">=0.12.0" },

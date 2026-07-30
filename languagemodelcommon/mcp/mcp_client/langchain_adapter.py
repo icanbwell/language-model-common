@@ -62,6 +62,7 @@ def mcp_tool_to_langchain_tool(
     server_name: str | None = None,
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
+    heartbeat_interval_seconds: float = 15.0,
 ) -> BaseTool:
     """Convert an MCP Tool to a LangChain BaseTool.
 
@@ -84,6 +85,7 @@ def mcp_tool_to_langchain_tool(
         mcp_callbacks=mcp_callbacks,
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors

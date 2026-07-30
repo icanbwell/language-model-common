@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_STREAMING_BUFFER_FLUSH_INTERVAL_SECONDS = 0.05
 DEFAULT_LANGGRAPH_MAX_CONCURRENCY = 4
 DEFAULT_LANGGRAPH_RECURSION_LIMIT = 100
+DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 # Default generic error message when not exposing technical details
 DEFAULT_GENERIC_ERROR_MESSAGE = (
@@ -236,6 +237,21 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("CONTEXT_COMPACTION_ENABLED", "true"))
 
     @property
+    def rate_limit_retry_enabled(self) -> bool:
+        """When True, retry upstream model rate limits (HTTP 429) before surfacing them."""
+        return self.str2bool(os.environ.get("RATE_LIMIT_RETRY_ENABLED", "true"))
+
+    @property
+    def rate_limit_max_retries(self) -> int:
+        """Maximum number of retries for an upstream rate limit before giving up."""
+        return int(os.environ.get("RATE_LIMIT_MAX_RETRIES", "3"))
+
+    @property
+    def rate_limit_retry_base_delay_ms(self) -> int:
+        """Base delay in milliseconds for rate-limit retry exponential backoff."""
+        return int(os.environ.get("RATE_LIMIT_RETRY_BASE_DELAY_MS", "500"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
@@ -273,6 +289,34 @@ class LanguageModelCommonEnvironmentVariables(
     def tool_call_timeout_seconds(self) -> int:
         """Timeout in seconds for tool calls."""
         return int(os.environ.get("TOOL_CALL_TIMEOUT_SECONDS", "600"))
+
+    @property
+    def mcp_tool_heartbeat_interval_seconds(self) -> float:
+        """Interval in seconds between synthetic heartbeat events emitted
+        while an MCP tool call is in flight without reporting progress."""
+        value = os.environ.get("MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS")
+        if value is None:
+            return DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS
+        try:
+            parsed = float(value)
+            return max(1.0, parsed)
+        except ValueError:
+            logger.warning(
+                "Invalid MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS value '%s'; using default=%s",
+                value,
+                DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS,
+            )
+            return DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS
+
+    @property
+    def emit_tool_heartbeat_in_chat_completions(self) -> bool:
+        """When True, synthetic MCP tool heartbeats are emitted as content
+        deltas in the Chat Completions streaming format. Separate from
+        emit_task_progress_in_chat_completions so enabling one does not
+        change the volume/behavior of the other."""
+        return self.str2bool(
+            os.environ.get("EMIT_TOOL_HEARTBEAT_IN_CHAT_COMPLETIONS", "false")
+        )
 
     @property
     def app_login_uri(self) -> str:
@@ -358,6 +402,18 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def github_token(self) -> Optional[str]:
         return os.environ.get("GITHUB_TOKEN")
+
+    @property
+    def github_app_id(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_ID")
+
+    @property
+    def github_app_private_key(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_PRIVATE_KEY")
+
+    @property
+    def github_app_installation_id(self) -> Optional[str]:
+        return os.environ.get("GITHUB_APP_INSTALLATION_ID")
 
     @property
     def plugins_mcp_server(self) -> Optional[str]:

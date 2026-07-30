@@ -91,7 +91,18 @@ class McpToolListStore:
 
     async def clear(self) -> None:
         if isinstance(self._store, BaseDestroyCollectionStore):
-            await self._store.destroy_collection(collection=self._collection)
+            try:
+                await self._store.destroy_collection(collection=self._collection)
+            except KeyError:
+                # py-key-value-aio's MongoDBStore lazy-registers collections in
+                # _collections_by_name on first read/write and raises KeyError
+                # from destroy_collection when the collection was never touched.
+                # Treat as a no-op: nothing was stored, nothing to clear.
+                logger.debug(
+                    "Collection %s not initialized; clear is a no-op",
+                    self._collection,
+                )
+                return
             self._store._setup_collection_complete[self._collection] = False
         else:
             logger.warning(

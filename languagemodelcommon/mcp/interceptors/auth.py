@@ -54,24 +54,8 @@ class AuthMcpCallInterceptor:
         self._tool_configs_by_server_name: Dict[str, AgentConfig] = {
             tc.name: tc for tc in tool_configs
         }
-        self._static_auth_information = auth_information
-        self._static_headers = headers
-
-    @property
-    def _headers(self) -> Dict[str, str]:
-        if self._static_headers is not None:
-            return self._static_headers
-        from languagemodelcommon.context.request_context import get_request_context
-
-        return get_request_context().headers
-
-    @property
-    def _auth_information(self) -> AuthInformation:
-        if self._static_auth_information is not None:
-            return self._static_auth_information
-        from languagemodelcommon.context.request_context import get_request_context
-
-        return get_request_context().auth_information
+        self._auth_information = auth_information or AuthInformation(redirect_uri="")
+        self._headers: Dict[str, str] = headers or {}
 
     async def resolve_auth_header_for_discovery(
         self, tool_config: AgentConfig

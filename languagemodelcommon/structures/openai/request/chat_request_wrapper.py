@@ -217,6 +217,20 @@ class ChatRequestWrapper(abc.ABC):
     @abstractmethod
     def parallel_tool_calls(self) -> Optional[bool]: ...
 
+    @property
+    @abstractmethod
+    def tool_choice(self) -> str | dict[str, Any] | None:
+        """Tool-selection control for this request.
+
+        Mirrors the OpenAI ``tool_choice`` parameter. ``"none"`` instructs the
+        agent layer to bind no tools to the LLM for this request; ``"auto"``
+        (or unset) leaves the default tool-binding behavior in place. A dict
+        (e.g. ``{"type": "function", "function": {"name": "lookup"}}``) pins a
+        specific tool. The union covers both the Chat Completions and Responses
+        API shapes without further widening.
+        """
+        ...
+
     def set_effective_parallel_tool_calls(self, *, enabled: bool) -> None:
         """Store the resolved parallel tool calls flag for response metadata."""
         self._effective_parallel_tool_calls = enabled
@@ -258,6 +272,21 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_tool_heartbeat_sse_event(
+        self,
+        *,
+        request_id: str,
+        tool_name: str,
+        elapsed_seconds: float,
+    ) -> str | None:
+        """Emit a synthetic heartbeat while a tool call is in flight without
+        reporting real progress.
+
+        The default implementation returns None (no-op).  Subclasses override
+        to emit the event in their respective SSE formats.
+        """
+        return None
+
     def create_tool_start_sse_event(
         self,
         *,
@@ -280,8 +309,16 @@ class ChatRequestWrapper(abc.ABC):
         tool_name: str,
         tool_input: dict[str, Any] | None,
         runtime_seconds: float | None,
+        output: str | None = None,
+        is_error: bool = False,
     ) -> str | None:
         """Emit an SSE event when a tool finishes execution.
+
+        ``output`` is the tool's own result/error text (already converted to a
+        plain string and truncated by the caller) and ``is_error`` reflects the
+        underlying ToolMessage's status, so consumers can distinguish a tool
+        that ran to completion from one that failed without having to parse
+        free-text content.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured tool events (e.g. Responses API) override this

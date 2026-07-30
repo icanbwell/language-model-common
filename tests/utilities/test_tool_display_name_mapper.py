@@ -201,3 +201,36 @@ class TestRegisterFromTools:
         assert mapper.get_display_name(tool_name="tool_a") == "🛠️ Tool Alpha"
         assert mapper.get_display_name(tool_name="tool_b") == "🛠️ Tool Beta"
         assert "Tool C" in mapper.get_display_name(tool_name="tool_c")
+
+
+class TestGetMessageForToolFormat:
+    """Format invariants for streamed tool-progress messages.
+
+    A single `\\n` is a Markdown soft break and collapses to a space in
+    chat UIs, so the wrapper must use `\\n\\n` on both sides to render
+    the tool-progress message on its own paragraph.
+    """
+
+    def test_emoji_message_uses_paragraph_break_wrap(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"load_skill": "🧠 Loading skill: {skill_name}"}
+        )
+        message = mapper.get_message_for_tool(
+            tool_name="load_skill", tool_input={"skill_name": "scheduling"}
+        )
+        assert message == "\n\n🧠 Loading skill: scheduling.\n\n"
+
+    def test_non_emoji_message_uses_paragraph_break_wrap(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"plain_tool": "Plain message"}
+        )
+        message = mapper.get_message_for_tool(tool_name="plain_tool", tool_input={})
+        assert message == "\n\n🛠️ Plain message.\n\n"
+
+    def test_empty_template_returns_empty_string(self) -> None:
+        mapper = ToolDisplayNameMapper(name_to_display_name={"silent_tool": ""})
+        assert mapper.get_message_for_tool(tool_name="silent_tool", tool_input={}) == ""
+
+    def test_missing_tool_name_returns_empty_string(self) -> None:
+        mapper = ToolDisplayNameMapper()
+        assert mapper.get_message_for_tool(tool_name=None, tool_input={}) == ""

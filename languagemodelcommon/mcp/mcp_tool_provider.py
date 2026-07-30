@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 import httpx
 from httpx import HTTPStatusError
+from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.tools import BaseTool
 from mcp import ClientSession
 from mcp.types import (
@@ -210,6 +211,24 @@ class MCPToolProvider:
         logger.info(
             f"MCP Tool Progress - Server: {context.server_name}, Progress: {progress}, Total: {total}, Message: {message}"
         )
+        try:
+            await adispatch_custom_event(
+                "mcp_task_progress",
+                {
+                    "task_id": "",
+                    "status": f"{progress:g}/{total:g}" if total else f"{progress:g}",
+                    "message": message,
+                    "server_name": context.server_name,
+                    "tool_name": context.tool_name,
+                },
+            )
+        except RuntimeError as e:
+            logger.debug(
+                "Skipping mcp_task_progress event dispatch: %s (server=%s, tool=%s)",
+                e,
+                context.server_name,
+                context.tool_name,
+            )
 
     def _build_connection_config(self, tool_config: AgentConfig) -> MCPConnectionConfig:
         """Build an MCPConnectionConfig from an AgentConfig."""
@@ -285,6 +304,7 @@ class MCPToolProvider:
                 ],
                 server_name=tool_config.name,
                 tool_list_cache=self.tool_list_cache,
+                heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
             )
             tools.append(langchain_tool)
 
@@ -298,7 +318,7 @@ class MCPToolProvider:
         self,
         *,
         tool_config: AgentConfig,
-        headers: Dict[str, str] | None = None,
+        headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
         session_pool: McpSessionPool | None = None,
     ) -> List[BaseTool]:
@@ -308,16 +328,11 @@ class MCPToolProvider:
         Args:
             tool_config: An AgentConfig instance containing the tool's configuration.
             headers: A dictionary of headers to include in the request, such as Authorization.
-                If None, reads from request context contextvar.
             auth_interceptor: An AuthMcpCallInterceptor instance.
             session_pool: An optional session pool instance.
         Returns:
             A list of BaseTool instances retrieved from the MCP.
         """
-        if headers is None:
-            from languagemodelcommon.context.request_context import get_request_context
-
-            headers = get_request_context().headers
         if tool_config.lazy_load:
             return self.get_lazy_tools(
                 tool_config=tool_config,
@@ -456,6 +471,7 @@ class MCPToolProvider:
                         server_name=tool_config.name,
                         session_pool=session_pool,
                         tool_list_cache=self.tool_list_cache,
+                        heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
                     )
                     for mcp_tool in mcp_tools
                 ]
@@ -733,15 +749,11 @@ class MCPToolProvider:
         self,
         *,
         tools: list[AgentConfig],
-        headers: Dict[str, str] | None = None,
+        headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
         session_pool: McpSessionPool | None = None,
     ) -> list[BaseTool]:
         """Fetch tools from all configured MCP servers concurrently."""
-        if headers is None:
-            from languagemodelcommon.context.request_context import get_request_context
-
-            headers = get_request_context().headers
         url_tools = [t for t in tools if t.url is not None]
         if not url_tools:
             return []
@@ -977,7 +989,7 @@ class MCPToolProvider:
     def create_tool_resolver(
         self,
         *,
-        headers: Dict[str, str] | None = None,
+        headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
     ) -> ToolResolverProtocol:
         """Create a resolver that lazily fetches tools from MCP servers.
@@ -1019,6 +1031,7 @@ class MCPToolProvider:
             ],
             session_pool=session_pool,
             tool_list_cache=self.tool_list_cache,
+            heartbeat_interval_seconds=self.environment_variables.mcp_tool_heartbeat_interval_seconds,
         )
 
     async def fetch_mcp_app_embed(
@@ -1124,20 +1137,12 @@ class _BoundToolResolver:
         self,
         *,
         provider: MCPToolProvider,
-        headers: Dict[str, str] | None = None,
+        headers: Dict[str, str],
         auth_interceptor: AuthMcpCallInterceptor,
     ) -> None:
         self._provider = provider
-        self._static_headers = headers
+        self._headers = headers
         self._auth_interceptor = auth_interceptor
-
-    @property
-    def _headers(self) -> Dict[str, str]:
-        if self._static_headers is not None:
-            return self._static_headers
-        from languagemodelcommon.context.request_context import get_request_context
-
-        return get_request_context().headers
 
     async def resolve_tools(
         self,
