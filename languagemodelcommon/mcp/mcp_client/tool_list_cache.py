@@ -20,7 +20,8 @@ class ToolListStoreProtocol(Protocol):
     """Async persistent backend for tool list caching.
 
     Implementations store serialized MCP tool lists keyed by server URL.
-    The store does not expire entries — callers must explicitly clear.
+    Entries may carry a TTL (implementation-defined) and can also be
+    cleared explicitly on demand.
     """
 
     async def get_tools(self, *, key: str) -> list[MCPTool] | None: ...

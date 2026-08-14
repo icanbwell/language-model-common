@@ -1,8 +1,9 @@
 """Persistent store for MCP tool list caching.
 
 Uses py-key-value-aio's store abstraction to persist tool schemas across
-process restarts. Entries never expire — they persist until explicitly
-cleared (e.g. via /reload).
+process restarts. Entries expire after ``ttl_seconds`` (so a server's tool
+list is periodically rediscovered) and can also be cleared early on demand
+(e.g. via /reload).
 """
 
 import logging
@@ -26,9 +27,16 @@ class McpToolListStore:
 
     SCHEMA_VERSION = 1
 
-    def __init__(self, *, store: BaseStore, collection: str) -> None:
+    def __init__(
+        self,
+        *,
+        store: BaseStore,
+        collection: str,
+        ttl_seconds: float | None = None,
+    ) -> None:
         self._store = store
         self._collection = collection
+        self._ttl_seconds = ttl_seconds
 
     async def get_tools(self, *, key: str) -> list[MCPTool] | None:
         result: dict[str, Any] | None = await self._store.get(
@@ -84,7 +92,9 @@ class McpToolListStore:
             "schema_version": self.SCHEMA_VERSION,
             "tools": [t.model_dump(mode="python") for t in tools],
         }
-        await self._store.put(key, value, collection=self._collection)
+        await self._store.put(
+            key, value, collection=self._collection, ttl=self._ttl_seconds
+        )
 
     async def invalidate(self, *, key: str) -> None:
         await self._store.delete(key, collection=self._collection)
