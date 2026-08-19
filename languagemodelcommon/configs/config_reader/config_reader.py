@@ -494,6 +494,18 @@ class ConfigReader:
     def _resolve_override_config_path(
         *, config_path: str, client_id: str
     ) -> str | None:
+        """Resolve the per-client override config path for *client_id*.
+
+        SECURITY: ``client_id`` originates from an untrusted, caller-supplied
+        value (e.g. an HTTP header) and is used to build a filesystem/URI
+        path. The allowlist check below and the ``resolve()``/``relative_to()``
+        containment check further down are both load-bearing — together they
+        prevent a path-traversal / local-file-inclusion vulnerability (e.g.
+        ``client_id="../../etc/passwd"``). Do not remove either check as
+        "unnecessary defensive code": a prior version of this logic (in the
+        baileyai repo, before it moved here) was flagged by a security scan
+        for exactly this class of bug.
+        """
         if not client_id:
             return None
         # Validate client_id to prevent path traversal
@@ -511,7 +523,9 @@ class ConfigReader:
             )
         config_folder = Path(config_path)
         override_folder = config_folder.joinpath("clients", client_id)
-        # Ensure the resolved path is within the config directory
+        # Ensure the resolved path is within the config directory. Defense
+        # in depth alongside the allowlist check above — see this method's
+        # docstring for why both checks must stay.
         try:
             override_folder.resolve().relative_to(config_folder.resolve())
         except ValueError:
@@ -526,7 +540,13 @@ class ConfigReader:
 
     @staticmethod
     def _is_valid_client_id(client_id: str) -> bool:
-        """Validate that client_id contains only safe characters."""
+        """Validate that client_id contains only safe characters.
+
+        ``client_id`` is untrusted input used to build a filesystem/URI
+        path (see ``_resolve_override_config_path``). This allowlist blocks
+        path-traversal sequences (``..``, ``/``) before the value ever
+        reaches a path join.
+        """
         import re
 
         return bool(re.match(r"^[a-zA-Z0-9_-]+$", client_id))
