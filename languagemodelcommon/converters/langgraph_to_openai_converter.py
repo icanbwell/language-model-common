@@ -292,6 +292,36 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 content=message,
                 source="error",
             )
+        except RateLimitException as e:
+            # Raised once _stream_graph_with_messages_async has exhausted its
+            # retry-with-backoff budget (or the 429 arrived mid-stream, after
+            # partial output was already sent, where retrying would duplicate
+            # content). Give the user a rate-limit-specific message instead of
+            # the generic fallback below.
+            wait_hint = (
+                f" (about {round(e.retry_after_seconds)}s)"
+                if e.retry_after_seconds
+                else ""
+            )
+            message = (
+                "I'm getting a lot of requests right now. "
+                f"Please wait a moment{wait_hint} and try again."
+            )
+            logger.warning(
+                "Rate limit retries exhausted in stream. request_id=%s error=%s",
+                request_id,
+                e,
+            )
+            yield chat_request_wrapper.create_sse_message(
+                request_id=request_id,
+                usage_metadata=None,
+                content=message,
+                source="error",
+            )
+            yield chat_request_wrapper.create_final_sse_message(
+                request_id=request_id, usage_metadata=None, source="final"
+            )
+            return
         except AuthorizationNeededException as e:
             # Show the login prompt to the user and stop processing.  The
             # on_tool_error handler may have already streamed this, but it is
