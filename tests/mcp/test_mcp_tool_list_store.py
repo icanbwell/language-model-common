@@ -87,3 +87,26 @@ class TestPutToolsTtl:
         backing_store.put.assert_awaited_once()
         _, kwargs = backing_store.put.call_args
         assert kwargs["ttl"] is None
+
+    @pytest.mark.parametrize("non_positive_ttl", [0.0, -1.0])
+    @pytest.mark.asyncio
+    async def test_non_positive_ttl_is_treated_as_no_expiry(
+        self, non_positive_ttl: float
+    ) -> None:
+        """A non-positive TTL (e.g. an operator setting
+        MCP_TOOLS_METADATA_CACHE_TTL_SECONDS=0 to try to disable caching)
+        must not be forwarded as-is: py-key-value-aio's underlying store
+        raises InvalidTTLError for ttl <= 0, which would otherwise crash
+        every put_tools call and break MCP tool discovery entirely."""
+        backing_store = AsyncMock(spec=BaseStore)
+        store = McpToolListStore(
+            store=backing_store,
+            collection="mcp-tool-cache",
+            ttl_seconds=non_positive_ttl,
+        )
+
+        await store.put_tools(key="https://mcp.example.com", tools=[])
+
+        backing_store.put.assert_awaited_once()
+        _, kwargs = backing_store.put.call_args
+        assert kwargs["ttl"] is None

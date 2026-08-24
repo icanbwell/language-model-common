@@ -13,7 +13,6 @@ from mcp.types import Tool as MCPTool
 
 from key_value.aio.stores.base import BaseDestroyCollectionStore, BaseStore
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +35,12 @@ class McpToolListStore:
     ) -> None:
         self._store = store
         self._collection = collection
-        self._ttl_seconds = ttl_seconds
+        # A non-positive value (e.g. an operator setting 0, a natural way to
+        # try to disable caching) would otherwise crash every put_tools call:
+        # py-key-value-aio's BaseStore.put raises InvalidTTLError for
+        # ttl <= 0. Treat it as "no expiry" instead of propagating a config
+        # value that breaks tool discovery for every server.
+        self._ttl_seconds = ttl_seconds if ttl_seconds and ttl_seconds > 0 else None
 
     async def get_tools(self, *, key: str) -> list[MCPTool] | None:
         result: dict[str, Any] | None = await self._store.get(
