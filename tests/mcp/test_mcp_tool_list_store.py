@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import Tool as MCPTool
 
 from key_value.aio.stores.base import BaseDestroyCollectionStore, BaseStore
+from key_value.aio.stores.memory import MemoryStore
 
 from languagemodelcommon.mcp.mcp_client.mcp_tool_list_store import McpToolListStore
 
@@ -110,3 +113,102 @@ class TestPutToolsTtl:
         backing_store.put.assert_awaited_once()
         _, kwargs = backing_store.put.call_args
         assert kwargs["ttl"] is None
+
+
+class TestClearVsConcurrentWriteRace:
+    """A fetch that started before clear() but writes after it must not
+    resurrect stale data.
+
+    This is the exact bug seen in production: /reload cleared the cache,
+    but a resolution already in flight (started before the clear) wrote its
+    stale result back afterward, so the next reader still saw the old tool
+    list. put_tools() now records when the *fetch* started (fetched_at);
+    clear() stamps a cleared_at marker in a separate collection (so it
+    survives destroy_collection); get_tools() rejects any entry whose
+    fetched_at predates the most recent cleared_at.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_tools_rejects_entry_fetched_before_last_clear(self) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        key = "https://mcp.example.com"
+
+        fetch_started_at = time.time()
+        await asyncio.sleep(0.01)  # simulate the live list_tools() round trip
+        await store.clear()  # cleared_at is now > fetch_started_at
+
+        # Simulates a slow fetch that began before clear() but only writes
+        # (and lands) afterward.
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            fetched_at=fetch_started_at,
+        )
+
+        assert await store.get_tools(key=key) is None
+
+    @pytest.mark.asyncio
+    async def test_get_tools_accepts_entry_fetched_after_last_clear(self) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        key = "https://mcp.example.com"
+
+        await store.clear()
+        fetch_started_at = time.time()
+
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            fetched_at=fetch_started_at,
+        )
+
+        tools = await store.get_tools(key=key)
+        assert tools is not None
+        assert [t.name for t in tools] == ["search"]
+
+    @pytest.mark.asyncio
+    async def test_clear_stamps_epoch_marker_even_without_destroy_collection_support(
+        self,
+    ) -> None:
+        """Backends without destroy_collection previously made clear() a
+        total no-op. The epoch marker now makes clear() effective even
+        there, since staleness is rejected on read rather than relying on
+        physical deletion.
+        """
+        backing_store = AsyncMock(spec=BaseStore)
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+
+        await store.clear()
+
+        backing_store.put.assert_awaited_once()
+        args, kwargs = backing_store.put.call_args
+        assert args[0] == "cleared_at"
+        assert kwargs["collection"] == "mcp-tool-cache__epoch"
+        assert isinstance(args[1]["cleared_at"], float)
+
+    @pytest.mark.asyncio
+    async def test_second_clear_invalidates_entries_written_after_first_clear(
+        self,
+    ) -> None:
+        """The marker lives in a separate collection from the cached tool
+        lists (so destroy_collection(self._collection) can't wipe it) and
+        each clear() advances it — a second clear must invalidate entries
+        that looked fresh relative to the first.
+        """
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        key = "https://mcp.example.com"
+
+        await store.clear()
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            fetched_at=time.time(),
+        )
+        assert await store.get_tools(key=key) is not None
+
+        await asyncio.sleep(0.01)
+        await store.clear()
+
+        assert await store.get_tools(key=key) is None

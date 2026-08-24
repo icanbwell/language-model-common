@@ -28,7 +28,9 @@ class ToolListStoreProtocol(Protocol):
 
     async def get_all_tools(self) -> list[MCPTool]: ...
 
-    async def put_tools(self, *, key: str, tools: list[MCPTool]) -> None: ...
+    async def put_tools(
+        self, *, key: str, tools: list[MCPTool], fetched_at: float | None = None
+    ) -> None: ...
 
     async def invalidate(self, *, key: str) -> None: ...
 
@@ -115,10 +117,23 @@ class ToolListCache:
             expires_at=expires_at,
         )
 
-    async def put_async(self, *, key: str, tools: list[MCPTool]) -> None:
-        """Write to persistent store (or fallback)."""
+    async def put_async(
+        self, *, key: str, tools: list[MCPTool], fetched_at: float | None = None
+    ) -> None:
+        """Write to persistent store (or fallback).
+
+        ``fetched_at`` should be the time the underlying ``list_tools`` call
+        *started* (not when this write happens) — see ``list_all_tools_cached``.
+        A slow fetch that started before a concurrent ``clear_async()`` and
+        only finishes afterward must not resurrect stale data; the store
+        uses ``fetched_at`` to detect and reject that case on read.
+        """
         if self._store is not None:
-            await self._store.put_tools(key=key, tools=tools)
+            await self._store.put_tools(
+                key=key,
+                tools=tools,
+                fetched_at=fetched_at if fetched_at is not None else time.time(),
+            )
         else:
             self.put(key, tools)
 
@@ -216,9 +231,13 @@ async def list_all_tools_cached(
             logger.info("Tool list cache hit for %s (%d tools)", url, len(cached))
             return cached
 
+    # Captured before the live round trip, not after: a fetch that started
+    # before a concurrent clear_async() must be recognizable as stale even if
+    # it doesn't finish (and write) until after the clear completes.
+    fetched_at = time.time()
     tools = await list_all_tools(session)
 
     if cache is not None:
-        await cache.put_async(key=key, tools=tools)
+        await cache.put_async(key=key, tools=tools, fetched_at=fetched_at)
 
     return tools
