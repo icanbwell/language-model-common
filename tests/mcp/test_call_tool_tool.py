@@ -12,6 +12,9 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
 )
+from oidcauthlib.auth.exceptions.authorization_needed_exception import (
+    AuthorizationNeededException,
+)
 from pydantic import AnyUrl
 
 from languagemodelcommon.tools.mcp.call_tool_tool import (
@@ -32,6 +35,7 @@ def _make_call_tool_tool(
     catalog: ToolCatalog,
     mcp_tool_provider: Any = None,
     auth_interceptor: Any = None,
+    resolver: Any = None,
 ) -> CallToolTool:
     """Create a CallToolTool bypassing Pydantic validation for mock dependencies."""
     return CallToolTool.model_construct(
@@ -42,6 +46,7 @@ def _make_call_tool_tool(
         catalog=catalog,
         mcp_tool_provider=mcp_tool_provider or MagicMock(),
         auth_interceptor=auth_interceptor or MagicMock(),
+        resolver=resolver,
     )
 
 
@@ -246,3 +251,97 @@ class TestCallToolTool:
         await tool._arun(name="my_tool", arguments=None)
         call_kwargs = mock_provider.execute_mcp_tool.call_args.kwargs
         assert call_kwargs["arguments"] == {}
+
+    @pytest.mark.asyncio
+    async def test_lazily_resolves_unresolved_server_when_tool_missing(self) -> None:
+        """Regression test: the catalog is rebuilt fresh per request, so a
+        server can be registered-but-unresolved even though search_tools
+        already surfaced this tool name in an earlier turn. call_tool must
+        resolve on demand instead of failing immediately."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.register_server(
+            server_name="server1", category="connections", agent_config=config
+        )
+
+        resolver = MagicMock()
+        resolver.resolve_tools = AsyncMock(
+            return_value=[
+                MCPTool(name="list_connections", inputSchema={"type": "object"})
+            ]
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[TextContent(type="text", text="connections: []")]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(
+            catalog=catalog, mcp_tool_provider=mock_provider, resolver=resolver
+        )
+        text, _artifact = await tool._arun(name="list_connections", arguments={})
+
+        assert text == "connections: []"
+        resolver.resolve_tools.assert_awaited_once()
+        mock_provider.execute_mcp_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_still_not_found_after_resolving_all_unresolved_servers(
+        self,
+    ) -> None:
+        """Resolution runs, but no unresolved server actually has the
+        requested tool — must still raise, not loop or silently succeed."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.register_server(
+            server_name="server1", category="connections", agent_config=config
+        )
+
+        resolver = MagicMock()
+        resolver.resolve_tools = AsyncMock(
+            return_value=[MCPTool(name="other_tool", inputSchema={"type": "object"})]
+        )
+
+        tool = _make_call_tool_tool(catalog=catalog, resolver=resolver)
+        with pytest.raises(ToolException, match="not found"):
+            await tool._arun(name="list_connections", arguments={})
+
+        resolver.resolve_tools.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_resolution_auth_needed_propagates(self) -> None:
+        """If resolving the server requires auth, that exception must
+        propagate so the gateway can render a login prompt — it must not be
+        swallowed into a generic 'not found' ToolException."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.register_server(
+            server_name="server1", category="connections", agent_config=config
+        )
+
+        resolver = MagicMock()
+        resolver.resolve_tools = AsyncMock(
+            side_effect=AuthorizationNeededException(message="login required")
+        )
+
+        tool = _make_call_tool_tool(catalog=catalog, resolver=resolver)
+        with pytest.raises(AuthorizationNeededException):
+            await tool._arun(name="list_connections", arguments={})
+
+    @pytest.mark.asyncio
+    async def test_no_resolver_skips_resolution_and_fails_fast(self) -> None:
+        """Without a resolver (backward compatible default), an unresolved
+        server must not be treated as a resolution opportunity — the
+        original immediate 'not found' behavior is preserved."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.register_server(
+            server_name="server1", category="connections", agent_config=config
+        )
+
+        tool = _make_call_tool_tool(catalog=catalog)
+        with pytest.raises(ToolException, match="not found"):
+            await tool._arun(name="list_connections", arguments={})
