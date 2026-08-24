@@ -107,13 +107,20 @@ class CallToolTool(BaseTool):
         # surfaced this tool name to the model. Resolve on demand rather than
         # failing — mirrors the lazy resolution SearchToolsTool performs.
         if entry is None and self.resolver is not None:
+            auth_exception: AuthorizationNeededException | None = None
             for server in self.catalog.get_unresolved_servers():
                 try:
                     await self.catalog.resolve_server(
                         server_name=server.server_name, resolver=self.resolver
                     )
-                except AuthorizationNeededException:
-                    raise
+                except AuthorizationNeededException as e:
+                    # An unrelated server needing auth must not block
+                    # resolution of the rest -- the target tool may live on
+                    # a different, no-auth server. Only surfaced below if
+                    # the tool is still missing after every server has been
+                    # attempted.
+                    if auth_exception is None:
+                        auth_exception = e
                 except Exception as e:
                     logger.warning(
                         "Failed to resolve server %s while looking up tool '%s': %s",
@@ -122,6 +129,8 @@ class CallToolTool(BaseTool):
                         ExceptionLogger.format_exception_message(e),
                     )
             entry = self.catalog.get_tool(name)
+            if entry is None and auth_exception is not None:
+                raise auth_exception
 
         if entry is None:
             raise ToolException(
