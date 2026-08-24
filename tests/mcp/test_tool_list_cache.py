@@ -53,3 +53,54 @@ class TestGetAllToolNames:
         cache.clear()
 
         assert cache.get_all_tool_names() == set()
+
+
+class TestClearVsConcurrentWriteRaceFallback:
+    """The in-memory fallback must reject the same race window that
+    McpToolListStore rejects: a fetch that started before clear() but only
+    writes (via put_async) afterward must not resurrect stale data."""
+
+    def test_get_rejects_entry_fetched_before_last_clear(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+        fetch_started_at = time.time()
+        time.sleep(0.01)
+        cache.clear()  # _fallback_cleared_at is now > fetch_started_at
+
+        # Simulates a slow fetch that began before clear() but only writes
+        # (and lands) afterward.
+        cache.put(
+            "http://server1/",
+            [_make_mcp_tool(name="stale-tool")],
+            fetched_at=fetch_started_at,
+        )
+
+        assert cache.get("http://server1/") is None
+        assert cache.get_all_tool_names() == set()
+
+    def test_get_accepts_entry_fetched_after_last_clear(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+        cache.clear()
+        fetch_started_at = time.time()
+
+        cache.put(
+            "http://server1/",
+            [_make_mcp_tool(name="fresh-tool")],
+            fetched_at=fetch_started_at,
+        )
+
+        assert cache.get("http://server1/") is not None
+        assert cache.get_all_tool_names() == {"fresh-tool"}
+
+    async def test_put_async_fallback_rejects_stale_fetch_after_clear(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+        fetch_started_at = time.time()
+        time.sleep(0.01)
+        await cache.clear_async()
+
+        await cache.put_async(
+            key="http://server1/",
+            tools=[_make_mcp_tool(name="stale-tool")],
+            fetched_at=fetch_started_at,
+        )
+
+        assert await cache.get_async(key="http://server1/") is None

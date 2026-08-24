@@ -66,7 +66,15 @@ class McpToolListStore:
         cleared_at = result.get("cleared_at")
         return float(cleared_at) if isinstance(cleared_at, (int, float)) else 0.0
 
-    async def get_tools(self, *, key: str) -> list[MCPTool] | None:
+    async def get_tools(
+        self, *, key: str, cleared_at: float | None = None
+    ) -> list[MCPTool] | None:
+        """Look up a cached tool list.
+
+        ``cleared_at`` lets a bulk caller (``get_all_tools``) supply an
+        already-fetched epoch marker instead of every call re-querying the
+        epoch collection.
+        """
         result: dict[str, Any] | None = await self._store.get(
             key, collection=self._collection
         )
@@ -81,15 +89,17 @@ class McpToolListStore:
             return None
 
         fetched_at = result.get("fetched_at")
-        if isinstance(fetched_at, (int, float)) and fetched_at < (
-            await self._get_cleared_at()
-        ):
-            logger.info(
-                "Cached tools for key %s were fetched before the last clear(); "
-                "treating as miss",
-                key,
+        if isinstance(fetched_at, (int, float)):
+            effective_cleared_at = (
+                cleared_at if cleared_at is not None else await self._get_cleared_at()
             )
-            return None
+            if fetched_at < effective_cleared_at:
+                logger.info(
+                    "Cached tools for key %s were fetched before the last clear(); "
+                    "treating as miss",
+                    key,
+                )
+                return None
 
         try:
             return [MCPTool.model_validate(t) for t in tools_data]
@@ -104,8 +114,9 @@ class McpToolListStore:
         all_tools: list[MCPTool] = []
         try:
             keys = await self._get_all_keys()
+            cleared_at = await self._get_cleared_at()
             for key in keys:
-                tools = await self.get_tools(key=key)
+                tools = await self.get_tools(key=key, cleared_at=cleared_at)
                 if tools:
                     all_tools.extend(tools)
         except Exception:

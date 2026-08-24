@@ -43,6 +43,7 @@ class _CachedToolList:
 
     tools: list[MCPTool]
     expires_at: float | None
+    fetched_at: float | None = None
 
 
 class ToolListCache:
@@ -68,6 +69,7 @@ class ToolListCache:
     ) -> None:
         self._ttl = ttl_seconds
         self._fallback_cache: dict[str, _CachedToolList] = {}
+        self._fallback_cleared_at: float = 0.0
         self._store = store
 
     @staticmethod
@@ -90,6 +92,12 @@ class ToolListCache:
         if entry.expires_at is not None and time.monotonic() > entry.expires_at:
             del self._fallback_cache[key]
             return None
+        if (
+            entry.fetched_at is not None
+            and entry.fetched_at < self._fallback_cleared_at
+        ):
+            del self._fallback_cache[key]
+            return None
         return list(entry.tools)
 
     async def get_async(self, *, key: str) -> list[MCPTool] | None:
@@ -107,7 +115,9 @@ class ToolListCache:
 
         return self.get(key)
 
-    def put(self, key: str, tools: list[MCPTool]) -> None:
+    def put(
+        self, key: str, tools: list[MCPTool], *, fetched_at: float | None = None
+    ) -> None:
         """Write to fallback cache (no-op when store is configured)."""
         if self._store is not None:
             return
@@ -115,6 +125,7 @@ class ToolListCache:
         self._fallback_cache[key] = _CachedToolList(
             tools=list(tools),
             expires_at=expires_at,
+            fetched_at=fetched_at,
         )
 
     async def put_async(
@@ -125,17 +136,19 @@ class ToolListCache:
         ``fetched_at`` should be the time the underlying ``list_tools`` call
         *started* (not when this write happens) — see ``list_all_tools_cached``.
         A slow fetch that started before a concurrent ``clear_async()`` and
-        only finishes afterward must not resurrect stale data; the store
-        uses ``fetched_at`` to detect and reject that case on read.
+        only finishes afterward must not resurrect stale data; both the
+        persistent store and the in-memory fallback use ``fetched_at`` to
+        detect and reject that case on read.
         """
+        resolved_fetched_at = fetched_at if fetched_at is not None else time.time()
         if self._store is not None:
             await self._store.put_tools(
                 key=key,
                 tools=tools,
-                fetched_at=fetched_at if fetched_at is not None else time.time(),
+                fetched_at=resolved_fetched_at,
             )
         else:
-            self.put(key, tools)
+            self.put(key, tools, fetched_at=resolved_fetched_at)
 
     def invalidate(self, key: str) -> None:
         """Remove from fallback cache (no-op when store is configured)."""
@@ -162,6 +175,11 @@ class ToolListCache:
         for entry in self._fallback_cache.values():
             if entry.expires_at is not None and time.monotonic() > entry.expires_at:
                 continue
+            if (
+                entry.fetched_at is not None
+                and entry.fetched_at < self._fallback_cleared_at
+            ):
+                continue
             for tool in entry.tools:
                 names.add(tool.name)
         return names
@@ -179,13 +197,14 @@ class ToolListCache:
     def clear(self) -> None:
         """Clear fallback cache (no-op when store is configured)."""
         self._fallback_cache.clear()
+        self._fallback_cleared_at = time.time()
 
     async def clear_async(self) -> None:
         """Clear persistent store (or fallback)."""
         if self._store is not None:
             await self._store.clear()
         else:
-            self._fallback_cache.clear()
+            self.clear()
 
 
 async def list_all_tools(session: ClientSession) -> list[MCPTool]:

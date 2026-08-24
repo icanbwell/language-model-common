@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from mcp.types import Tool as MCPTool
@@ -212,3 +212,55 @@ class TestClearVsConcurrentWriteRace:
         await store.clear()
 
         assert await store.get_tools(key=key) is None
+
+
+class TestGetAllToolsRoundTrips:
+    """get_all_tools() must fetch cleared_at once and reuse it across every
+    key, not re-query the epoch collection per key — the latter turns an
+    N-key lookup into 2N store round trips."""
+
+    async def test_get_all_tools_fetches_cleared_at_once_for_multiple_keys(
+        self,
+    ) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        keys = [
+            "https://a.example.com",
+            "https://b.example.com",
+            "https://c.example.com",
+        ]
+        for i, key in enumerate(keys):
+            await store.put_tools(
+                key=key,
+                tools=[MCPTool(name=f"tool-{i}", inputSchema={"type": "object"})],
+                fetched_at=time.time(),
+            )
+
+        with (
+            patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
+            patch.object(
+                store, "_get_cleared_at", AsyncMock(wraps=store._get_cleared_at)
+            ) as cleared_at_spy,
+        ):
+            tools = await store.get_all_tools()
+
+        assert len(tools) == 3
+        cleared_at_spy.assert_awaited_once()
+
+    async def test_get_tools_skips_cleared_at_query_when_provided(self) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        key = "https://mcp.example.com"
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            fetched_at=time.time(),
+        )
+
+        with patch.object(
+            store, "_get_cleared_at", AsyncMock(wraps=store._get_cleared_at)
+        ) as cleared_at_spy:
+            tools = await store.get_tools(key=key, cleared_at=0.0)
+
+        assert tools is not None
+        cleared_at_spy.assert_not_awaited()
