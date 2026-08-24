@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -205,6 +206,43 @@ class ToolListCache:
             await self._store.clear()
         else:
             self.clear()
+
+    async def reload_async(
+        self, *, fetchers: dict[str, Callable[[], Awaitable[list[MCPTool]]]]
+    ) -> dict[str, BaseException | None]:
+        """Clear the cache, then eagerly repopulate every given key.
+
+        Avoids the cold-cache miss callers would otherwise see on the first
+        request after a manual reload (e.g. the ``/reload`` command) by
+        refetching immediately rather than waiting for lazy repopulation.
+        Preserves the same clear-vs-concurrent-write ordering as
+        ``clear_async()``/``put_async()``: each fetcher's start time is
+        captured before it runs, so a fetch here that's somehow still
+        in flight when a later, unrelated ``clear_async()`` lands is still
+        correctly rejected on read.
+
+        A failure fetching one key does not abort the others -- failures
+        are reported in the returned mapping (key -> exception, or None on
+        success) rather than raised, so one unreachable server can't block
+        reload of the rest.
+        """
+        await self.clear_async()
+        results: dict[str, BaseException | None] = {}
+        for key, fetch in fetchers.items():
+            started_at = time.time()
+            try:
+                tools = await fetch()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to eagerly refetch tool list for %s during reload",
+                    key,
+                    exc_info=True,
+                )
+                results[key] = exc
+                continue
+            await self.put_async(key=key, tools=tools, fetched_at=started_at)
+            results[key] = None
+        return results
 
 
 async def list_all_tools(session: ClientSession) -> list[MCPTool]:

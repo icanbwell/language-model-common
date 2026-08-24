@@ -104,3 +104,68 @@ class TestClearVsConcurrentWriteRaceFallback:
         )
 
         assert await cache.get_async(key="http://server1/") is None
+
+
+class TestReloadAsync:
+    """reload_async() clears the cache and eagerly repopulates it, so the
+    next request after a manual reload doesn't see a cold-cache miss."""
+
+    async def test_repopulates_every_key_from_its_fetcher(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+        cache.put("http://stale-server/", [_make_mcp_tool(name="stale-tool")])
+
+        async def fetch_a() -> list[MCPTool]:
+            return [_make_mcp_tool(name="tool-a")]
+
+        async def fetch_b() -> list[MCPTool]:
+            return [_make_mcp_tool(name="tool-b")]
+
+        results = await cache.reload_async(
+            fetchers={
+                "http://server-a/": fetch_a,
+                "http://server-b/": fetch_b,
+            }
+        )
+
+        assert results == {"http://server-a/": None, "http://server-b/": None}
+        assert await cache.get_async(key="http://server-a/") == [
+            _make_mcp_tool(name="tool-a")
+        ]
+        assert await cache.get_async(key="http://server-b/") == [
+            _make_mcp_tool(name="tool-b")
+        ]
+        # The pre-existing entry was wiped by the clear, not merely
+        # overwritten -- it wasn't among the fetchers, so it must be gone.
+        assert await cache.get_async(key="http://stale-server/") is None
+
+    async def test_one_fetcher_failure_does_not_block_the_others(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+
+        async def fetch_ok() -> list[MCPTool]:
+            return [_make_mcp_tool(name="tool-ok")]
+
+        async def fetch_broken() -> list[MCPTool]:
+            raise ConnectionError("server unreachable")
+
+        results = await cache.reload_async(
+            fetchers={
+                "http://ok-server/": fetch_ok,
+                "http://broken-server/": fetch_broken,
+            }
+        )
+
+        assert results["http://ok-server/"] is None
+        assert isinstance(results["http://broken-server/"], ConnectionError)
+        assert await cache.get_async(key="http://ok-server/") == [
+            _make_mcp_tool(name="tool-ok")
+        ]
+        assert await cache.get_async(key="http://broken-server/") is None
+
+    async def test_empty_fetchers_just_clears(self) -> None:
+        cache = ToolListCache(ttl_seconds=300)
+        cache.put("http://server1/", [_make_mcp_tool(name="tool-a")])
+
+        results = await cache.reload_async(fetchers={})
+
+        assert results == {}
+        assert cache.get_all_tool_names() == set()
