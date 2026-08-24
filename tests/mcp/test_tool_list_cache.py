@@ -169,3 +169,60 @@ class TestReloadAsync:
 
         assert results == {}
         assert cache.get_all_tool_names() == set()
+
+    async def test_write_failure_does_not_block_other_keys(self) -> None:
+        """The guard must cover the put_async write, not just the fetch --
+        a transient store error writing one key must not abort the reload
+        before the remaining keys are refetched."""
+
+        class _FailingPutStore:
+            def __init__(self) -> None:
+                self.cleared = False
+                self._data: dict[str, list[MCPTool]] = {}
+
+            async def get_tools(self, *, key: str) -> list[MCPTool] | None:
+                return self._data.get(key)
+
+            async def get_all_tools(self) -> list[MCPTool]:
+                return [t for tools in self._data.values() for t in tools]
+
+            async def put_tools(
+                self,
+                *,
+                key: str,
+                tools: list[MCPTool],
+                fetched_at: float | None = None,
+            ) -> None:
+                if key == "http://write-fails/":
+                    raise TimeoutError("store write timed out")
+                self._data[key] = tools
+
+            async def invalidate(self, *, key: str) -> None:
+                self._data.pop(key, None)
+
+            async def clear(self) -> None:
+                self.cleared = True
+                self._data.clear()
+
+        store = _FailingPutStore()
+        cache = ToolListCache(store=store)
+
+        async def fetch_a() -> list[MCPTool]:
+            return [_make_mcp_tool(name="tool-a")]
+
+        async def fetch_b() -> list[MCPTool]:
+            return [_make_mcp_tool(name="tool-b")]
+
+        results = await cache.reload_async(
+            fetchers={
+                "http://write-fails/": fetch_a,
+                "http://server-b/": fetch_b,
+            }
+        )
+
+        assert results["http://server-b/"] is None
+        assert isinstance(results["http://write-fails/"], TimeoutError)
+        assert store.cleared is True
+        assert await cache.get_async(key="http://server-b/") == [
+            _make_mcp_tool(name="tool-b")
+        ]

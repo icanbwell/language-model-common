@@ -1,5 +1,6 @@
 """Tool list caching and listing — avoids redundant MCP list_tools round-trips."""
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -221,28 +222,37 @@ class ToolListCache:
         in flight when a later, unrelated ``clear_async()`` lands is still
         correctly rejected on read.
 
-        A failure fetching one key does not abort the others -- failures
-        are reported in the returned mapping (key -> exception, or None on
-        success) rather than raised, so one unreachable server can't block
-        reload of the rest.
+        Keys are refetched concurrently (matching the ``asyncio.gather``
+        pattern ``MCPToolProvider`` already uses for multi-server fetches),
+        so total latency is bounded by the slowest server, not the sum of
+        all of them. A failure fetching *or writing* one key does not abort
+        the others -- failures are reported in the returned mapping
+        (key -> exception, or None on success) rather than raised, so one
+        unreachable server can't block reload of the rest.
         """
         await self.clear_async()
-        results: dict[str, BaseException | None] = {}
-        for key, fetch in fetchers.items():
+
+        async def _refresh_one(
+            key: str, fetch: Callable[[], Awaitable[list[MCPTool]]]
+        ) -> BaseException | None:
             started_at = time.time()
             try:
                 tools = await fetch()
+                await self.put_async(key=key, tools=tools, fetched_at=started_at)
             except Exception as exc:
                 logger.warning(
                     "Failed to eagerly refetch tool list for %s during reload",
                     key,
                     exc_info=True,
                 )
-                results[key] = exc
-                continue
-            await self.put_async(key=key, tools=tools, fetched_at=started_at)
-            results[key] = None
-        return results
+                return exc
+            return None
+
+        keys = list(fetchers.keys())
+        outcomes = await asyncio.gather(
+            *(_refresh_one(key, fetchers[key]) for key in keys)
+        )
+        return dict(zip(keys, outcomes))
 
 
 async def list_all_tools(session: ClientSession) -> list[MCPTool]:
