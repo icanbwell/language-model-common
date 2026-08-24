@@ -24,7 +24,7 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -83,6 +83,7 @@ class CallToolTool(BaseTool):
     catalog: ToolCatalog
     mcp_tool_provider: MCPToolProvider
     auth_interceptor: AuthMcpCallInterceptor
+    resolver: ToolResolverProtocol | None = None
     session_pool: McpSessionPool | None = None
     proxy_base_url: str | None = None
     session_token: str | None = None
@@ -99,6 +100,38 @@ class CallToolTool(BaseTool):
             arguments = {}
 
         entry = self.catalog.get_tool(name)
+
+        # The catalog is built fresh per request, so a server may still be
+        # registered-but-unresolved here even though a prior search_tools
+        # call (in an earlier turn, on a different catalog instance) already
+        # surfaced this tool name to the model. Resolve on demand rather than
+        # failing — mirrors the lazy resolution SearchToolsTool performs.
+        if entry is None and self.resolver is not None:
+            auth_exception: AuthorizationNeededException | None = None
+            for server in self.catalog.get_unresolved_servers():
+                try:
+                    await self.catalog.resolve_server(
+                        server_name=server.server_name, resolver=self.resolver
+                    )
+                except AuthorizationNeededException as e:
+                    # An unrelated server needing auth must not block
+                    # resolution of the rest -- the target tool may live on
+                    # a different, no-auth server. Only surfaced below if
+                    # the tool is still missing after every server has been
+                    # attempted.
+                    if auth_exception is None:
+                        auth_exception = e
+                except Exception as e:
+                    logger.warning(
+                        "Failed to resolve server %s while looking up tool '%s': %s",
+                        server.server_name,
+                        name,
+                        ExceptionLogger.format_exception_message(e),
+                    )
+            entry = self.catalog.get_tool(name)
+            if entry is None and auth_exception is not None:
+                raise auth_exception
+
         if entry is None:
             raise ToolException(
                 f"Tool '{name}' not found. Use search_tools to find available tools."

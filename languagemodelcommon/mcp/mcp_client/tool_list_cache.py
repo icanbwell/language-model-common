@@ -1,7 +1,9 @@
 """Tool list caching and listing — avoids redundant MCP list_tools round-trips."""
 
+import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -20,14 +22,17 @@ class ToolListStoreProtocol(Protocol):
     """Async persistent backend for tool list caching.
 
     Implementations store serialized MCP tool lists keyed by server URL.
-    The store does not expire entries — callers must explicitly clear.
+    Entries may carry a TTL (implementation-defined) and can also be
+    cleared explicitly on demand.
     """
 
     async def get_tools(self, *, key: str) -> list[MCPTool] | None: ...
 
     async def get_all_tools(self) -> list[MCPTool]: ...
 
-    async def put_tools(self, *, key: str, tools: list[MCPTool]) -> None: ...
+    async def put_tools(
+        self, *, key: str, tools: list[MCPTool], fetched_at: float | None = None
+    ) -> None: ...
 
     async def invalidate(self, *, key: str) -> None: ...
 
@@ -40,6 +45,7 @@ class _CachedToolList:
 
     tools: list[MCPTool]
     expires_at: float | None
+    fetched_at: float | None = None
 
 
 class ToolListCache:
@@ -65,6 +71,7 @@ class ToolListCache:
     ) -> None:
         self._ttl = ttl_seconds
         self._fallback_cache: dict[str, _CachedToolList] = {}
+        self._fallback_cleared_at: float = 0.0
         self._store = store
 
     @staticmethod
@@ -87,6 +94,12 @@ class ToolListCache:
         if entry.expires_at is not None and time.monotonic() > entry.expires_at:
             del self._fallback_cache[key]
             return None
+        if (
+            entry.fetched_at is not None
+            and entry.fetched_at < self._fallback_cleared_at
+        ):
+            del self._fallback_cache[key]
+            return None
         return list(entry.tools)
 
     async def get_async(self, *, key: str) -> list[MCPTool] | None:
@@ -104,7 +117,9 @@ class ToolListCache:
 
         return self.get(key)
 
-    def put(self, key: str, tools: list[MCPTool]) -> None:
+    def put(
+        self, key: str, tools: list[MCPTool], *, fetched_at: float | None = None
+    ) -> None:
         """Write to fallback cache (no-op when store is configured)."""
         if self._store is not None:
             return
@@ -112,14 +127,30 @@ class ToolListCache:
         self._fallback_cache[key] = _CachedToolList(
             tools=list(tools),
             expires_at=expires_at,
+            fetched_at=fetched_at,
         )
 
-    async def put_async(self, *, key: str, tools: list[MCPTool]) -> None:
-        """Write to persistent store (or fallback)."""
+    async def put_async(
+        self, *, key: str, tools: list[MCPTool], fetched_at: float | None = None
+    ) -> None:
+        """Write to persistent store (or fallback).
+
+        ``fetched_at`` should be the time the underlying ``list_tools`` call
+        *started* (not when this write happens) — see ``list_all_tools_cached``.
+        A slow fetch that started before a concurrent ``clear_async()`` and
+        only finishes afterward must not resurrect stale data; both the
+        persistent store and the in-memory fallback use ``fetched_at`` to
+        detect and reject that case on read.
+        """
+        resolved_fetched_at = fetched_at if fetched_at is not None else time.time()
         if self._store is not None:
-            await self._store.put_tools(key=key, tools=tools)
+            await self._store.put_tools(
+                key=key,
+                tools=tools,
+                fetched_at=resolved_fetched_at,
+            )
         else:
-            self.put(key, tools)
+            self.put(key, tools, fetched_at=resolved_fetched_at)
 
     def invalidate(self, key: str) -> None:
         """Remove from fallback cache (no-op when store is configured)."""
@@ -146,6 +177,11 @@ class ToolListCache:
         for entry in self._fallback_cache.values():
             if entry.expires_at is not None and time.monotonic() > entry.expires_at:
                 continue
+            if (
+                entry.fetched_at is not None
+                and entry.fetched_at < self._fallback_cleared_at
+            ):
+                continue
             for tool in entry.tools:
                 names.add(tool.name)
         return names
@@ -163,13 +199,60 @@ class ToolListCache:
     def clear(self) -> None:
         """Clear fallback cache (no-op when store is configured)."""
         self._fallback_cache.clear()
+        self._fallback_cleared_at = time.time()
 
     async def clear_async(self) -> None:
         """Clear persistent store (or fallback)."""
         if self._store is not None:
             await self._store.clear()
         else:
-            self._fallback_cache.clear()
+            self.clear()
+
+    async def reload_async(
+        self, *, fetchers: dict[str, Callable[[], Awaitable[list[MCPTool]]]]
+    ) -> dict[str, BaseException | None]:
+        """Clear the cache, then eagerly repopulate every given key.
+
+        Avoids the cold-cache miss callers would otherwise see on the first
+        request after a manual reload (e.g. the ``/reload`` command) by
+        refetching immediately rather than waiting for lazy repopulation.
+        Preserves the same clear-vs-concurrent-write ordering as
+        ``clear_async()``/``put_async()``: each fetcher's start time is
+        captured before it runs, so a fetch here that's somehow still
+        in flight when a later, unrelated ``clear_async()`` lands is still
+        correctly rejected on read.
+
+        Keys are refetched concurrently (matching the ``asyncio.gather``
+        pattern ``MCPToolProvider`` already uses for multi-server fetches),
+        so total latency is bounded by the slowest server, not the sum of
+        all of them. A failure fetching *or writing* one key does not abort
+        the others -- failures are reported in the returned mapping
+        (key -> exception, or None on success) rather than raised, so one
+        unreachable server can't block reload of the rest.
+        """
+        await self.clear_async()
+
+        async def _refresh_one(
+            key: str, fetch: Callable[[], Awaitable[list[MCPTool]]]
+        ) -> BaseException | None:
+            started_at = time.time()
+            try:
+                tools = await fetch()
+                await self.put_async(key=key, tools=tools, fetched_at=started_at)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to eagerly refetch tool list for %s during reload",
+                    key,
+                    exc_info=True,
+                )
+                return exc
+            return None
+
+        keys = list(fetchers.keys())
+        outcomes = await asyncio.gather(
+            *(_refresh_one(key, fetchers[key]) for key in keys)
+        )
+        return dict(zip(keys, outcomes))
 
 
 async def list_all_tools(session: ClientSession) -> list[MCPTool]:
@@ -215,9 +298,13 @@ async def list_all_tools_cached(
             logger.info("Tool list cache hit for %s (%d tools)", url, len(cached))
             return cached
 
+    # Captured before the live round trip, not after: a fetch that started
+    # before a concurrent clear_async() must be recognizable as stale even if
+    # it doesn't finish (and write) until after the clear completes.
+    fetched_at = time.time()
     tools = await list_all_tools(session)
 
     if cache is not None:
-        await cache.put_async(key=key, tools=tools)
+        await cache.put_async(key=key, tools=tools, fetched_at=fetched_at)
 
     return tools

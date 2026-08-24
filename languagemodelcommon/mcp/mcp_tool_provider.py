@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import timedelta
 from typing import Any, Dict, List
 
@@ -592,6 +593,10 @@ class MCPToolProvider:
         proactively runs auth discovery so login links are surfaced at listing
         time rather than failing generically at tool invocation.
         """
+        # Captured before the fetch, not after — see list_all_tools_cached's
+        # fetched_at for why: a fetch that started before a concurrent
+        # clear_async() must not resurrect stale data if it lands afterward.
+        fetched_at = time.time()
         server_card_tools = (
             await self._server_card_discovery.fetch_tools_from_server_card(
                 mcp_server_url=tool_url,
@@ -599,7 +604,9 @@ class MCPToolProvider:
             )
         )
         if server_card_tools is not None:
-            await self.tool_list_cache.put_async(key=cache_key, tools=server_card_tools)
+            await self.tool_list_cache.put_async(
+                key=cache_key, tools=server_card_tools, fetched_at=fetched_at
+            )
             await self._ensure_auth_configured(tool_config=tool_config)
             return server_card_tools
 
