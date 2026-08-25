@@ -5,7 +5,7 @@ implementation details to API callers. The streaming path already gated
 this behind `enable_debug_logging`; the non-streaming path did not.
 """
 
-from typing import Any, List
+from typing import Any, List, cast
 
 import pytest
 from botocore.exceptions import NoCredentialsError, TokenRetrievalError
@@ -14,6 +14,9 @@ from langchain_core.messages import AnyMessage
 
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
+)
+from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
+    ChatRequestWrapper,
 )
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
@@ -70,15 +73,16 @@ async def test_generic_exception_detail_gated_by_debug_logging(
     monkeypatch: pytest.MonkeyPatch, enable_debug_logging: bool
 ) -> None:
     converter = _build_converter(monkeypatch)
-    secret = "s3cr3t-internal-path/etc/shadow-ish-detail"
+    sentinel_text = "s3cr3t-internal-path/etc/shadow-ish-detail"
     monkeypatch.setattr(
-        converter, "ainvoke", lambda **_kwargs: _raise(RuntimeError(secret))
+        converter, "ainvoke", lambda **_kwargs: _raise(RuntimeError(sentinel_text))
     )
 
     with pytest.raises(HTTPException) as exc_info:
         await converter.call_agent_with_input(
-            chat_request_wrapper=_FakeChatRequestWrapper(
-                enable_debug_logging=enable_debug_logging
+            chat_request_wrapper=cast(
+                ChatRequestWrapper,
+                _FakeChatRequestWrapper(enable_debug_logging=enable_debug_logging),
             ),
             compiled_state_graph=None,  # type: ignore[arg-type]
             system_messages=[],
@@ -90,9 +94,9 @@ async def test_generic_exception_detail_gated_by_debug_logging(
     assert exc_info.value.status_code == 500
     detail = str(exc_info.value.detail)
     if enable_debug_logging:
-        assert secret in detail
+        assert sentinel_text in detail
     else:
-        assert secret not in detail
+        assert sentinel_text not in detail
 
 
 @pytest.mark.asyncio
@@ -101,17 +105,20 @@ async def test_token_retrieval_error_detail_gated_by_debug_logging(
     monkeypatch: pytest.MonkeyPatch, enable_debug_logging: bool
 ) -> None:
     converter = _build_converter(monkeypatch)
-    secret = "arn:aws:iam::123456789012:role/super-secret-role"
+    sentinel_text = "arn:aws:iam::123456789012:role/super-secret-role"
     monkeypatch.setattr(
         converter,
         "ainvoke",
-        lambda **_kwargs: _raise(TokenRetrievalError(provider="sso", error_msg=secret)),
+        lambda **_kwargs: _raise(
+            TokenRetrievalError(provider="sso", error_msg=sentinel_text)
+        ),
     )
 
     with pytest.raises(HTTPException) as exc_info:
         await converter.call_agent_with_input(
-            chat_request_wrapper=_FakeChatRequestWrapper(
-                enable_debug_logging=enable_debug_logging
+            chat_request_wrapper=cast(
+                ChatRequestWrapper,
+                _FakeChatRequestWrapper(enable_debug_logging=enable_debug_logging),
             ),
             compiled_state_graph=None,  # type: ignore[arg-type]
             system_messages=[],
@@ -124,9 +131,9 @@ async def test_token_retrieval_error_detail_gated_by_debug_logging(
     detail = str(exc_info.value.detail)
     assert "re-authenticate" in detail.lower()
     if enable_debug_logging:
-        assert secret in detail
+        assert sentinel_text in detail
     else:
-        assert secret not in detail
+        assert sentinel_text not in detail
 
 
 @pytest.mark.asyncio
@@ -145,8 +152,9 @@ async def test_no_credentials_error_detail_gated_by_debug_logging(
     # rather than an injected secret.
     with pytest.raises(HTTPException) as exc_info:
         await converter.call_agent_with_input(
-            chat_request_wrapper=_FakeChatRequestWrapper(
-                enable_debug_logging=enable_debug_logging
+            chat_request_wrapper=cast(
+                ChatRequestWrapper,
+                _FakeChatRequestWrapper(enable_debug_logging=enable_debug_logging),
             ),
             compiled_state_graph=None,  # type: ignore[arg-type]
             system_messages=[],

@@ -47,14 +47,25 @@ def host_matches_allowlist(*, host: str, allowlist: list[str]) -> bool:
     return False
 
 
-def is_blocked_host(host: str) -> bool:
+# RFC 6598 "Shared Address Space" (a.k.a. CGNAT range), 100.64.0.0/10.
+# Python's ipaddress module does NOT classify this as private/reserved (it's
+# absent from CPython's _private_networks list), but it's routinely used for
+# instance-metadata-style endpoints on networks that need the SSRF
+# protection here just as much as RFC 1918 space does -- e.g. Alibaba
+# Cloud's instance metadata service listens on 100.100.100.200, inside this
+# range, as an analogue to AWS's 169.254.169.254.
+_CGNAT_RANGE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def is_blocked_host(*, host: str) -> bool:
     """Reject hosts that point at internal/loopback/metadata addresses.
 
     Catches literal-IP SSRF (``http://169.254.169.254/``, ``http://10.0.0.1/``),
     obfuscated IPv4 encodings (decimal ``http://2130706433/``, hex
     ``http://0x7f000001/``, octal ``http://0177.0.0.1/``, short forms like
-    ``http://127.1/``), IPv4-mapped IPv6 (``::ffff:127.0.0.1``), and the
-    obvious localhost names.
+    ``http://127.1/``), IPv4-mapped IPv6 (``::ffff:127.0.0.1``), CGNAT/RFC
+    6598 shared address space (``100.64.0.0/10``, e.g. Alibaba Cloud's
+    ``100.100.100.200`` metadata endpoint), and the obvious localhost names.
 
     Does NOT resolve DNS -- a hostname like ``evil.example`` that resolves
     to ``127.0.0.1`` will pass through here and must be caught at the
@@ -92,12 +103,13 @@ def is_blocked_host(host: str) -> bool:
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_RANGE)
     )
 
 
 def parse_and_check_host(
-    url: str,
     *,
+    url: str,
     allowed_schemes: tuple[str, ...] = DEFAULT_ALLOWED_SCHEMES,
 ) -> str | None:
     """Parse ``url`` and return its hostname iff scheme is allowed and the
@@ -122,7 +134,7 @@ def parse_and_check_host(
     if parsed.scheme not in allowed_schemes:
         return None
 
-    if is_blocked_host(host):
+    if is_blocked_host(host=host):
         return None
 
     return host

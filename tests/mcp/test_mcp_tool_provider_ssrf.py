@@ -23,7 +23,7 @@ def _make_provider() -> MCPToolProvider:
     provider.environment_variables = MagicMock()
     provider.environment_variables.tool_call_timeout_seconds = 30
     provider._default_headers = {}
-    provider.get_httpx_async_client = MagicMock()
+    setattr(provider, "get_httpx_async_client", MagicMock())
     return provider
 
 
