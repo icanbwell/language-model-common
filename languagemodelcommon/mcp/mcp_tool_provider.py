@@ -1039,7 +1039,19 @@ class MCPToolProvider:
                     # skills-library catalog) — telling the user to "log in
                     # below" when nothing renders below is a dead end.
                     # Degrade the same way a non-auth-related failure does:
-                    # log it and drop the tool for this turn.
+                    # log it and drop the tool for this turn. Log at error
+                    # level with the original exception so a genuine outage
+                    # (server down, wrong URL, broken auth proxy) is still
+                    # traceable and isn't indistinguishable from the
+                    # intended "no login step exists" degradation.
+                    logger.error(
+                        "_list_mcp_tools_for_config No actionable login "
+                        "option for '%s' at '%s' — dropping tool for this "
+                        "turn: %s",
+                        tool_config.name,
+                        tool_url,
+                        ExceptionLogger.format_exception_message(e),
+                    )
                     return []
                 raise AuthorizationMcpToolTokenInvalidException(
                     message=login_message,
