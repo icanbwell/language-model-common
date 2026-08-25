@@ -68,6 +68,7 @@ from languagemodelcommon.mcp.mcp_client.ui_resource import (
     inject_tool_data_into_html,
     is_tool_visible_to_model,
 )
+from languagemodelcommon.utilities.security import url_validation
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -236,6 +237,22 @@ class MCPToolProvider:
         url = tool_config.url
         if url is None:
             raise ValueError(f"Tool URL must be provided for: {tool_config.name}")
+
+        # SECURITY: tool_config.url ultimately traces back to deployment
+        # configuration (e.g. an env var substituted into a config file) and
+        # is not necessarily trustworthy -- a misconfiguration or a
+        # compromised config source could point this at an internal-only
+        # service or a cloud metadata endpoint (SSRF). Reject obviously
+        # dangerous destinations (private/loopback/link-local/metadata
+        # addresses, non-http(s) schemes) before ever opening a connection.
+        # This does not consult a per-deployment allowlist -- callers that
+        # need to restrict to a specific set of hosts should additionally
+        # combine this with url_validation.host_matches_allowlist.
+        if url_validation.parse_and_check_host(url) is None:
+            raise ValueError(
+                f"Tool URL for '{tool_config.name}' failed SSRF validation "
+                f"(disallowed scheme or blocked/internal host): {url!r}"
+            )
 
         tool_call_timeout_seconds: int = (
             self.environment_variables.tool_call_timeout_seconds
