@@ -568,7 +568,10 @@ class MCPToolProvider:
                         tool_url=tool_url,
                     )
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=login_message,
+                        message=login_message
+                        or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                            tool_config.display_name or tool_config.name
+                        ),
                         tool_url=tool_url,
                         token=None,
                     ) from e
@@ -584,7 +587,10 @@ class MCPToolProvider:
                 tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=login_message,
+                message=login_message
+                or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_config.display_name or tool_config.name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -601,7 +607,10 @@ class MCPToolProvider:
                 tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=login_message,
+                message=login_message
+                or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_config.display_name or tool_config.name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -774,8 +783,16 @@ class MCPToolProvider:
         auth_interceptor: "AuthMcpCallInterceptor",
         tool_config: AgentConfig,
         tool_url: str,
-    ) -> str:
-        """Build a login message, falling back to a generic one if DCR or other steps fail."""
+    ) -> str | None:
+        """Build a login message, falling back to a generic one if DCR or other steps fail.
+
+        Returns ``None`` when ``auth_interceptor.build_login_message_for_tool``
+        determines there's no actionable login step for this tool (see
+        ``PassThroughTokenManager.build_login_message_for_tool``) — that
+        case is distinct from a DCR/build failure and must not get the
+        generic fallback text below, since that text is itself the
+        dead-end "log in below" prompt this is meant to avoid.
+        """
         try:
             return await auth_interceptor.build_login_message_for_tool(tool_config)
         except Exception as msg_err:
@@ -1016,6 +1033,14 @@ class MCPToolProvider:
                     tool_config=tool_config,
                     tool_url=tool_url,
                 )
+                if login_message is None:
+                    # No actionable login step exists for this tool (e.g. a
+                    # pass-through-only tool with no oauth config, like the
+                    # skills-library catalog) — telling the user to "log in
+                    # below" when nothing renders below is a dead end.
+                    # Degrade the same way a non-auth-related failure does:
+                    # log it and drop the tool for this turn.
+                    return []
                 raise AuthorizationMcpToolTokenInvalidException(
                     message=login_message,
                     tool_url=tool_url,
