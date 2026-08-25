@@ -516,23 +516,51 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
                 return JSONResponse(content=content_json)
             except* TokenRetrievalError as e:
-                error_message = (
-                    f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
-                    "  If you are running locally, your AWS session may have expired."
+                # SECURITY: log full exception details server-side always,
+                # but only include them in the client-facing `detail` when
+                # debug logging is enabled for this request -- matches the
+                # streaming path's handling of the same exception type
+                # (get_streaming_response_async / _stream_resp_async_generator).
+                # The generic re-authentication guidance itself is safe to
+                # show unconditionally; the interpolated exception text is not.
+                logger.exception(
+                    "AWS Bedrock Token retrieval error: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
+                guidance = (
+                    "If you are running locally, your AWS session may have expired."
                     "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
-                logger.exception(error_message)
+                if chat_request_wrapper.enable_debug_logging:
+                    error_message = (
+                        f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
+                        f"  {guidance}"
+                    )
+                else:
+                    error_message = f"AWS Bedrock Token retrieval error.  {guidance}"
                 raise HTTPException(
                     status_code=401,
                     detail=error_message,
                 )
             except* botocore.exceptions.NoCredentialsError as e:
-                error_message = (
-                    f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
-                    "  If you are running locally, your AWS session may have expired."
+                # SECURITY: same rationale as the TokenRetrievalError branch
+                # above -- log full details, gate the exception text in the
+                # response behind enable_debug_logging.
+                logger.exception(
+                    "AWS Bedrock Login error: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
+                guidance = (
+                    "If you are running locally, your AWS session may have expired."
                     "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
-                logger.exception(error_message)
+                if chat_request_wrapper.enable_debug_logging:
+                    error_message = (
+                        f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
+                        f"  {guidance}"
+                    )
+                else:
+                    error_message = f"AWS Bedrock Login error.  {guidance}"
                 raise HTTPException(
                     status_code=401,
                     detail=error_message,
@@ -553,9 +581,20 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 )
                 log_message = f"Unexpected error: {ExceptionLogger.format_exception_message(e)}\nStack trace:\n{stack}"
                 logger.exception(log_message)
+                # SECURITY: don't embed the raw exception object in the
+                # response `detail` unconditionally -- it can include
+                # internal paths, argument values, or other implementation
+                # details. Full details are already logged above; the
+                # client only gets them back when debug logging is enabled
+                # for this request, mirroring the streaming path's
+                # ExceptionLogger.get_user_friendly_message usage.
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Unexpected error: {first_exception}",
+                    detail=ExceptionLogger.get_user_friendly_message(
+                        e,
+                        enable_debug_logging=chat_request_wrapper.enable_debug_logging,
+                        generic_message=self.environment_variables.generic_error_message,
+                    ),
                 )
 
     @staticmethod

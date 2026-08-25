@@ -68,6 +68,7 @@ from languagemodelcommon.mcp.mcp_client.ui_resource import (
     inject_tool_data_into_html,
     is_tool_visible_to_model,
 )
+from languagemodelcommon.utilities.security import url_validation
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -170,6 +171,27 @@ class MCPToolProvider:
         self._server_card_discovery = server_card_discovery
 
     @staticmethod
+    async def _reject_unsafe_redirect(response: httpx.Response) -> None:
+        """httpx response event hook: block redirects to disallowed hosts.
+
+        SECURITY: _build_connection_config validates tool_config.url up
+        front, but that check has no visibility into where the server
+        subsequently redirects a request. Since this client is built with
+        follow_redirects=True, a validated-but-attacker-influenced or
+        compromised MCP endpoint could respond with a redirect (e.g. to
+        169.254.169.254 or an internal service) and httpx would transparently
+        follow it, defeating the earlier SSRF check entirely. Re-validate
+        every redirect's Location header the same way before it's followed.
+        """
+        if not response.is_redirect:
+            return
+        location = response.headers.get("location")
+        if location and url_validation.parse_and_check_host(url=location) is None:
+            raise ValueError(
+                f"Blocked redirect to disallowed host (SSRF protection): {location!r}"
+            )
+
+    @staticmethod
     def get_httpx_async_client(
         *,
         headers: dict[str, str] | None = None,
@@ -188,6 +210,7 @@ class MCPToolProvider:
             timeout=timeout,
             follow_redirects=True,
             transport=LoggingTransport(httpx.AsyncHTTPTransport()),
+            event_hooks={"response": [MCPToolProvider._reject_unsafe_redirect]},
         )
 
     @staticmethod
@@ -236,6 +259,22 @@ class MCPToolProvider:
         url = tool_config.url
         if url is None:
             raise ValueError(f"Tool URL must be provided for: {tool_config.name}")
+
+        # SECURITY: tool_config.url ultimately traces back to deployment
+        # configuration (e.g. an env var substituted into a config file) and
+        # is not necessarily trustworthy -- a misconfiguration or a
+        # compromised config source could point this at an internal-only
+        # service or a cloud metadata endpoint (SSRF). Reject obviously
+        # dangerous destinations (private/loopback/link-local/metadata
+        # addresses, non-http(s) schemes) before ever opening a connection.
+        # This does not consult a per-deployment allowlist -- callers that
+        # need to restrict to a specific set of hosts should additionally
+        # combine this with url_validation.host_matches_allowlist.
+        if url_validation.parse_and_check_host(url=url) is None:
+            raise ValueError(
+                f"Tool URL for '{tool_config.name}' failed SSRF validation "
+                f"(disallowed scheme or blocked/internal host): {url!r}"
+            )
 
         tool_call_timeout_seconds: int = (
             self.environment_variables.tool_call_timeout_seconds
