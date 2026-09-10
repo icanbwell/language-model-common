@@ -241,6 +241,83 @@ class TestCallToolTool:
         assert call_kwargs["tool_result_text"] == "[Image: image/png]"
 
     @pytest.mark.asyncio
+    async def test_embedded_text_resource_reaches_the_llm_as_a_text_block(
+        self,
+    ) -> None:
+        """Full _arun integration for the EmbeddedResource(TextResourceContents)
+        case -- the lower-level conversion is already covered by
+        TestConvertCallToolResult/content_conversion.py's own tests, but that
+        doesn't prove _arun actually wires it through end to end."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="doc_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    EmbeddedResource(
+                        type="resource",
+                        resource=TextResourceContents(
+                            uri=AnyUrl("file://notes.txt"),
+                            text="resource text",
+                        ),
+                    )
+                ]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        content, _artifact = await tool._arun(name="doc_tool", arguments={})
+
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "resource text"
+
+    @pytest.mark.asyncio
+    async def test_isError_checked_before_content_conversion_that_could_raise(
+        self,
+    ) -> None:
+        """convert_call_tool_result raises NotImplementedError on AudioContent
+        (unsupported). An MCP server reporting isError=True with an
+        AudioContent block must still surface as a clean ToolException, not
+        crash on an unrelated conversion error -- proves the isError check
+        runs before convert_call_tool_result is ever called, not after."""
+        from mcp.types import AudioContent
+
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="rejecting_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    AudioContent(type="audio", data="base64audio", mimeType="audio/wav")
+                ],
+                isError=True,
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        with pytest.raises(ToolException) as exc_info:
+            await tool._arun(name="rejecting_tool", arguments={})
+        assert str(exc_info.value).startswith("Tool call failed:")
+        mock_provider.fetch_mcp_app_embed.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_call_failure_returns_error_string(self) -> None:
         catalog = ToolCatalog()
         config = _agent_config()
