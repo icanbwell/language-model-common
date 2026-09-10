@@ -123,10 +123,122 @@ class TestCallToolTool:
 
         tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
         result = await tool._arun(name="my_tool", arguments={"key": "value"})
-        text, artifact = result
-        assert text == "tool output"
+        content, artifact = result
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "tool output"
         assert artifact is None
         mock_provider.execute_mcp_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_image_content_reaches_the_llm_as_a_real_image_block(self) -> None:
+        """Regression test for the discovery path's former lossy behavior:
+        ImageContent must reach the model as an actual image content block
+        (via convert_call_tool_result), not collapsed to placeholder text
+        like "[Image: image/png]" — see mcp-fhir-agent's ADR 0017 for a
+        concrete downstream consequence of the old behavior."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="image_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    ImageContent(type="image", data="base64data", mimeType="image/png")
+                ]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        content, _artifact = await tool._arun(name="image_tool", arguments={})
+
+        assert len(content) == 1
+        assert content[0]["type"] == "image"
+        assert content[0]["base64"] == "base64data"
+        assert content[0]["mime_type"] == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_embedded_binary_resource_reaches_the_llm_as_a_file_block(
+        self,
+    ) -> None:
+        """Same regression as above, for a non-image EmbeddedResource blob --
+        must become a file content block, not a "[Resource: uri]" placeholder
+        that discards the bytes entirely."""
+        from mcp.types import BlobResourceContents
+
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="pdf_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    EmbeddedResource(
+                        type="resource",
+                        resource=BlobResourceContents(
+                            uri=AnyUrl("file://doc.pdf"),
+                            blob="base64pdf",
+                            mimeType="application/pdf",
+                        ),
+                    )
+                ]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        content, _artifact = await tool._arun(name="pdf_tool", arguments={})
+
+        assert len(content) == 1
+        assert content[0]["type"] == "file"
+        assert content[0]["base64"] == "base64pdf"
+        assert content[0]["mime_type"] == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_fetch_mcp_app_embed_still_receives_a_plain_text_summary(
+        self,
+    ) -> None:
+        """fetch_mcp_app_embed seeds an MCP Apps UI iframe's
+        window.__MCP_TOOL_RESULT__ with tool_result_text -- it must keep
+        getting the plain-text summary (_call_tool_result_to_text), not the
+        new multimodal content_blocks list, regardless of content type."""
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="image_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    ImageContent(type="image", data="base64data", mimeType="image/png")
+                ]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        await tool._arun(name="image_tool", arguments={})
+
+        call_kwargs = mock_provider.fetch_mcp_app_embed.call_args.kwargs
+        assert call_kwargs["tool_result_text"] == "[Image: image/png]"
 
     @pytest.mark.asyncio
     async def test_call_failure_returns_error_string(self) -> None:
@@ -282,9 +394,11 @@ class TestCallToolTool:
         tool = _make_call_tool_tool(
             catalog=catalog, mcp_tool_provider=mock_provider, resolver=resolver
         )
-        text, _artifact = await tool._arun(name="list_connections", arguments={})
+        content, _artifact = await tool._arun(name="list_connections", arguments={})
 
-        assert text == "connections: []"
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "connections: []"
         resolver.resolve_tools.assert_awaited_once()
         mock_provider.execute_mcp_tool.assert_awaited_once()
 
@@ -367,9 +481,11 @@ class TestCallToolTool:
         tool = _make_call_tool_tool(
             catalog=catalog, mcp_tool_provider=mock_provider, resolver=resolver
         )
-        text, _artifact = await tool._arun(name="list_connections", arguments={})
+        content, _artifact = await tool._arun(name="list_connections", arguments={})
 
-        assert text == "connections: []"
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "connections: []"
         assert resolver.resolve_tools.await_count == 2
 
     @pytest.mark.asyncio

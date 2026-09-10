@@ -22,6 +22,10 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
+from languagemodelcommon.mcp.mcp_client.content_conversion import (
+    ToolMessageContentBlock,
+    convert_call_tool_result,
+)
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
@@ -44,7 +48,14 @@ class CallToolInput(BaseModel):
 
 
 def _call_tool_result_to_text(result: CallToolResult) -> str:
-    """Convert a CallToolResult to a text representation for the LLM."""
+    """Text summary of a CallToolResult.
+
+    Used only for the isError ToolException message and to seed the MCP Apps
+    UI embed's tool_result_text -- NOT for the LLM-facing content, which goes
+    through convert_call_tool_result instead (see CallToolTool._arun) so
+    images and binary/document resources reach the model intact rather than
+    being collapsed to placeholder text.
+    """
     parts: list[str] = []
     for block in result.content:
         if isinstance(block, TextContent):
@@ -95,7 +106,7 @@ class CallToolTool(BaseTool):
 
     async def _arun(
         self, name: str, arguments: dict[str, Any] | None = None
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[list[ToolMessageContentBlock], dict[str, Any] | None]:
         if arguments is None:
             arguments = {}
 
@@ -145,22 +156,28 @@ class CallToolTool(BaseTool):
                 auth_interceptor=self.auth_interceptor,
                 session_pool=self.session_pool,
             )
-            text = _call_tool_result_to_text(result)
+            summary_text = _call_tool_result_to_text(result)
 
             # Surface the *inner* tool's own error status (result.isError), not just
             # transport-level failures — MCP servers report rejected/invalid calls
             # this way rather than raising, so this is the only place that signal
             # exists. Raising here (with handle_tool_error=True) is what makes the
             # resulting ToolMessage carry status="error" instead of looking like an
-            # ordinary successful call to the model.
+            # ordinary successful call to the model. Checked before building
+            # content_blocks below: convert_call_tool_result assumes a successful
+            # result's content shape and can raise on content types (e.g.
+            # AudioContent) _call_tool_result_to_text tolerates -- irrelevant on
+            # this path since it's discarded in favor of the ToolException anyway.
             if result.isError:
-                raise ToolException(text)
+                raise ToolException(summary_text)
+
+            content_blocks = convert_call_tool_result(result)
 
             app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
                 tool=entry.tool,
                 tool_name=name,
                 tool_args=arguments,
-                tool_result_text=text,
+                tool_result_text=summary_text,
                 agent_config=entry.agent_config,
                 session_pool=self.session_pool,
                 proxy_base_url=self.proxy_base_url,
@@ -171,7 +188,7 @@ class CallToolTool(BaseTool):
             if app_embed is not None:
                 artifact = {"mcp_app_embed": app_embed}
 
-            return text, artifact
+            return content_blocks, artifact
         except AuthorizationNeededException:
             # Auth exceptions must propagate so the user sees login links
             raise
