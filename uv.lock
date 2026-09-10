@@ -14,6 +14,9 @@ resolution-markers = [
 exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P2D"
 
+[options.exclude-newer-package]
+oidcauthlib = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
@@ -1729,7 +1732,7 @@ requires-dist = [
     { name = "langgraph-store-mongodb", specifier = ">=0.1.0" },
     { name = "markdownify", specifier = ">=0.14.1" },
     { name = "mcp", specifier = ">=1.27.2" },
-    { name = "oidcauthlib", specifier = ">=3.0.13" },
+    { name = "oidcauthlib", specifier = ">=3.0.18" },
     { name = "openai", specifier = ">=2.5.0" },
     { name = "py-key-value-aio", specifier = ">=0.4.4" },
     { name = "pydantic", specifier = ">=2.0,<3.0.0" },
@@ -2250,7 +2253,7 @@ wheels = [
 
 [[package]]
 name = "oidcauthlib"
-version = "3.0.16"
+version = "3.0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "authlib" },
@@ -2265,9 +2268,9 @@ dependencies = [
     { name = "simple-container" },
     { name = "starlette" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/75/356d2d9d9df47768ebe8f6570f9baf37da0824b2d75d53854ba476825559/oidcauthlib-3.0.16.tar.gz", hash = "sha256:1002b7027aade5446cd17719709ff14bcb86729fd5f7ca73d7757ec87e8a5e51", size = 66327, upload-time = "2026-06-06T04:05:40.643Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/7d/85a94c3643acc61daa1bb3372299cf27bbbc249d41060cfa3aebfa478993/oidcauthlib-3.0.18.tar.gz", hash = "sha256:8a8179befc180c570dad62186658aa2f1b73e54be5b48600b9a306c42dd8b9ea", size = 67430, upload-time = "2026-09-10T03:23:16.715Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/c6/8f6f5c24ed9856ebe3b523372270cd738989ecfd68fa9fd6c90e36eac8db/oidcauthlib-3.0.16-py3-none-any.whl", hash = "sha256:306eb5b37ae5224618e88ed20c59177abdd793b44baedd75f0ce3aa2ede5522b", size = 89803, upload-time = "2026-06-06T04:05:39.535Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/04/827eb48251ac1d5da5863efe8ea59cfdc8243a94ebd098d765d12ceadeb1/oidcauthlib-3.0.18-py3-none-any.whl", hash = "sha256:014b2a772a932d89f5b068c41831bd77f58c79b9365581c0df80030d6242f606", size = 90880, upload-time = "2026-09-10T03:23:15.674Z" },
 ]
 
 [[package]]
