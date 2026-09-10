@@ -7,6 +7,7 @@ after discovering tools via search_tools.
 import logging
 from typing import Any, Literal, Type
 
+from langchain_core.messages.content import create_text_block
 from langchain_core.tools import BaseTool, ToolException
 from mcp.types import (
     CallToolResult,
@@ -171,7 +172,22 @@ class CallToolTool(BaseTool):
             if result.isError:
                 raise ToolException(summary_text)
 
-            content_blocks = convert_call_tool_result(result)
+            try:
+                content_blocks = convert_call_tool_result(result)
+            except (NotImplementedError, ValueError) as e:
+                # convert_call_tool_result raises for content types it doesn't
+                # explicitly support (e.g. AudioContent). A *successful* tool
+                # result must not turn into a failed call just because one
+                # content type isn't multimodal-convertible yet -- fall back
+                # to the tolerant text summary, matching this path's
+                # pre-existing behavior for unrecognized content types.
+                logger.warning(
+                    "Content conversion failed for tool '%s': %s; falling back "
+                    "to text summary",
+                    name,
+                    e,
+                )
+                content_blocks = [create_text_block(text=summary_text)]
 
             app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
                 tool=entry.tool,

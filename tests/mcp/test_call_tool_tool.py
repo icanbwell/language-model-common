@@ -318,6 +318,46 @@ class TestCallToolTool:
         mock_provider.fetch_mcp_app_embed.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_successful_result_with_unconvertible_content_falls_back_to_text(
+        self,
+    ) -> None:
+        """Regression test: convert_call_tool_result raises NotImplementedError
+        on AudioContent. Before this fix, a *successful* MCP tool result
+        containing AudioContent (e.g. a TTS/voice tool) would be turned into a
+        ToolException by the outer `except Exception` handler -- a
+        success-to-error regression, since the pre-existing
+        _call_tool_result_to_text tolerated any content type via str(block).
+        Must fall back to the tolerant text summary instead of failing the
+        call."""
+        from mcp.types import AudioContent
+
+        catalog = ToolCatalog()
+        config = _agent_config()
+        catalog.add_tools(
+            server_name="server1",
+            category=None,
+            tools=[MCPTool(name="tts_tool", inputSchema={"type": "object"})],
+            agent_config=config,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.execute_mcp_tool = AsyncMock(
+            return_value=CallToolResult(
+                content=[
+                    AudioContent(type="audio", data="base64audio", mimeType="audio/wav")
+                ]
+            )
+        )
+        mock_provider.fetch_mcp_app_embed = AsyncMock(return_value=None)
+
+        tool = _make_call_tool_tool(catalog=catalog, mcp_tool_provider=mock_provider)
+        content, _artifact = await tool._arun(name="tts_tool", arguments={})
+
+        assert len(content) == 1
+        assert content[0]["type"] == "text"
+        mock_provider.fetch_mcp_app_embed.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_call_failure_returns_error_string(self) -> None:
         catalog = ToolCatalog()
         config = _agent_config()
