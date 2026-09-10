@@ -62,6 +62,36 @@ class TestConvertMessageContentIntoString:
         assert "part1" in result
         assert "part2" in result
 
+    def test_image_block_is_summarized_not_leaked(self) -> None:
+        """This string reaches tool_end SSE trace events and (when
+        write_tool_output_to_file is enabled) a debug file -- str()-ing an
+        image/file content block would leak its raw base64 payload into
+        both. Must summarize instead."""
+        msg = ToolMessage(
+            content=[
+                {"type": "image", "mime_type": "image/png", "base64": "should-not-leak"}
+            ],
+            tool_call_id="tc1",
+        )
+        result = convert_message_content_into_string(tool_message=msg)
+        assert result == "[image: image/png]"
+        assert "should-not-leak" not in result
+
+    def test_file_block_is_summarized_not_leaked(self) -> None:
+        msg = ToolMessage(
+            content=[
+                {
+                    "type": "file",
+                    "mime_type": "application/pdf",
+                    "base64": "should-not-leak",
+                }
+            ],
+            tool_call_id="tc1",
+        )
+        result = convert_message_content_into_string(tool_message=msg)
+        assert result == "[file: application/pdf]"
+        assert "should-not-leak" not in result
+
 
 class TestGetStructuredContentFromToolMessage:
     def test_single_element_list_returned(self) -> None:

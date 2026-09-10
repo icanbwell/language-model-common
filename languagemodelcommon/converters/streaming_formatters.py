@@ -41,7 +41,18 @@ def convert_message_content_into_string(*, tool_message: ToolMessage) -> str:
             if "result" in json_object:
                 return str(json_object.get("result"))
 
-    return " ".join([str(c) for c in tool_message.content])
+    return " ".join([_summarize_content_block(c) for c in tool_message.content])
+
+
+def _summarize_content_block(block: Any) -> str:
+    """str(block) for most content, but image/file blocks (e.g. from
+    convert_call_tool_result) carry raw base64 payloads under "base64" --
+    str()-ing them would leak that data into tool_end SSE trace events and,
+    when write_tool_output_to_file is enabled, into the debug-output file.
+    Summarize those instead of stringifying the raw dict."""
+    if isinstance(block, dict) and block.get("type") in ("image", "file"):
+        return f"[{block['type']}: {block.get('mime_type', 'unknown')}]"
+    return str(block)
 
 
 def get_structured_content_from_tool_message(
