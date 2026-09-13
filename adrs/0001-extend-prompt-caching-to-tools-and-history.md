@@ -63,15 +63,74 @@ true` being set in prod config. Either:
 
 a. caching is not actually taking effect for the `ChatAnthropicBedrock` path
    in this environment (e.g. a version mismatch, a code path that drops
-   `cache_control` before the request is sent), or
+   `cache_control` before the request is sent),
 b. `usage_metadata.input_token_details` doesn't carry `cache_read`/
    `cache_creation` in the shape this code expects for this provider/model,
-   and the log line is silently never firing even though caching works.
+   and the log line is silently never firing even though caching works, or
+c. the cached block is under Anthropic's per-model minimum cacheable size
+   (~1024 input tokens for Sonnet-class models) — below that threshold the
+   API silently accepts `cache_control` but never writes or reads a cache
+   entry, so `cache_read`/`cache_creation` both legitimately report `0` on
+   every call. Indistinguishable from "caching is broken" by log-watching
+   alone.
 
-**This needs to be resolved before (or as the first phase of) doing any of
-the work below.** Extending caching to more content is not useful if the
-existing mechanism isn't verified to work, and if the failure is (b), we're
-also flying blind on whether *any* of our caching is paying off today.
+**Resolved.** All three hypotheses have been checked against the actual code
+and config in both repos:
+
+- **(a) ruled out.** `BEDROCK_USE_ANTHROPIC_CLIENT=true` in all four Helm
+  environments (dev/staging/client-sandbox/prod), and
+  `us.anthropic.claude-sonnet-4-20250514-v1:0` matches `_is_anthropic_model`'s
+  prefix check (`model_factory.py:150-152`) — so `ChatAnthropicBedrock` (the
+  class that supports `cache_control`) is the one actually constructed
+  everywhere, not `ChatBedrockConverse` (which `docs/prompt-caching.md:62`
+  correctly notes doesn't support it yet).
+- **(c) checked, unlikely.** Prod's two cached blocks —
+  `bailey_system_prompt.txt` (3835 bytes) + `skills.md` (3086 bytes) — total
+  ~6900 characters, ≈1730 tokens combined. Comfortably above the 1024-token
+  minimum for Sonnet-class models. Not the cause today, though worth keeping
+  as a standing check if either prompt is ever shrunk.
+- **(b) confirmed — this is the actual root cause.** The field-mapping
+  plumbing through `langchain_anthropic`/`ChatAnthropicBedrock` is correct
+  (as originally analyzed here), but `bailey_agent_services.py:594` reads it
+  wrong:
+  ```python
+  details = getattr(msg.usage_metadata, "input_token_details", None)
+  ```
+  `msg.usage_metadata` is a plain `dict` at runtime (LangChain's
+  `UsageMetadata`/`InputTokenDetails` are dict-shaped, not real objects) —
+  `getattr` on a dict for a key that isn't an attribute always returns the
+  default, so `details` is `None` on every single call regardless of
+  whether Bedrock is actually caching anything. `cache_read`/`cache_creation`
+  are therefore always summed as `0`, and the `"Prompt cache: ..."` log line
+  can **never fire**. The zero-hits 8-hour log search is fully explained by
+  this bug alone — it says nothing about whether caching itself works.
+
+**This needs to be fixed before (or as the first phase of) doing any of the
+work below.** Extending caching to more content is not useful if we can't
+observe whether the existing mechanism works, and right now we can't —
+independent of whether it actually does.
+
+**Verification steps (Phase 0):**
+
+1. **Fix the telemetry bug.** `bailey_agent_services.py:594` — replace the
+   `getattr(...)` with `msg.usage_metadata.get("input_token_details")` (dict
+   access, matching the `usage.get(...)` pattern three lines above in the
+   same function). Add a test asserting the log line fires on a
+   dict-shaped `usage_metadata` with nonzero `cache_read`/`cache_creation`.
+   This alone restores the ability to observe caching going forward, but
+   does **not** by itself prove caching is effective — see step 2.
+2. **Verify directly against the API, bypassing baileyai's logging
+   entirely.** Call `ChatAnthropicBedrock` twice in a row with the
+   identical cached system prompt and inspect
+   `response.usage_metadata["input_token_details"]` directly:
+   - Call 1 → expect `cache_creation > 0`, `cache_read == 0` (cache write).
+   - Call 2, within TTL → expect `cache_read > 0` (cache hit).
+
+   This is the ground-truth test — it depends on neither baileyai's log
+   line firing nor its field-name assumptions being correct, so it isolates
+   whether caching itself is working from whether our telemetry around it
+   is working. Run once against a real dev/client-sandbox credential and
+   record the actual `usage_metadata` output here as evidence.
 
 ## Decision Drivers
 
@@ -95,28 +154,28 @@ absolute token count. Doesn't reduce cost or latency either.
 
 ### Option B — Cache tool definitions
 
-Tag the tool-definitions payload with a cache breakpoint so the ~44 tool
-schemas (likely the single largest static chunk of every request, larger
-than the system prompt) are read from cache on the 2nd/3rd/... call within a
-turn instead of resent in full.
+**Likely already realized by the existing system-prompt breakpoint — needs
+verification, not new code.** Anthropic's caching semantics render request
+content in the order `tools → system → messages`, and a `cache_control`
+breakpoint on a system block caches everything *before* it in that order,
+including tools, as part of the same prefix (see
+`docs/prompt-caching.md`'s design guidance and Anthropic's own docs on
+prefix caching). Prod's `bailey.json` has three system blocks in order —
+`bailey_system_prompt` (`cache: true`), `skills` (`cache: true`),
+`datetime_context_message_format` (no `cache`) — so the breakpoint that
+lands on `skills` (the last `cache: true` block) already covers tools +
+both cached system blocks; only the volatile datetime block trails it,
+uncached, which is the correct placement.
 
-**Mechanism:** `create_react_agent` (LangGraph prebuilt, used by
-`GraphBuilder.create_graph_for_llm_async`) calls `model.bind_tools(tools)`
-internally with no cache hook. `ChatAnthropicBedrock.bind_tools()`
-(`langchain_aws/chat_models/bedrock.py:1310`) converts tools via
-`convert_to_anthropic_tool()` with no exposed `cache_control` kwarg for
-tools specifically (message-level `cache_control` *is* exposed, via
-`_apply_cache_control_to_messages`). To cache the tool list we would need to
-pre-bind: convert tools ourselves, tag the last tool dict with
-`cache_control`, and pass a pre-bound model into `create_react_agent`
-(confirmed via `_should_bind_tools` in
-`langgraph/prebuilt/chat_agent_executor.py:173` that a model whose bound
-tools already match the `tools=` argument is not re-bound — so this
-composes cleanly with the existing prebuilt helper).
-
-**Trade-off:** duplicates a slice of `convert_to_anthropic_tool`'s logic
-outside the library boundary — a drift risk if `langchain_aws` changes that
-conversion. Contained to `graph_builder.py`; no new dependency.
+The originally-proposed mechanism (pre-bind tools with an explicit
+`cache_control` tag, duplicating a slice of `convert_to_anthropic_tool`'s
+logic outside the library boundary — a drift risk if `langchain_aws`
+changes that conversion) would very likely add duplicated logic for a win
+that already exists. **Revised plan:** as part of Phase 0's verification
+call (Open Question 1, step 2), measure whether `cache_creation_input_tokens`
+on the first call is large enough to include the ~44 tool schemas (not just
+the ~1730-token system prompt). If confirmed, close Option B as already
+realized and skip the pre-binding implementation entirely.
 
 ### Option C — Cache tool definitions + conversation/tool-call history
 
@@ -194,6 +253,28 @@ provider-controlled, no PHI by construction) or tools (stable, no PHI).
   a different prefix, full stop) rather than something we configure — but
   it's worth a test asserting two concurrent sessions never share a cache
   hit, rather than relying on that being true by construction.
+
+  **Prior art on this exact question, and a correction to it.** A caching
+  approach was already tried and reverted once, on cross-tenant grounds —
+  worth recording since the ADR didn't originally know about it. Commit
+  `d028a59` (2026-05-26) reverted an earlier model-level
+  `model.bind(cache_control=...)` approach (added 59 minutes earlier in
+  `d578cd1`) that cached system, tools, *and* the last message
+  indiscriminately. The doc it replaced gave three reasons, the first of
+  which was: "Cached user messages — a potential cross-tenant cache sharing
+  vector." That framing doesn't hold up: caching is a prefix-hash match, and
+  a cache *hit* requires the second request to already contain
+  byte-identical content to the first — it cannot disclose tenant A's
+  content to tenant B, because tenant B's request would have to already
+  contain that exact text to hit the cache in the first place. Nothing is
+  copied across requests; only compute is reused for identical bytes. The
+  two *real* problems with that reverted approach are the other two reasons
+  already given at the time — no granular control over which blocks are
+  cacheable, and (the one that matters for Option C) the enlarged PHI
+  exposure surface from caching arbitrary message content, already covered
+  above and by Open Question 4. Treat multi-tenant isolation here as
+  covered by the existing PHI/BAA sign-off ask, not a separate isolation
+  mechanism to design or test.
 - **Added complexity.** Cache-lifecycle logic (where to place/move
   breakpoints, how it interacts with trimming/compaction) adds real
   surface area to history management code that today is comparatively
@@ -207,9 +288,11 @@ Sequence the work rather than doing it all at once:
    before extending scope. If system-prompt caching isn't actually taking
    effect today, fix that first; if it's a telemetry bug, fix the metric
    extraction so we have ground truth for phases 1-2.
-2. **Phase 1 — Option B (tool caching).** Contained, no new dependency,
-   likely the single largest remaining win (tool schemas probably outweigh
-   the system prompt in token count). Lower risk than Option C.
+2. **Phase 1 — Option B (tool caching).** Very likely already realized by
+   the existing system-prompt breakpoint (see revised Option B above) —
+   confirm with the Phase 0 direct-API check's token counts before writing
+   any pre-binding code. Only build the pre-bind mechanism if that check
+   shows tools are *not* landing in the cached prefix.
 3. **Phase 2 — Option C (history caching), scoped to within-turn only
    first.** Anchor a breakpoint at the end of the message list before each
    subsequent model call in the *same* tool-calling turn — this is the
@@ -238,13 +321,17 @@ precisely because the latter can be true while the former silently isn't.
 
 ## Open Questions
 
-1. Is system-prompt caching actually taking effect in client-sandbox today?
-   (See "Open Question 1" above — blocks everything else.)
-2. Does marking only the system-prompt block with `cache_control` already
-   implicitly cache the preceding tools block per Anthropic's prefix-caching
-   semantics, as `docs/prompt-caching.md` currently claims? If so, Phase 1
-   may already be partially realized and just needs verification, not new
-   code.
+1. ~~Is system-prompt caching actually taking effect in client-sandbox
+   today?~~ **Resolved** — see "Open Question 1" above. The 8-hour
+   zero-log-hits symptom was a telemetry bug (`bailey_agent_services.py:594`
+   read `usage_metadata` with `getattr` instead of dict access), not
+   evidence that caching itself isn't working. Whether caching itself is
+   effective still needs the direct-API check (step 2) run once against a
+   real credential.
+2. ~~Does marking only the system-prompt block with `cache_control` already
+   implicitly cache the preceding tools block?~~ **Very likely yes** — see
+   the revised Option B above. Needs the same direct-API check to confirm
+   with real token counts before treating Phase 1 as fully closed.
 3. What's the actual breakpoint budget once Phase 1 and 2 are both in play,
    and does it require collapsing the two current system-prompt breakpoints
    into one?
