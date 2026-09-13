@@ -18,13 +18,19 @@ from languagemodelcommon.configs.schemas.config_schema import PromptConfig
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
+from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
+    LanguageModelCommonEnvironmentVariables,
+)
 
 
 def _build_converter() -> LangGraphToOpenAIConverter:
-    """Bypass __init__'s isinstance checks; create_graph_for_llm_async does
-    not read instance state, so an empty shell is sufficient (same pattern
-    as _build_converter in test_langgraph_to_openai_converter.py)."""
-    return object.__new__(LangGraphToOpenAIConverter)
+    """Bypass __init__'s isinstance checks; create_graph_for_llm_async only
+    reads self.environment_variables beyond that, so a shell with a real
+    (default-valued) environment_variables instance is sufficient (same
+    pattern as _build_converter in test_langgraph_to_openai_converter.py)."""
+    converter = object.__new__(LangGraphToOpenAIConverter)
+    converter.environment_variables = LanguageModelCommonEnvironmentVariables()
+    return converter
 
 
 class TestCreateGraphForLlmAsyncPromptCaching:
@@ -133,3 +139,50 @@ class TestCreateGraphForLlmAsyncPromptCaching:
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+
+
+class TestCreateGraphForLlmAsyncHistoryCacheMiddlewareGating:
+    """BAI-706 ADR Phase 2: HistoryCacheMiddleware must be off by default and
+    only wired in when ENABLE_HISTORY_PROMPT_CACHING is explicitly enabled --
+    it's gated behind a PHI/EA sign-off (ADR Open Question 4), not a rollout
+    convenience."""
+
+    async def _middleware(
+        self, *, monkeypatch: pytest.MonkeyPatch, enable_history_prompt_caching: bool
+    ) -> list[Any]:
+        if enable_history_prompt_caching:
+            monkeypatch.setenv("ENABLE_HISTORY_PROMPT_CACHING", "true")
+        else:
+            monkeypatch.delenv("ENABLE_HISTORY_PROMPT_CACHING", raising=False)
+        converter = _build_converter()
+        with patch(
+            "languagemodelcommon.converters.langgraph_to_openai_converter.create_agent"
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MagicMock()
+            await converter.create_graph_for_llm_async(
+                llm=MagicMock(),
+                tools=[],
+                store=None,
+                checkpointer=None,
+                system_prompts=None,
+                tool_catalog=None,
+            )
+        return cast(list[Any], mock_create_agent.call_args.kwargs["middleware"])
+
+    @pytest.mark.asyncio
+    async def test_flag_off_by_default_excludes_history_cache_middleware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        middleware = await self._middleware(
+            monkeypatch=monkeypatch, enable_history_prompt_caching=False
+        )
+        assert not any(type(m).__name__ == "HistoryCacheMiddleware" for m in middleware)
+
+    @pytest.mark.asyncio
+    async def test_flag_on_includes_history_cache_middleware(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        middleware = await self._middleware(
+            monkeypatch=monkeypatch, enable_history_prompt_caching=True
+        )
+        assert any(type(m).__name__ == "HistoryCacheMiddleware" for m in middleware)

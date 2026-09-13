@@ -357,12 +357,43 @@ Sequence the work rather than doing it all at once:
    prefix under the existing system-prompt breakpoint (see Option B above)
    — the pre-bind mechanism will not be built.
 3. **Phase 2 — Option C (history caching), scoped to within-turn only
-   first.** Anchor a breakpoint at the end of the message list before each
-   subsequent model call in the *same* tool-calling turn — this is the
-   part that directly addresses burst throttling and has the least TTL
-   risk (calls are seconds apart). Cross-turn (user-to-user) history
-   caching, and its interaction with `SmartHistoryManager` trimming, is a
-   larger follow-up worth its own validation once Phase 2 lands.
+   first. Implemented, behind a default-off flag.** `HistoryCacheMiddleware`
+   (`languagemodelcommon/converters/history_cache_middleware.py`) sets
+   `model_settings["cache_control"]` on the outgoing `ModelRequest` from the
+   second model call in a turn onward (a `ToolMessage` in `request.messages`
+   is the signal a round-trip already happened). `ChatAnthropicBedrock`
+   inherits `_get_request_payload`/`_apply_cache_control_to_last_eligible_block`
+   from `langchain_anthropic` unmodified — that function recomputes the
+   breakpoint's position from the live, freshly-formatted message list on
+   *every* call, so it re-anchors after any trim/compaction for free; no
+   bespoke re-anchoring logic was needed or written. Gated by
+   `ENABLE_HISTORY_PROMPT_CACHING` (default `false`) on
+   `LanguageModelCommonEnvironmentVariables`, wired into `create_agent`'s
+   middleware list in `create_graph_for_llm_async`
+   (`converters/langgraph_to_openai_converter.py`). Cross-turn (user-to-user)
+   history caching, and its interaction with `SmartHistoryManager` trimming
+   (not wired into the live code path today — see below), is a larger
+   follow-up worth its own validation once Phase 2's within-turn scope is
+   proven in a real environment.
+
+   **Live verification** (`cloud-lead-dev`, synthetic non-PHI content, real
+   `create_agent` + `HistoryCacheMiddleware`, a 3-round tool-calling turn
+   forced via prompt to call two tools sequentially rather than in
+   parallel):
+
+   | Call | cache_read | cache_creation | Note |
+   |------|-----------|-----------------|------|
+   | 1 | 0 | 0 | No `ToolMessage` yet — middleware correctly skips |
+   | 2 | 0 | 1900 | First `ToolMessage` present — cache write |
+   | 3 | 1900 | 128 | Reads all of call 2's write, writes the new increment |
+
+   Confirms the sliding-window pattern end to end: each call after the
+   first reads the previous call's cached prefix in full and pays only for
+   the newest delta, exactly the mechanism this ADR set out to add.
+
+   **Not shipped active anywhere.** Open Question 4 (security/EA PHI/BAA
+   sign-off) is unresolved; the flag stays off until that lands. This is a
+   deliberate gate, not a rollout convenience — see Open Question 4.
 
 Each phase should ship with a test asserting cache hits actually occur
 (via `cache_read`/`cache_creation` on a real or recorded response), not just
@@ -400,11 +431,23 @@ precisely because the latter can be true while the former silently isn't.
    same direct-API check isolated the tool contribution at 6733 of 9154
    cached tokens (see Option B above). Phase 1 is closed as already
    realized; no pre-binding code will be written.
-3. What's the actual breakpoint budget once Phase 1 and 2 are both in play,
+3. ~~What's the actual breakpoint budget once Phase 1 and 2 are both in play,
    and does it require collapsing the two current system-prompt breakpoints
-   into one?
+   into one?~~ **Resolved: no collapse needed.** Phase 1 needs zero
+   additional breakpoints (already realized under the existing system
+   breakpoint). Current usage is 2 of 4 (`bailey_system_prompt` + `skills`);
+   Phase 2 adds one (the history breakpoint) → 3 of 4. Comfortable headroom
+   without touching the system-prompt config, provided the stock
+   `AnthropicPromptCachingMiddleware` (which also tags the system message
+   and last tool with its own breakpoints) is not used — this ADR's
+   `HistoryCacheMiddleware` only ever sets one breakpoint, on the message
+   list.
 4. Confirm with security/EA that Bedrock prompt-cache storage is covered by
-   existing PHI/BAA commitments before Phase 2 ships.
+   existing PHI/BAA commitments before Phase 2 ships. **Still open** — Phase
+   2 is implemented and verified against real Bedrock (see Recommendation
+   above) but shipped behind `ENABLE_HISTORY_PROMPT_CACHING`, default
+   `false`, precisely because this question has not been answered. Do not
+   flip the default without an explicit sign-off.
 
 ## Related Work
 

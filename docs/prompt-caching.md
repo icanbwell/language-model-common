@@ -33,7 +33,8 @@ SystemMessage(content=[
 
 - Prompts with `"cache": true` get `cache_control: {"type": "ephemeral"}`
 - Prompts without `cache` (or `cache: false/null`) are processed normally on every request
-- User messages are **never** cached
+- User/assistant/tool messages are never cached across turns; within a single multi-round
+  tool-calling turn they can be, behind a flag — see "Within-turn history caching" below
 - Default is **opt-in**: prompts are NOT cached unless explicitly marked
 
 ### Cache boundary design
@@ -43,7 +44,8 @@ SystemMessage(content=[
 [System block 1: stable instructions]  ← cache: true → cache_control: ephemeral
 [System block 2: skills/tools list]    ← cache: true → cache_control: ephemeral
 [System block 3: datetime context]     ← cache: false → NOT cached (changes per request)
-[Messages]                              ← NOT cached (per-conversation, per-user)
+[Messages]                              ← NOT cached across turns; within-turn caching
+                                           available behind ENABLE_HISTORY_PROMPT_CACHING
 ```
 
 Anthropic renders request content in `tools → system → messages` wire order, and
@@ -63,6 +65,30 @@ This ensures:
 - No risk of cross-tenant data leakage
 - Cache behavior is explicitly declared in config, not hardcoded
 
+### Within-turn history caching
+
+`HistoryCacheMiddleware` (`languagemodelcommon/converters/history_cache_middleware.py`)
+places a `cache_control` breakpoint at the end of the message list before each model
+call after the first within a single multi-round tool-calling turn — the pattern used
+by agentic coding tools: cache everything-so-far, pay full price only for the newest
+delta. A `ToolMessage` in the request's message list is the signal a round-trip
+already happened, so the first call in a turn (nothing to read yet) is never tagged.
+
+Unlike the system-prompt mechanism, this does not place `cache_control` on content
+blocks directly — it sets `model_settings["cache_control"]` on the `ModelRequest`,
+which `ChatAnthropicBedrock` (inherited from `langchain_anthropic`) turns into a
+block-level breakpoint on the last eligible block of the last message, recomputed
+fresh from the live message list on every call. That recomputation is what makes
+re-anchoring after history trimming automatic — there is no fixed offset to get
+stale.
+
+**Off by default** (`ENABLE_HISTORY_PROMPT_CACHING=false`). Conversation messages
+carry far more PHI risk than system prompts or tool schemas; this stays off until
+security/EA confirm Bedrock prompt-cache storage is covered by existing PHI/BAA
+commitments (see `adrs/0001-extend-prompt-caching-to-tools-and-history.md`, Open
+Question 4). Scoped to within-turn only — a separate turn (new user message) never
+shares a cache read with a prior one.
+
 ---
 
 ## Provider support
@@ -77,9 +103,12 @@ This ensures:
 
 ## Configuration
 
-Cache behavior is controlled per-prompt in the chat completion config JSON via the `cache` field on `PromptConfig`. No environment variables needed.
+Cache behavior is controlled per-prompt in the chat completion config JSON via the `cache` field on `PromptConfig`.
 
 To cache a prompt, add `"cache": true` to its entry in `system_prompts`. Prompts without this field (or with `cache: false`) are never cached.
+
+Within-turn history caching is controlled separately via the `ENABLE_HISTORY_PROMPT_CACHING`
+environment variable (default `false`), read by `LanguageModelCommonEnvironmentVariables.enable_history_prompt_caching`.
 
 ---
 
