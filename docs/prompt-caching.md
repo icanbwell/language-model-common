@@ -39,15 +39,26 @@ SystemMessage(content=[
 ### Cache boundary design
 
 ```
+[Tools]                                 ← cached by provider alongside stable prefix
 [System block 1: stable instructions]  ← cache: true → cache_control: ephemeral
 [System block 2: skills/tools list]    ← cache: true → cache_control: ephemeral
 [System block 3: datetime context]     ← cache: false → NOT cached (changes per request)
-[Tools]                                 ← cached by provider alongside stable prefix
 [Messages]                              ← NOT cached (per-conversation, per-user)
 ```
 
+Anthropic renders request content in `tools → system → messages` wire order, and
+a `cache_control` breakpoint on a system block caches everything *before* it in
+that order — including tool definitions — as part of the same prefix. **Confirmed
+empirically** (BAI-706, see `adrs/0001-extend-prompt-caching-to-tools-and-history.md`
+Phase 0 step 2): a direct `ChatAnthropicBedrock` call with 44 bound tool schemas and
+a cached system prompt showed `cache_creation` covering both — isolating the tool
+contribution (a second call with the same system prompt and no tools bound) measured
+6733 of 9154 cached tokens as attributable to the tool schemas alone. No separate
+`cache_control` on tools is needed or implemented; placing the breakpoint on the last
+cached system block is sufficient.
+
 This ensures:
-- The expensive stable prefix (instructions, skills) is computed once
+- The expensive stable prefix (tools, instructions, skills) is computed once
 - Per-request context (date/time, tenant info) never contaminates the shared cache
 - No risk of cross-tenant data leakage
 - Cache behavior is explicitly declared in config, not hardcoded
