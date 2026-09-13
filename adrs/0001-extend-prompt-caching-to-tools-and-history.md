@@ -110,6 +110,33 @@ work below.** Extending caching to more content is not useful if we can't
 observe whether the existing mechanism works, and right now we can't —
 independent of whether it actually does.
 
+**Update — the getattr fix alone does not restore observability.** Fixing
+`bailey_agent_services.py:594` (below) was necessary but not sufficient.
+Two further, deeper problems in baileyai were found and fixed alongside it
+(see baileyai PR #382, BAI-706):
+
+- `_extract_token_usage` (the method containing the fixed line) was **dead
+  code** — nothing in production called it outside its own test. The
+  getattr fix changed no observable behavior on its own. The corrected
+  logic has been moved into `token_usage_metrics.extract_token_usage` and
+  wired into `PersistTurnStep`, which runs on every real turn.
+- That wiring needs the turn's *original* `AIMessage` (the one Bedrock
+  stamped with `usage_metadata`), which by the time `PersistTurnStep` runs
+  has already been discarded in favor of a metadata-stripped rebuild from
+  plain text. The only way to get it back is `graph.aget_state(config)`,
+  which requires a checkpointer attached to that request's config —
+  previously true only when `persist_tool_turn_messages` or debug logging
+  was on, which is **false in every real environment**, including
+  client-sandbox where this incident happened. baileyai now attaches a
+  request-scoped `InMemorySaver` via a new `ENABLE_TOKEN_USAGE_METRICS`
+  flag (default `true`), independent of those other two flags — see
+  "Related Work" for how this differs from the durable/shared checkpointer
+  discussed there.
+
+All three fixes (getattr, dead-code wiring, checkpointer attach) are
+required together for the log line to actually fire in production; any one
+alone does not.
+
 **Verification steps (Phase 0):**
 
 1. **Fix the telemetry bug.** `bailey_agent_services.py:594` — replace the
@@ -117,8 +144,10 @@ independent of whether it actually does.
    access, matching the `usage.get(...)` pattern three lines above in the
    same function). Add a test asserting the log line fires on a
    dict-shaped `usage_metadata` with nonzero `cache_read`/`cache_creation`.
-   This alone restores the ability to observe caching going forward, but
-   does **not** by itself prove caching is effective — see step 2.
+   **Update:** this step alone does not restore observability — see the
+   "Update" note above. The full fix (getattr + dead-code wiring +
+   checkpointer attach) has shipped in baileyai PR #382. It still does
+   **not** by itself prove caching is effective — see step 2.
 2. **Verify directly against the API, bypassing baileyai's logging
    entirely.** Call `ChatAnthropicBedrock` twice in a row with the
    identical cached system prompt and inspect
@@ -323,11 +352,13 @@ precisely because the latter can be true while the former silently isn't.
 
 1. ~~Is system-prompt caching actually taking effect in client-sandbox
    today?~~ **Resolved** — see "Open Question 1" above. The 8-hour
-   zero-log-hits symptom was a telemetry bug (`bailey_agent_services.py:594`
-   read `usage_metadata` with `getattr` instead of dict access), not
-   evidence that caching itself isn't working. Whether caching itself is
-   effective still needs the direct-API check (step 2) run once against a
-   real credential.
+   zero-log-hits symptom was three stacked telemetry bugs, not evidence
+   that caching itself isn't working: `getattr` instead of dict access on
+   `usage_metadata`, dead code in the method containing that line, and no
+   checkpointer attached in any real environment to read the turn's
+   original message back. All three are fixed (baileyai PR #382). Whether
+   caching itself is effective still needs the direct-API check (step 2)
+   run once against a real credential.
 2. ~~Does marking only the system-prompt block with `cache_control` already
    implicitly cache the preceding tools block?~~ **Very likely yes** — see
    the revised Option B above. Needs the same direct-API check to confirm
@@ -346,9 +377,22 @@ precisely because the latter can be true while the former silently isn't.
 - A related but separate lever discussed and **not** part of this ADR: a
   durable, shared LangGraph checkpointer (Postgres/Redis-backed) would make
   mid-stream retry safe by allowing resumption from the last completed node
-  instead of restarting the graph. baileyai's compiled graph currently
-  passes `checkpointer=None`
-  (`baileyai/services/bailey_agent_services.py:266-273`). That's a larger
-  infra change (new persistence dependency, likely its own Tech Design
-  Review) and is out of scope here; caching reduces the *frequency* of the
-  problem, a checkpointer would change what happens *when* it still occurs.
+  instead of restarting the graph. baileyai's compiled graph still passes
+  `checkpointer=None` at compile time
+  (`baileyai/services/bailey_agent_services.py:266-273`) — that has not
+  changed. That's a larger infra change (new persistence dependency, likely
+  its own Tech Design Review) and remains out of scope here; caching
+  reduces the *frequency* of the problem, a durable checkpointer would
+  change what happens *when* it still occurs.
+
+  **Do not confuse this with the `InMemorySaver` added for Phase 0.**
+  `_prepare_langgraph_config` now conditionally injects a fresh
+  `InMemorySaver()` per request (via `config["configurable"]`, which
+  LangGraph checks before the graph's own `None`) whenever
+  `persist_tool_turn_messages`, `enable_debug_logging`, or the new
+  `enable_token_usage_metrics` (default `true`) is set. This is
+  request-scoped and discarded when the request ends — it exists only so
+  `PersistTurnStep` can read back *that same request's* graph output
+  before responding, not to support resuming across a crash or another
+  pod. It is not shared across requests or pods, does not survive a
+  restart, and does not touch this ADR's durable-checkpointer question.
