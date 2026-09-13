@@ -55,6 +55,9 @@ from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.exceptions.rate_limit_exception import RateLimitException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
+from languagemodelcommon.converters.history_cache_middleware import (
+    HistoryCacheMiddleware,
+)
 from languagemodelcommon.state.messages_state import MyMessagesState
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
@@ -1260,6 +1263,8 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         middleware: list[AgentMiddleware] = []
         if tool_catalog is not None:
             middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+        if self.environment_variables.enable_history_prompt_caching:
+            middleware.append(HistoryCacheMiddleware())
 
         react_agent_runnable = create_agent(
             model=llm,
