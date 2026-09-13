@@ -21,6 +21,8 @@ jobs:
     steps:
       # Checks-out your repository
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -67,7 +69,7 @@ jobs:
       # Publish all test results in the GitHub UI
       - name: Surface failing tests
         if: always()
-        uses: pmeier/pytest-results-action@v0.8.0 # https://github.com/pmeier/pytest-results-action
+        uses: pmeier/pytest-results-action@0841ca7226ab155943837380769373a5dd14d7ed # v0.8.0 - https://github.com/pmeier/pytest-results-action
         with:
           # A list of JUnit XML files, directories containing the former, and wildcard
           # patterns to process.
