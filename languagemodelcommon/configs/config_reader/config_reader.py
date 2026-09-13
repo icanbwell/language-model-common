@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 
 from pathlib import Path
@@ -108,7 +109,7 @@ class ConfigReader:
         models_testing_path: Optional[str],
     ) -> List[ChatModelConfig]:
         # Read from MongoDB model config cache
-        models = await self._read_from_model_config_cache()
+        models = await self._read_from_model_config_cache(config_path=config_path)
         if models:
             return models
 
@@ -119,7 +120,7 @@ class ConfigReader:
 
         async with self._lock:
             # Double-check after acquiring lock
-            models = await self._read_from_model_config_cache()
+            models = await self._read_from_model_config_cache(config_path=config_path)
             if models:
                 return models
 
@@ -145,17 +146,33 @@ class ConfigReader:
                 )
                 return models
 
-            await self._write_to_model_config_cache(models)
+            await self._write_to_model_config_cache(
+                models=models, config_path=config_path
+            )
             return models
 
-    def _model_config_cache_key(self, *, model_name: str) -> str:
-        return f"v{self.SCHEMA_VERSION}:{model_name}"
+    @staticmethod
+    def _config_ref_hash(*, config_path: str) -> str:
+        """Short hash identifying the config source (including its ref/tag).
 
-    async def _read_from_model_config_cache(self) -> List[ChatModelConfig] | None:
+        Scopes cache keys by source so that pods on different config refs
+        (e.g. mid-rollout, where an old pod's MODELS_OFFICIAL_PATH still
+        points at a stale ref) never read or write each other's cached
+        content under the same key -- see BAI-720.
+        """
+        return hashlib.sha256(config_path.encode("utf-8")).hexdigest()[:12]
+
+    def _model_config_cache_key(self, *, config_path: str, model_name: str) -> str:
+        ref_hash = self._config_ref_hash(config_path=config_path)
+        return f"v{self.SCHEMA_VERSION}:{ref_hash}:{model_name}"
+
+    async def _read_from_model_config_cache(
+        self, *, config_path: str
+    ) -> List[ChatModelConfig] | None:
         """Load model configs from the model config cache (one row per model).
 
         Scans the collection for all entries matching the current schema
-        version prefix.
+        version and config-source prefix.
 
         Returns ``None`` when the cache has no entries.
         Raises on store or deserialization errors so that a misconfigured
@@ -163,7 +180,8 @@ class ConfigReader:
         """
         if not self._model_config_cache_store:
             return None
-        prefix = f"v{self.SCHEMA_VERSION}:"
+        ref_hash = self._config_ref_hash(config_path=config_path)
+        prefix = f"v{self.SCHEMA_VERSION}:{ref_hash}:"
         model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
         if not model_keys:
             return None
@@ -205,7 +223,9 @@ class ConfigReader:
 
         return []
 
-    async def _write_to_model_config_cache(self, models: List[ChatModelConfig]) -> None:
+    async def _write_to_model_config_cache(
+        self, *, models: List[ChatModelConfig], config_path: str
+    ) -> None:
         """Store each model config as a separate row in the cache.
 
         Raises on write errors so that a misconfigured cache backend
@@ -215,7 +235,9 @@ class ConfigReader:
             return
         ttl = self._environment_variables.model_config_cache_ttl_seconds
         for model in models:
-            key = self._model_config_cache_key(model_name=model.name)
+            key = self._model_config_cache_key(
+                config_path=config_path, model_name=model.name
+            )
             await self._model_config_cache_store.put(
                 key,
                 model.model_dump(),
@@ -471,7 +493,7 @@ class ConfigReader:
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models=models, config_path=config_path)
-        await self._write_to_model_config_cache(models)
+        await self._write_to_model_config_cache(models=models, config_path=config_path)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
             fetcher_url = (
