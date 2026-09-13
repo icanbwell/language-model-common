@@ -11,7 +11,10 @@ from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
-from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.file_managers.file_writer import (
+    DebugFileWriteResult,
+    FileWriter,
+)
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
@@ -322,3 +325,82 @@ async def test_tool_error_with_exception_shows_raw_message_when_debug_enabled(
 
     assert len(chunks) >= 1
     assert "Invalid arguments" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_error_write_to_file_hides_raw_message_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BAI-708 regression: the write-to-file path is a second, separate
+    surface that streams a download link to the user -- it must go through
+    the same sanitization as the inline SSE message, not the raw exception.
+    Previously this path used the raw `error_message` directly, so a debug
+    download link could still leak internal detail (e.g. a raw MCP JSON-RPC
+    error payload) even though the inline chat message was already sanitized."""
+    monkeypatch.setenv("WRITE_TOOL_OUTPUT_TO_FILE", "true")
+    environment_variables = LanguageModelCommonEnvironmentVariables()
+    mock_file_writer = AsyncMock(spec=FileWriter)
+    mock_file_writer.write_to_file_async = AsyncMock(
+        return_value=DebugFileWriteResult(
+            file_path="/mock-debug-storage/tool-error.txt",
+            file_url="https://example.com/tool-error.txt",
+            url_error_message=None,
+        )
+    )
+    stream_buffer_manager = StreamBufferManager(
+        flush_interval_seconds=10.0, enabled=False
+    )
+    stream_debug_output_manager = StreamDebugOutputManager()
+    tool_event_handler = ToolEventHandler(
+        debug_file_writer=mock_file_writer,
+        environment_variables=environment_variables,
+        tool_display_name_mapper=ToolDisplayNameMapper(),
+        stream_buffer_manager=stream_buffer_manager,
+        stream_debug_output_manager=stream_debug_output_manager,
+    )
+
+    raw_message = (
+        "Invalid arguments - resource: Input should be 'Procedure' or 'Condition'"
+    )
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_error",
+            "name": "call_tool",
+            "data": {
+                "input": {"name": "get_clinical_notes", "arguments": {}},
+                "error": ToolException(raw_message),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_error(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    # The download-link SSE chunk itself never contains the raw message.
+    assert not any(raw_message in chunk for chunk in chunks)
+    assert any("Click to download" in chunk for chunk in chunks)
+
+    # Neither does the content actually written to the debug file...
+    written_content = mock_file_writer.write_to_file_async.call_args.kwargs["content"]
+    assert raw_message not in written_content
+    assert "I ran into an issue processing your request" in written_content
+
+    # ...nor the debug-output fragment recorded alongside it.
+    debug_text = stream_debug_output_manager.pop_text()
+    assert debug_text is not None
+    assert raw_message not in debug_text

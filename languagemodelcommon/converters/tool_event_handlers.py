@@ -378,10 +378,10 @@ class ToolEventHandler(StreamContextMixin):
 
         if self._environment_variables.write_tool_output_to_file:
             error_content: str = (
-                f"Tool: {tool_name}\nError: {error_message}\nRuntime: {runtime_str}"
+                f"Tool: {tool_name}\nError: {display_message}\nRuntime: {runtime_str}"
             )
             self._stream_debug_output_manager.append_fragment(
-                text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{error_message}\n",
+                text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{display_message}\n",
             )
             tool_display_name: str = self._tool_display_name_mapper.get_name_for_tool(
                 tool_name=tool_name or "unknown",
