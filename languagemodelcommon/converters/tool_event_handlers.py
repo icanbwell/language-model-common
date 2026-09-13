@@ -29,6 +29,7 @@ from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
+from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.tool_display_name_mapper import ToolDisplayNameMapper
@@ -350,7 +351,23 @@ class ToolEventHandler(StreamContextMixin):
         if isinstance(error_message, AuthorizationNeededException):
             return
 
-        content_text: str = f"\n\n> Tool {tool_name} encountered an error: {error_message} [runtime: {runtime_str}]\n"
+        # error_message is the raw exception the tool raised (or its repr,
+        # for the `str(event)` fallback above) -- never show it to the user
+        # verbatim, since it can contain internal implementation detail
+        # (e.g. a raw MCP JSON-RPC error payload). Route it through the same
+        # user-friendly-message formatting used for turn-ending errors
+        # elsewhere (see LangGraphToOpenAiConverter).
+        display_message: Any = (
+            ExceptionLogger.get_user_friendly_message(
+                error_message,
+                enable_debug_logging=chat_request_wrapper.enable_debug_logging,
+                generic_message=self._environment_variables.generic_error_message,
+            )
+            if isinstance(error_message, Exception)
+            else error_message
+        )
+
+        content_text: str = f"\n\n> Tool {tool_name} encountered an error: {display_message} [runtime: {runtime_str}]\n"
 
         yield chat_request_wrapper.create_sse_message(
             request_id=request_information.request_id,
