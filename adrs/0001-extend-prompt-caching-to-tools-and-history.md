@@ -158,8 +158,39 @@ alone does not.
    This is the ground-truth test — it depends on neither baileyai's log
    line firing nor its field-name assumptions being correct, so it isolates
    whether caching itself is working from whether our telemetry around it
-   is working. Run once against a real dev/client-sandbox credential and
-   record the actual `usage_metadata` output here as evidence.
+   is working.
+
+   **Done — run against `cloud-lead-dev` (account 875300655693),
+   `us.anthropic.claude-sonnet-4-20250514-v1:0`, `us-east-1`, via
+   `ChatAnthropicBedrock` directly (not through baileyai).** System prompt
+   was a synthetic, non-PHI block sized to prod's combined cached blocks
+   (~1730-token order of magnitude), with 44 synthetic FHIR-shaped tool
+   schemas bound (`llm.bind_tools(...)`) to also exercise Open Question 2.
+   `response.usage_metadata["input_token_details"]`:
+
+   | Call | cache_creation | cache_read | input_tokens |
+   |------|----------------|------------|---------------|
+   | 1 (cold) | 9154 | 0 | 9307 |
+   | 2 (~2s later, same prefix) | 0 | 9154 | 9307 |
+
+   Matches the predicted pattern exactly: call 1 writes the cache
+   (`cache_creation > 0`, `cache_read == 0`), call 2 reads it in full
+   (`cache_read > 0`, `cache_creation == 0`, same token count reused
+   byte-for-byte). **System-prompt caching works correctly at the API
+   level; Open Question 1's remaining half (is the mechanism itself
+   effective, independent of the telemetry bugs already fixed) is
+   resolved: yes.**
+
+   A third call with the identical system prompt but no tools bound
+   isolated the system-prompt-only contribution: `cache_creation = 2421`.
+   Delta against the with-tools run: `9154 - 2421 = 6733` tokens
+   attributable solely to the 44 tool schemas, landing inside the same
+   cached prefix anchored by the system block's `cache_control` breakpoint
+   — confirming Anthropic's `tools → system → messages` wire-order caching
+   behaves as documented. **Open Question 2 resolved: yes, tools are
+   already included in the cached prefix today, with real token counts
+   (73% of the cached prefix in this run) rather than inference from
+   documentation.**
 
 ## Decision Drivers
 
@@ -200,11 +231,15 @@ The originally-proposed mechanism (pre-bind tools with an explicit
 `cache_control` tag, duplicating a slice of `convert_to_anthropic_tool`'s
 logic outside the library boundary — a drift risk if `langchain_aws`
 changes that conversion) would very likely add duplicated logic for a win
-that already exists. **Revised plan:** as part of Phase 0's verification
-call (Open Question 1, step 2), measure whether `cache_creation_input_tokens`
-on the first call is large enough to include the ~44 tool schemas (not just
-the ~1730-token system prompt). If confirmed, close Option B as already
-realized and skip the pre-binding implementation entirely.
+that already exists.
+
+**Closed — confirmed already realized, no implementation needed.** Phase
+0's verification call (step 2 above) isolated the tool-schema contribution
+to the cached prefix directly: 6733 of 9154 cached tokens on the cold call
+came from the 44 bound tool schemas, with the remaining 2421 matching the
+system-prompt-only run. Tools are already covered by the existing
+system-prompt breakpoint. **Option B requires no code change; the
+pre-binding mechanism should not be written.**
 
 ### Option C — Cache tool definitions + conversation/tool-call history
 
@@ -317,11 +352,10 @@ Sequence the work rather than doing it all at once:
    before extending scope. If system-prompt caching isn't actually taking
    effect today, fix that first; if it's a telemetry bug, fix the metric
    extraction so we have ground truth for phases 1-2.
-2. **Phase 1 — Option B (tool caching).** Very likely already realized by
-   the existing system-prompt breakpoint (see revised Option B above) —
-   confirm with the Phase 0 direct-API check's token counts before writing
-   any pre-binding code. Only build the pre-bind mechanism if that check
-   shows tools are *not* landing in the cached prefix.
+2. **Phase 1 — Option B (tool caching). Closed, no code required.** The
+   Phase 0 direct-API check confirmed tools already land in the cached
+   prefix under the existing system-prompt breakpoint (see Option B above)
+   — the pre-bind mechanism will not be built.
 3. **Phase 2 — Option C (history caching), scoped to within-turn only
    first.** Anchor a breakpoint at the end of the message list before each
    subsequent model call in the *same* tool-calling turn — this is the
@@ -356,13 +390,16 @@ precisely because the latter can be true while the former silently isn't.
    that caching itself isn't working: `getattr` instead of dict access on
    `usage_metadata`, dead code in the method containing that line, and no
    checkpointer attached in any real environment to read the turn's
-   original message back. All three are fixed (baileyai PR #382). Whether
-   caching itself is effective still needs the direct-API check (step 2)
-   run once against a real credential.
+   original message back. All three are fixed (baileyai PR #382).
+   **Fully resolved** — the Phase 0 step 2 direct-API check (see above)
+   confirmed caching itself is effective: `cache_creation=9154`/
+   `cache_read=0` on the cold call, `cache_read=9154`/`cache_creation=0`
+   on the repeat call, against real `cloud-lead-dev` credentials.
 2. ~~Does marking only the system-prompt block with `cache_control` already
-   implicitly cache the preceding tools block?~~ **Very likely yes** — see
-   the revised Option B above. Needs the same direct-API check to confirm
-   with real token counts before treating Phase 1 as fully closed.
+   implicitly cache the preceding tools block?~~ **Resolved: yes.** The
+   same direct-API check isolated the tool contribution at 6733 of 9154
+   cached tokens (see Option B above). Phase 1 is closed as already
+   realized; no pre-binding code will be written.
 3. What's the actual breakpoint budget once Phase 1 and 2 are both in play,
    and does it require collapsing the two current system-prompt breakpoints
    into one?
