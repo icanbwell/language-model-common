@@ -146,7 +146,9 @@ class ConfigReader:
                 )
                 return models
 
-            await self._write_to_model_config_cache(models, config_path=config_path)
+            await self._write_to_model_config_cache(
+                models=models, config_path=config_path
+            )
             return models
 
     @staticmethod
@@ -222,7 +224,7 @@ class ConfigReader:
         return []
 
     async def _write_to_model_config_cache(
-        self, models: List[ChatModelConfig], *, config_path: str
+        self, *, models: List[ChatModelConfig], config_path: str
     ) -> None:
         """Store each model config as a separate row in the cache.
 
@@ -491,7 +493,7 @@ class ConfigReader:
         """
         logger.info("Retrying MCP server resolution for models with unresolved refs")
         await self._resolve_mcp_servers_async(models=models, config_path=config_path)
-        await self._write_to_model_config_cache(models, config_path=config_path)
+        await self._write_to_model_config_cache(models=models, config_path=config_path)
         unresolved = self._get_unresolved_mcp_servers(models)
         if unresolved:
             fetcher_url = (
