@@ -237,6 +237,19 @@ class LanguageModelCommonEnvironmentVariables(
         return self.str2bool(os.environ.get("CONTEXT_COMPACTION_ENABLED", "true"))
 
     @property
+    def enable_history_prompt_caching(self) -> bool:
+        """When True, cache conversation/tool-call history within a tool-calling turn.
+
+        Defaults to False. Conversation messages (patient questions, clinical
+        note contents, tool results containing FHIR resources) are far more
+        likely to contain PHI than the system prompt or tool schemas that are
+        already cached today. This must stay off until security/EA confirm
+        Bedrock prompt-cache storage is covered by existing PHI/BAA
+        commitments (BAI-706 ADR Open Question 4) — do not flip this default.
+        """
+        return self.str2bool(os.environ.get("ENABLE_HISTORY_PROMPT_CACHING", "false"))
+
+    @property
     def rate_limit_retry_enabled(self) -> bool:
         """When True, retry upstream model rate limits (HTTP 429) before surfacing them."""
         return self.str2bool(os.environ.get("RATE_LIMIT_RETRY_ENABLED", "true"))

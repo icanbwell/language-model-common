@@ -250,10 +250,21 @@ class PassThroughTokenManager:
         if not tool_client_id:
             raise ValueError("Tool using authentication must have a client ID.")
 
+        # tool_auth_provider is known-truthy here (validated above), so this
+        # tool genuinely has an auth provider configured — a login step
+        # should almost always be constructible. Fall back to the bare
+        # preamble only in the rare case build_login_message_for_tool
+        # can't build one (e.g. a transient failure creating the
+        # authorization URL): this call site already guarantees the tool
+        # is a real login candidate, unlike the pass-through-only tools
+        # build_login_message_for_tool's ``None`` return is meant to guard.
         error_message = await self.build_login_message_for_tool(
             auth_information=auth_information,
             authentication_config=authentication_config,
             tool_auth_provider=tool_auth_provider,
+        ) or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+            getattr(authentication_config, "display_name", None)
+            or authentication_config.name
         )
         return await self.tool_auth_manager.get_token_for_tool_async(
             auth_header=auth_header,
@@ -267,11 +278,17 @@ class PassThroughTokenManager:
         auth_information: AuthInformation,
         authentication_config: AuthenticationConfig,
         tool_auth_provider: str | None = None,
-    ) -> str:
+    ) -> str | None:
         """Build a user-facing error message with login links for a tool.
 
         Can be called independently of the full token-check flow to produce
         an actionable message when an MCP server rejects a request.
+
+        Returns ``None`` when no login step actually exists for this tool
+        (e.g. a pass-through-only tool with no ``oauth``/app-login/token-save
+        config) — callers must treat that as an ordinary tool failure, not
+        an authorization prompt. Telling a user to "log in below" when
+        nothing renders below is a dead end.
         """
         if tool_auth_provider is None:
             try:
@@ -400,12 +417,6 @@ class PassThroughTokenManager:
             getattr(authentication_config, "display_name", None)
             or authentication_config.name
         )
-        error_message: str = (
-            "\n"
-            + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
-                tool_display_name
-            )
-        )
 
         login_options: list[str] = []
         if authorization_url:
@@ -434,9 +445,29 @@ class PassThroughTokenManager:
         if app_token_save_uri_with_parameters:
             login_options.append(f"[Paste Token]({app_token_save_uri_with_parameters})")
 
+        if not login_options:
+            # No OAuth authorization URL, app-login link, or token-paste
+            # link could be built — most commonly because this tool is
+            # configured for pass-through auth with no `oauth` block (e.g.
+            # a shared catalog service like skills-library, not a
+            # per-user-scoped resource). There's no login step for the
+            # user to take, so don't promise one.
+            logger.info(
+                "No actionable login option available for %s — suppressing "
+                "login message rather than showing a dead-end prompt",
+                authentication_config.name,
+            )
+            return None
+
+        error_message: str = (
+            "\n"
+            + AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                tool_display_name
+            )
+        )
         if len(login_options) == 1:
             error_message += f"\nClick here to {login_options[0]}."
-        elif len(login_options) > 1:
+        else:
             error_message += "\n\nChoose one of the following options to authenticate:"
             for i, option in enumerate(login_options, 1):
                 error_message += f"\n{i}. {option}"

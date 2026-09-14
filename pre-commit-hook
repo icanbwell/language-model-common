@@ -9,9 +9,13 @@ cd "$GIT_PROJECT_ROOT"
 # the container.
 GIT_COMMON_DIR=$(cd "$(git rev-parse --git-common-dir)" && pwd)
 
-docker build -f ./pre-commit.Dockerfile -t pre-commit-spf . && docker run --rm --name pre-commit-spf-run \
+# Build the image as the caller's UID/GID so the non-root user inside the
+# container can read/write the bind-mounted source tree and git common dir.
+docker build -f ./pre-commit.Dockerfile -t pre-commit-spf \
+  --build-arg USER_UID="$(id -u)" --build-arg USER_GID="$(id -g)" \
+  . && docker run --rm --name pre-commit-spf-run \
   -v "$(pwd)/:/sourcecode" \
   -v "$GIT_COMMON_DIR:$GIT_COMMON_DIR" \
-  -v pre-commit-cache:/root/.cache/pre-commit \
+  -v pre-commit-cache:/home/appuser/.cache/pre-commit \
   pre-commit-spf \
   sh -c "git config --global --add safe.directory '$GIT_COMMON_DIR' && pre-commit run --all-files"

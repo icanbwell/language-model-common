@@ -196,6 +196,11 @@ class LanguageModelCommonContainerFactory:
                 collection=c.resolve(
                     LanguageModelCommonEnvironmentVariables
                 ).mcp_tool_cache_db_collection,
+                ttl_seconds=float(
+                    c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).mcp_tools_metadata_cache_ttl_seconds
+                ),
             ),
         )
         container.singleton(

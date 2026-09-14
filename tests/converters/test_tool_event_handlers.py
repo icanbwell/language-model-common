@@ -4,13 +4,17 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables.schema import StandardStreamEvent
+from langchain_core.tools import ToolException
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
-from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.file_managers.file_writer import (
+    DebugFileWriteResult,
+    FileWriter,
+)
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
 )
@@ -232,3 +236,171 @@ async def test_tool_error_yields_error_message(
 
     assert len(chunks) >= 1
     assert "Something went wrong" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_error_with_exception_hides_raw_message_by_default(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """BAI-708 regression: this handler fires unconditionally on every
+    on_tool_error callback -- regardless of whether the tool's own
+    handle_tool_error setting will later convert the exception into normal
+    ToolMessage content or let it propagate. It must never leak the raw
+    exception text (which can include internal detail like a raw MCP
+    JSON-RPC error payload) to a user who hasn't opted into debug logging."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_error",
+            "name": "call_tool",
+            "data": {
+                "input": {"name": "get_clinical_notes", "arguments": {}},
+                "error": ToolException(
+                    "Invalid arguments - resource: Input should be "
+                    "'Procedure' or 'Condition'"
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_error(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    assert len(chunks) >= 1
+    assert "Invalid arguments" not in chunks[0]
+    assert "I ran into an issue processing your request" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_error_with_exception_shows_raw_message_when_debug_enabled(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """Debug-enabled requests should still see the real error for
+    troubleshooting -- only the default (non-debug) path hides it."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_error",
+            "name": "call_tool",
+            "data": {
+                "input": {"name": "get_clinical_notes", "arguments": {}},
+                "error": ToolException(
+                    "Invalid arguments - resource: Input should be "
+                    "'Procedure' or 'Condition'"
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=True),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_error(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    assert len(chunks) >= 1
+    assert "Invalid arguments" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_tool_error_write_to_file_hides_raw_message_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BAI-708 regression: the write-to-file path is a second, separate
+    surface that streams a download link to the user -- it must go through
+    the same sanitization as the inline SSE message, not the raw exception.
+    Previously this path used the raw `error_message` directly, so a debug
+    download link could still leak internal detail (e.g. a raw MCP JSON-RPC
+    error payload) even though the inline chat message was already sanitized."""
+    monkeypatch.setenv("WRITE_TOOL_OUTPUT_TO_FILE", "true")
+    environment_variables = LanguageModelCommonEnvironmentVariables()
+    mock_file_writer = AsyncMock(spec=FileWriter)
+    mock_file_writer.write_to_file_async = AsyncMock(
+        return_value=DebugFileWriteResult(
+            file_path="/mock-debug-storage/tool-error.txt",
+            file_url="https://example.com/tool-error.txt",
+            url_error_message=None,
+        )
+    )
+    stream_buffer_manager = StreamBufferManager(
+        flush_interval_seconds=10.0, enabled=False
+    )
+    stream_debug_output_manager = StreamDebugOutputManager()
+    tool_event_handler = ToolEventHandler(
+        debug_file_writer=mock_file_writer,
+        environment_variables=environment_variables,
+        tool_display_name_mapper=ToolDisplayNameMapper(),
+        stream_buffer_manager=stream_buffer_manager,
+        stream_debug_output_manager=stream_debug_output_manager,
+    )
+
+    raw_message = (
+        "Invalid arguments - resource: Input should be 'Procedure' or 'Condition'"
+    )
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_error",
+            "name": "call_tool",
+            "data": {
+                "input": {"name": "get_clinical_notes", "arguments": {}},
+                "error": ToolException(raw_message),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_error(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    # The download-link SSE chunk itself never contains the raw message.
+    assert not any(raw_message in chunk for chunk in chunks)
+    assert any("Click to download" in chunk for chunk in chunks)
+
+    # Neither does the content actually written to the debug file...
+    written_content = mock_file_writer.write_to_file_async.call_args.kwargs["content"]
+    assert raw_message not in written_content
+    assert "I ran into an issue processing your request" in written_content
+
+    # ...nor the debug-output fragment recorded alongside it.
+    debug_text = stream_debug_output_manager.pop_text()
+    assert debug_text is not None
+    assert raw_message not in debug_text

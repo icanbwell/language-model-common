@@ -468,6 +468,112 @@ async def test_model_config_cache_put_error_propagates(
         await reader.read_model_configs_async()
 
 
+class _FakeMongoCollection:
+    """Filters by the same ``$regex: "^prefix"`` shape the real find() call uses,
+    unlike _MockMongoCollection above which ignores its query entirely --
+    needed to actually exercise ref-scoped prefix matching (BAI-720)."""
+
+    def __init__(self, backing: dict[str, dict[str, Any]]) -> None:
+        self._backing = backing
+
+    def find(self, query: dict[str, Any], **_: Any) -> _AsyncCursorStub:
+        prefix = query["key"]["$regex"].removeprefix("^")
+        matching = [key for key in self._backing if key.startswith(prefix)]
+        return _AsyncCursorStub(matching)
+
+
+class _FakeModelConfigCacheStore:
+    """Minimal in-memory BaseStore fake backing both put()/get_many() and the
+    Mongo-collection-shaped find() ConfigReader uses for prefix scans."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, dict[str, Any]] = {}
+        self._collections_by_name = {"models": _FakeMongoCollection(self._data)}
+
+    async def put(self, key: str, value: dict[str, Any], **_: Any) -> None:
+        self._data[key] = value
+
+    async def get_many(self, keys: list[str], **_: Any) -> list[dict[str, Any] | None]:
+        return [self._data.get(key) for key in keys]
+
+    async def delete_many(self, keys: list[str], **_: Any) -> int:
+        deleted = 0
+        for key in keys:
+            if self._data.pop(key, None) is not None:
+                deleted += 1
+        return deleted
+
+
+@pytest.mark.asyncio
+async def test_different_config_refs_do_not_share_cache_entries(
+    prompt_library_manager: PromptLibraryManager,
+    tmp_path: Path,
+) -> None:
+    """Regression test for BAI-720: an old pod on ref A and a new pod on ref
+    B must not read or overwrite each other's cached model config under the
+    same key, even though both cache the same model name."""
+    old_ref_dir = tmp_path / "old_ref"
+    old_ref_dir.mkdir()
+    (old_ref_dir / "model.json").write_text(
+        '{"id": "1", "name": "SharedModel", "description": "old content"}',
+        encoding="utf-8",
+    )
+    new_ref_dir = tmp_path / "new_ref"
+    new_ref_dir.mkdir()
+    (new_ref_dir / "model.json").write_text(
+        '{"id": "1", "name": "SharedModel", "description": "new content"}',
+        encoding="utf-8",
+    )
+
+    shared_store = _FakeModelConfigCacheStore()
+    os.environ.pop("MODELS_TESTING_PATH", None)
+
+    # New pod reads first, populating the cache under its own ref-scoped key.
+    os.environ["MODELS_OFFICIAL_PATH"] = str(new_ref_dir)
+    new_pod_reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+        model_config_cache_store=shared_store,  # type: ignore[arg-type]
+    )
+    new_result = await new_pod_reader.read_model_configs_async()
+    assert new_result[0].description == "new content"
+
+    # Old pod, still on the stale ref, takes a cache-miss request (simulated
+    # here by a fresh ConfigReader instance, same as a separate pod process)
+    # and writes its own stale content back.
+    os.environ["MODELS_OFFICIAL_PATH"] = str(old_ref_dir)
+    old_pod_reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+        model_config_cache_store=shared_store,  # type: ignore[arg-type]
+    )
+    old_result = await old_pod_reader.read_model_configs_async()
+    assert old_result[0].description == "old content"
+
+    # The new pod's cached entry must be untouched by the old pod's write.
+    os.environ["MODELS_OFFICIAL_PATH"] = str(new_ref_dir)
+    reread_result = await new_pod_reader.read_model_configs_async()
+    assert reread_result[0].description == "new content"
+
+
+def test_model_config_cache_key_differs_by_config_path(
+    prompt_library_manager: PromptLibraryManager,
+) -> None:
+    reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+    key_a = reader._model_config_cache_key(
+        config_path="github://org/repo/configs?ref=1.0.0", model_name="bailey"
+    )
+    key_b = reader._model_config_cache_key(
+        config_path="github://org/repo/configs?ref=1.0.1", model_name="bailey"
+    )
+    assert key_a != key_b
+    assert key_a.startswith(f"v{ConfigReader.SCHEMA_VERSION}:")
+    assert key_a.endswith(":bailey")
+
+
 @pytest.mark.asyncio
 async def test_model_config_cache_none_store_skips_entirely(
     prompt_library_manager: PromptLibraryManager,

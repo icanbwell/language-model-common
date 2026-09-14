@@ -7,6 +7,7 @@ after discovering tools via search_tools.
 import logging
 from typing import Any, Literal, Type
 
+from langchain_core.messages.content import create_text_block
 from langchain_core.tools import BaseTool, ToolException
 from mcp.types import (
     CallToolResult,
@@ -22,9 +23,13 @@ from oidcauthlib.auth.exceptions.authorization_needed_exception import (
 )
 
 from languagemodelcommon.mcp.interceptors.auth import AuthMcpCallInterceptor
+from languagemodelcommon.mcp.mcp_client.content_conversion import (
+    ToolMessageContentBlock,
+    convert_call_tool_result,
+)
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_tool_provider import MCPToolProvider
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog
+from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -44,7 +49,14 @@ class CallToolInput(BaseModel):
 
 
 def _call_tool_result_to_text(result: CallToolResult) -> str:
-    """Convert a CallToolResult to a text representation for the LLM."""
+    """Text summary of a CallToolResult.
+
+    Used only for the isError ToolException message and to seed the MCP Apps
+    UI embed's tool_result_text -- NOT for the LLM-facing content, which goes
+    through convert_call_tool_result instead (see CallToolTool._arun) so
+    images and binary/document resources reach the model intact rather than
+    being collapsed to placeholder text.
+    """
     parts: list[str] = []
     for block in result.content:
         if isinstance(block, TextContent):
@@ -83,6 +95,7 @@ class CallToolTool(BaseTool):
     catalog: ToolCatalog
     mcp_tool_provider: MCPToolProvider
     auth_interceptor: AuthMcpCallInterceptor
+    resolver: ToolResolverProtocol | None = None
     session_pool: McpSessionPool | None = None
     proxy_base_url: str | None = None
     session_token: str | None = None
@@ -94,11 +107,43 @@ class CallToolTool(BaseTool):
 
     async def _arun(
         self, name: str, arguments: dict[str, Any] | None = None
-    ) -> tuple[str, dict[str, Any] | None]:
+    ) -> tuple[list[ToolMessageContentBlock], dict[str, Any] | None]:
         if arguments is None:
             arguments = {}
 
         entry = self.catalog.get_tool(name)
+
+        # The catalog is built fresh per request, so a server may still be
+        # registered-but-unresolved here even though a prior search_tools
+        # call (in an earlier turn, on a different catalog instance) already
+        # surfaced this tool name to the model. Resolve on demand rather than
+        # failing — mirrors the lazy resolution SearchToolsTool performs.
+        if entry is None and self.resolver is not None:
+            auth_exception: AuthorizationNeededException | None = None
+            for server in self.catalog.get_unresolved_servers():
+                try:
+                    await self.catalog.resolve_server(
+                        server_name=server.server_name, resolver=self.resolver
+                    )
+                except AuthorizationNeededException as e:
+                    # An unrelated server needing auth must not block
+                    # resolution of the rest -- the target tool may live on
+                    # a different, no-auth server. Only surfaced below if
+                    # the tool is still missing after every server has been
+                    # attempted.
+                    if auth_exception is None:
+                        auth_exception = e
+                except Exception as e:
+                    logger.warning(
+                        "Failed to resolve server %s while looking up tool '%s': %s",
+                        server.server_name,
+                        name,
+                        ExceptionLogger.format_exception_message(e),
+                    )
+            entry = self.catalog.get_tool(name)
+            if entry is None and auth_exception is not None:
+                raise auth_exception
+
         if entry is None:
             raise ToolException(
                 f"Tool '{name}' not found. Use search_tools to find available tools."
@@ -112,22 +157,43 @@ class CallToolTool(BaseTool):
                 auth_interceptor=self.auth_interceptor,
                 session_pool=self.session_pool,
             )
-            text = _call_tool_result_to_text(result)
+            summary_text = _call_tool_result_to_text(result)
 
             # Surface the *inner* tool's own error status (result.isError), not just
             # transport-level failures — MCP servers report rejected/invalid calls
             # this way rather than raising, so this is the only place that signal
             # exists. Raising here (with handle_tool_error=True) is what makes the
             # resulting ToolMessage carry status="error" instead of looking like an
-            # ordinary successful call to the model.
+            # ordinary successful call to the model. Checked before building
+            # content_blocks below: convert_call_tool_result assumes a successful
+            # result's content shape and can raise on content types (e.g.
+            # AudioContent) _call_tool_result_to_text tolerates -- irrelevant on
+            # this path since it's discarded in favor of the ToolException anyway.
             if result.isError:
-                raise ToolException(text)
+                raise ToolException(summary_text)
+
+            try:
+                content_blocks = convert_call_tool_result(result)
+            except (NotImplementedError, ValueError) as e:
+                # convert_call_tool_result raises for content types it doesn't
+                # explicitly support (e.g. AudioContent). A *successful* tool
+                # result must not turn into a failed call just because one
+                # content type isn't multimodal-convertible yet -- fall back
+                # to the tolerant text summary, matching this path's
+                # pre-existing behavior for unrecognized content types.
+                logger.warning(
+                    "Content conversion failed for tool '%s': %s; falling back "
+                    "to text summary",
+                    name,
+                    e,
+                )
+                content_blocks = [create_text_block(text=summary_text)]
 
             app_embed = await self.mcp_tool_provider.fetch_mcp_app_embed(
                 tool=entry.tool,
                 tool_name=name,
                 tool_args=arguments,
-                tool_result_text=text,
+                tool_result_text=summary_text,
                 agent_config=entry.agent_config,
                 session_pool=self.session_pool,
                 proxy_base_url=self.proxy_base_url,
@@ -138,7 +204,7 @@ class CallToolTool(BaseTool):
             if app_embed is not None:
                 artifact = {"mcp_app_embed": app_embed}
 
-            return text, artifact
+            return content_blocks, artifact
         except AuthorizationNeededException:
             # Auth exceptions must propagate so the user sees login links
             raise

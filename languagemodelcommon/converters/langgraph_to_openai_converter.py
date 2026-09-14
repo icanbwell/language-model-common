@@ -55,6 +55,9 @@ from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.exceptions.rate_limit_exception import RateLimitException
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog
 from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
+from languagemodelcommon.converters.history_cache_middleware import (
+    HistoryCacheMiddleware,
+)
 from languagemodelcommon.state.messages_state import MyMessagesState
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
@@ -292,6 +295,36 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 content=message,
                 source="error",
             )
+        except RateLimitException as e:
+            # Raised once _stream_graph_with_messages_async has exhausted its
+            # retry-with-backoff budget (or the 429 arrived mid-stream, after
+            # partial output was already sent, where retrying would duplicate
+            # content). Give the user a rate-limit-specific message instead of
+            # the generic fallback below.
+            wait_hint = (
+                f" (about {round(e.retry_after_seconds)}s)"
+                if e.retry_after_seconds
+                else ""
+            )
+            message = (
+                "I'm getting a lot of requests right now. "
+                f"Please wait a moment{wait_hint} and try again."
+            )
+            logger.warning(
+                "Rate limit retries exhausted in stream. request_id=%s error=%s",
+                request_id,
+                e,
+            )
+            yield chat_request_wrapper.create_sse_message(
+                request_id=request_id,
+                usage_metadata=None,
+                content=message,
+                source="error",
+            )
+            yield chat_request_wrapper.create_final_sse_message(
+                request_id=request_id, usage_metadata=None, source="final"
+            )
+            return
         except AuthorizationNeededException as e:
             # Show the login prompt to the user and stop processing.  The
             # on_tool_error handler may have already streamed this, but it is
@@ -486,23 +519,51 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
                 return JSONResponse(content=content_json)
             except* TokenRetrievalError as e:
-                error_message = (
-                    f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
-                    "  If you are running locally, your AWS session may have expired."
+                # SECURITY: log full exception details server-side always,
+                # but only include them in the client-facing `detail` when
+                # debug logging is enabled for this request -- matches the
+                # streaming path's handling of the same exception type
+                # (get_streaming_response_async / _stream_resp_async_generator).
+                # The generic re-authentication guidance itself is safe to
+                # show unconditionally; the interpolated exception text is not.
+                logger.exception(
+                    "AWS Bedrock Token retrieval error: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
+                guidance = (
+                    "If you are running locally, your AWS session may have expired."
                     "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
-                logger.exception(error_message)
+                if chat_request_wrapper.enable_debug_logging:
+                    error_message = (
+                        f"AWS Bedrock Token retrieval error: {ExceptionLogger.format_exception_message(e)}."
+                        f"  {guidance}"
+                    )
+                else:
+                    error_message = f"AWS Bedrock Token retrieval error.  {guidance}"
                 raise HTTPException(
                     status_code=401,
                     detail=error_message,
                 )
             except* botocore.exceptions.NoCredentialsError as e:
-                error_message = (
-                    f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
-                    "  If you are running locally, your AWS session may have expired."
+                # SECURITY: same rationale as the TokenRetrievalError branch
+                # above -- log full details, gate the exception text in the
+                # response behind enable_debug_logging.
+                logger.exception(
+                    "AWS Bedrock Login error: %s",
+                    ExceptionLogger.format_exception_message(e),
+                )
+                guidance = (
+                    "If you are running locally, your AWS session may have expired."
                     "  Please re-authenticate using `aws sso login --profile [role]`."
                 )
-                logger.exception(error_message)
+                if chat_request_wrapper.enable_debug_logging:
+                    error_message = (
+                        f"AWS Bedrock Login error: {ExceptionLogger.format_exception_message(e)}."
+                        f"  {guidance}"
+                    )
+                else:
+                    error_message = f"AWS Bedrock Login error.  {guidance}"
                 raise HTTPException(
                     status_code=401,
                     detail=error_message,
@@ -523,9 +584,20 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 )
                 log_message = f"Unexpected error: {ExceptionLogger.format_exception_message(e)}\nStack trace:\n{stack}"
                 logger.exception(log_message)
+                # SECURITY: don't embed the raw exception object in the
+                # response `detail` unconditionally -- it can include
+                # internal paths, argument values, or other implementation
+                # details. Full details are already logged above; the
+                # client only gets them back when debug logging is enabled
+                # for this request, mirroring the streaming path's
+                # ExceptionLogger.get_user_friendly_message usage.
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Unexpected error: {first_exception}",
+                    detail=ExceptionLogger.get_user_friendly_message(
+                        e,
+                        enable_debug_logging=chat_request_wrapper.enable_debug_logging,
+                        generic_message=self.environment_variables.generic_error_message,
+                    ),
                 )
 
     @staticmethod
@@ -1191,6 +1263,8 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         middleware: list[AgentMiddleware] = []
         if tool_catalog is not None:
             middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
+        if self.environment_variables.enable_history_prompt_caching:
+            middleware.append(HistoryCacheMiddleware())
 
         react_agent_runnable = create_agent(
             model=llm,

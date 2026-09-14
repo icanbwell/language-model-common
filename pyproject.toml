@@ -37,7 +37,7 @@ dependencies = [
     "pypdf>=6.6.0",
     "markdownify>=0.14.1",
     "beautifulsoup4>=4.12.3",
-    "oidcauthlib>=3.0.13",
+    "oidcauthlib>=3.0.18",
     "fsspec>=2026.2.0",
     "authlib>=1.6.5",
     "langchain-google-genai>=4.1.3",
@@ -110,6 +110,14 @@ ignore_missing_imports = true
 [tool.uv]
 exclude-newer = "2 days"
 index-strategy = "unsafe-best-match"
+
+# oidcauthlib is an internal, first-party package (published by this org,
+# not a third-party dependency), so the supply-chain rationale for the
+# blanket 2-day cutoff doesn't apply to it - always trust the latest release.
+# A fixed date here would eventually become a stale ceiling that blocks a
+# future legitimate release once real time passes it.
+[tool.uv.exclude-newer-package]
+oidcauthlib = "0 days"
 
 [[tool.uv.index]]
 name = "alpine-wheels"

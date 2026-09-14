@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional, cast
 
 import pytest
 from botocore.exceptions import TokenRetrievalError
@@ -10,10 +10,36 @@ from languagemodelcommon.converters.langgraph_to_openai_converter import (
 )
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.history.context_compactor import ContextCompactor
+from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
+    ChatRequestWrapper,
+)
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.request_information import RequestInformation
+
+
+class _FakeChatRequestWrapper:
+    """Minimal SSE-message stub, mirroring the fake used in test_streaming_manager.py."""
+
+    def create_sse_message(
+        self,
+        *,
+        request_id: str,
+        content: str | None,
+        usage_metadata: Optional[dict[str, Any]],
+        source: str,
+    ) -> str:
+        return content or ""
+
+    def create_final_sse_message(
+        self,
+        *,
+        request_id: str,
+        usage_metadata: Optional[dict[str, Any]],
+        source: str,
+    ) -> str:
+        return "final"
 
 
 async def _no_sleep(*_args: Any, **_kwargs: Any) -> None:
@@ -524,3 +550,37 @@ async def test_stream_does_not_retry_rate_limit_when_disabled(
         ]
 
     assert fake_graph._call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_resp_async_generator_reports_rate_limit_after_retries_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once _stream_graph_with_messages_async exhausts its retry budget, the
+    top-level SSE generator surfaces a rate-limit-specific message instead of
+    the generic fallback error."""
+    monkeypatch.setenv("RATE_LIMIT_MAX_RETRIES", "1")
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        error=_AnthropicRateLimitError(),
+        fail_count=5,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in converter._stream_resp_async_generator(
+            chat_request_wrapper=cast(ChatRequestWrapper, _FakeChatRequestWrapper()),
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            messages=[],
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+    ]
+
+    assert any("wait a moment" in chunk for chunk in chunks)
+    assert chunks[-1] == "final"
+    # initial attempt + 1 retry, then the exhausted RateLimitException propagates
+    assert fake_graph._call_count == 2

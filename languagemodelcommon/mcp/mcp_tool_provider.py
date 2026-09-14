@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import timedelta
 from typing import Any, Dict, List
 
@@ -67,6 +68,7 @@ from languagemodelcommon.mcp.mcp_client.ui_resource import (
     inject_tool_data_into_html,
     is_tool_visible_to_model,
 )
+from languagemodelcommon.utilities.security import url_validation
 from languagemodelcommon.mcp.tool_catalog import ToolCatalog, ToolResolverProtocol
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -169,6 +171,27 @@ class MCPToolProvider:
         self._server_card_discovery = server_card_discovery
 
     @staticmethod
+    async def _reject_unsafe_redirect(response: httpx.Response) -> None:
+        """httpx response event hook: block redirects to disallowed hosts.
+
+        SECURITY: _build_connection_config validates tool_config.url up
+        front, but that check has no visibility into where the server
+        subsequently redirects a request. Since this client is built with
+        follow_redirects=True, a validated-but-attacker-influenced or
+        compromised MCP endpoint could respond with a redirect (e.g. to
+        169.254.169.254 or an internal service) and httpx would transparently
+        follow it, defeating the earlier SSRF check entirely. Re-validate
+        every redirect's Location header the same way before it's followed.
+        """
+        if not response.is_redirect:
+            return
+        location = response.headers.get("location")
+        if location and url_validation.parse_and_check_host(url=location) is None:
+            raise ValueError(
+                f"Blocked redirect to disallowed host (SSRF protection): {location!r}"
+            )
+
+    @staticmethod
     def get_httpx_async_client(
         *,
         headers: dict[str, str] | None = None,
@@ -187,6 +210,7 @@ class MCPToolProvider:
             timeout=timeout,
             follow_redirects=True,
             transport=LoggingTransport(httpx.AsyncHTTPTransport()),
+            event_hooks={"response": [MCPToolProvider._reject_unsafe_redirect]},
         )
 
     @staticmethod
@@ -235,6 +259,22 @@ class MCPToolProvider:
         url = tool_config.url
         if url is None:
             raise ValueError(f"Tool URL must be provided for: {tool_config.name}")
+
+        # SECURITY: tool_config.url ultimately traces back to deployment
+        # configuration (e.g. an env var substituted into a config file) and
+        # is not necessarily trustworthy -- a misconfiguration or a
+        # compromised config source could point this at an internal-only
+        # service or a cloud metadata endpoint (SSRF). Reject obviously
+        # dangerous destinations (private/loopback/link-local/metadata
+        # addresses, non-http(s) schemes) before ever opening a connection.
+        # This does not consult a per-deployment allowlist -- callers that
+        # need to restrict to a specific set of hosts should additionally
+        # combine this with url_validation.host_matches_allowlist.
+        if url_validation.parse_and_check_host(url=url) is None:
+            raise ValueError(
+                f"Tool URL for '{tool_config.name}' failed SSRF validation "
+                f"(disallowed scheme or blocked/internal host): {url!r}"
+            )
 
         tool_call_timeout_seconds: int = (
             self.environment_variables.tool_call_timeout_seconds
@@ -528,7 +568,10 @@ class MCPToolProvider:
                         tool_url=tool_url,
                     )
                     raise AuthorizationMcpToolTokenInvalidException(
-                        message=login_message,
+                        message=login_message
+                        or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                            tool_config.display_name or tool_config.name
+                        ),
                         tool_url=tool_url,
                         token=None,
                     ) from e
@@ -544,7 +587,10 @@ class MCPToolProvider:
                 tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=login_message,
+                message=login_message
+                or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_config.display_name or tool_config.name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -561,7 +607,10 @@ class MCPToolProvider:
                 tool_url=tool_url,
             )
             raise AuthorizationMcpToolTokenInvalidException(
-                message=login_message,
+                message=login_message
+                or AuthorizationMcpToolTokenInvalidException.build_login_required_message(
+                    tool_config.display_name or tool_config.name
+                ),
                 tool_url=tool_url,
                 token=None,
             ) from e
@@ -592,6 +641,10 @@ class MCPToolProvider:
         proactively runs auth discovery so login links are surfaced at listing
         time rather than failing generically at tool invocation.
         """
+        # Captured before the fetch, not after — see list_all_tools_cached's
+        # fetched_at for why: a fetch that started before a concurrent
+        # clear_async() must not resurrect stale data if it lands afterward.
+        fetched_at = time.time()
         server_card_tools = (
             await self._server_card_discovery.fetch_tools_from_server_card(
                 mcp_server_url=tool_url,
@@ -599,7 +652,9 @@ class MCPToolProvider:
             )
         )
         if server_card_tools is not None:
-            await self.tool_list_cache.put_async(key=cache_key, tools=server_card_tools)
+            await self.tool_list_cache.put_async(
+                key=cache_key, tools=server_card_tools, fetched_at=fetched_at
+            )
             await self._ensure_auth_configured(tool_config=tool_config)
             return server_card_tools
 
@@ -728,8 +783,16 @@ class MCPToolProvider:
         auth_interceptor: "AuthMcpCallInterceptor",
         tool_config: AgentConfig,
         tool_url: str,
-    ) -> str:
-        """Build a login message, falling back to a generic one if DCR or other steps fail."""
+    ) -> str | None:
+        """Build a login message, falling back to a generic one if DCR or other steps fail.
+
+        Returns ``None`` when ``auth_interceptor.build_login_message_for_tool``
+        determines there's no actionable login step for this tool (see
+        ``PassThroughTokenManager.build_login_message_for_tool``) — that
+        case is distinct from a DCR/build failure and must not get the
+        generic fallback text below, since that text is itself the
+        dead-end "log in below" prompt this is meant to avoid.
+        """
         try:
             return await auth_interceptor.build_login_message_for_tool(tool_config)
         except Exception as msg_err:
@@ -970,6 +1033,26 @@ class MCPToolProvider:
                     tool_config=tool_config,
                     tool_url=tool_url,
                 )
+                if login_message is None:
+                    # No actionable login step exists for this tool (e.g. a
+                    # pass-through-only tool with no oauth config, like the
+                    # skills-library catalog) — telling the user to "log in
+                    # below" when nothing renders below is a dead end.
+                    # Degrade the same way a non-auth-related failure does:
+                    # log it and drop the tool for this turn. Log at error
+                    # level with the original exception so a genuine outage
+                    # (server down, wrong URL, broken auth proxy) is still
+                    # traceable and isn't indistinguishable from the
+                    # intended "no login step exists" degradation.
+                    logger.error(
+                        "_list_mcp_tools_for_config No actionable login "
+                        "option for '%s' at '%s' — dropping tool for this "
+                        "turn: %s",
+                        tool_config.name,
+                        tool_url,
+                        ExceptionLogger.format_exception_message(e),
+                    )
+                    return []
                 raise AuthorizationMcpToolTokenInvalidException(
                     message=login_message,
                     tool_url=tool_url,
