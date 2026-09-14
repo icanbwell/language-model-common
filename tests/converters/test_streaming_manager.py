@@ -225,3 +225,62 @@ async def test_custom_event_mcp_tool_heartbeat_forwards_to_wrapper(
         )
     ]
     assert chunks == ["heartbeat:propose_skill:15"]
+
+
+@pytest.mark.asyncio
+async def test_resuming_after_tool_call_inserts_missing_separator(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """Regression test for BAI-726: LangGraph re-invokes the chat model after
+    a tool call, and the resumed completion is not guaranteed to start with
+    whitespace against the text already streamed -- without the on_chat_model_start
+    boundary check, "have access to." + "Let me search" renders as
+    "have access to.Let me search"."""
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-3")
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+
+    async def _drive(event: StandardStreamEvent | CustomStreamEvent) -> list[str]:
+        return [
+            chunk
+            async for chunk in manager.handle_langchain_event(
+                event=event,
+                chat_request_wrapper=chat_request_wrapper,
+                request_information=request_information,
+                tool_start_times={},
+            )
+        ]
+
+    # First chat-model invocation streams text, then the graph calls a tool.
+    await _drive(cast(StandardStreamEvent, {"event": "on_chat_model_start"}))
+    await _drive(
+        cast(
+            StandardStreamEvent,
+            {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": AIMessageChunk(content="have access to.")},
+            },
+        )
+    )
+
+    # LangGraph re-invokes the chat model after the tool call completes.
+    await _drive(cast(StandardStreamEvent, {"event": "on_chat_model_start"}))
+    resumed_chunks = await _drive(
+        cast(
+            StandardStreamEvent,
+            {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": AIMessageChunk(content="Let me search")},
+            },
+        )
+    )
+    resumed_chunks += await _drive(
+        cast(StandardStreamEvent, {"event": "on_chain_end", "data": {}})
+    )
+
+    rendered = "".join(chunk for chunk in resumed_chunks if chunk)
+    assert "to.Let" not in rendered
+    assert "to. Let" in rendered

@@ -293,6 +293,11 @@ class LangGraphStreamingManager(StreamContextMixin):
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
+        # Each on_chat_model_start after the first marks a fresh model
+        # invocation (e.g. resuming after a tool call) whose first token has
+        # no guaranteed whitespace against what was already streamed -- see
+        # StreamBufferManager.mark_new_invocation_boundary.
+        self._stream_buffer_manager.mark_new_invocation_boundary()
         yield None
 
     async def _handle_on_chat_model_end(
