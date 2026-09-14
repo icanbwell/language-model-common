@@ -19,8 +19,6 @@ from languagemodelcommon.history.conversation_history_manager import (
     ConversationHistoryManager,
 )
 from languagemodelcommon.history.smart_history_manager import SmartHistoryManager
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog
-from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.state.messages_state import MyMessagesState
 
 logger = logging.getLogger(__name__)
@@ -46,7 +44,6 @@ class GraphBuilder:
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[str] | None = None,
-        tool_catalog: ToolCatalog | None = None,
         max_messages: int = 20,
         max_tokens: int = 4000,
     ) -> CompiledStateGraph[MyMessagesState]:
@@ -98,8 +95,6 @@ class GraphBuilder:
 
         # Create react agent
         middleware: list[AgentMiddleware] = []
-        if tool_catalog is not None:
-            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
 
         react_agent_runnable = create_agent(
             model=llm,

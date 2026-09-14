@@ -50,7 +50,6 @@ class TestCreateGraphForLlmAsyncPromptCaching:
                 store=None,
                 checkpointer=None,
                 system_prompts=system_prompts,
-                tool_catalog=None,
             )
         system_prompt = mock_create_agent.call_args.kwargs["system_prompt"]
         assert isinstance(system_prompt, SystemMessage)
@@ -165,7 +164,6 @@ class TestCreateGraphForLlmAsyncHistoryCacheMiddlewareGating:
                 store=None,
                 checkpointer=None,
                 system_prompts=None,
-                tool_catalog=None,
             )
         return cast(list[Any], mock_create_agent.call_args.kwargs["middleware"])
 

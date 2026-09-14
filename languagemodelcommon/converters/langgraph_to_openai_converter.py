@@ -53,8 +53,6 @@ from languagemodelcommon.converters.stream_debug_output_manager import (
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.exceptions.rate_limit_exception import RateLimitException
-from languagemodelcommon.mcp.tool_catalog import ToolCatalog
-from languagemodelcommon.mcp.tool_discovery_middleware import ToolDiscoveryMiddleware
 from languagemodelcommon.converters.history_cache_middleware import (
     HistoryCacheMiddleware,
 )
@@ -1209,7 +1207,6 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[PromptConfig] | None = None,
-        tool_catalog: ToolCatalog | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
         Create a graph for the language model asynchronously.
@@ -1225,7 +1222,6 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             system_prompts: Optional list of PromptConfig objects. Each becomes a
                 separate content block in the system message. Blocks with cache=True
                 are marked for prompt caching (cache_control: ephemeral).
-            tool_catalog: Optional tool catalog for tool discovery middleware
         """
         prompt: SystemMessage | None = None
         if system_prompts:
@@ -1261,8 +1257,6 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         )
         # Create the react agent with optional system prompt
         middleware: list[AgentMiddleware] = []
-        if tool_catalog is not None:
-            middleware.append(ToolDiscoveryMiddleware(catalog=tool_catalog))
         if self.environment_variables.enable_history_prompt_caching:
             middleware.append(HistoryCacheMiddleware())
 
