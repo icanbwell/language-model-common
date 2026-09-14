@@ -6,7 +6,7 @@ A shared Python framework for building LLM-powered agent applications with LangC
 
 - **Multi-source configuration loading** — Read LLM model configs from local filesystem, AWS S3, or GitHub repositories with TTL-based caching and client-specific overrides (see [config reader security notes](docs/config-reader-security.md))
 - **LangGraph-to-OpenAI protocol conversion** — Stream LangGraph agent output as OpenAI-compatible Server-Sent Events (SSE) for chat completion APIs
-- **MCP (Model Context Protocol) integration** — Tool discovery with BM25 search ranking, OAuth 2.1/OIDC support, dynamic client registration, and [MCP Apps](docs/mcp-apps.md) UI rendering via `ui://` resources
+- **MCP (Model Context Protocol) client toolkit** — Connect to and invoke tools on a single MCP server as LangChain-compatible tools, with session pooling, server-card discovery, and tool-result caching
 - **Prompt template library** — Load and manage prompt templates from organized directory structures with GitHub auto-download support
 - **File management abstraction** — Unified interface for local and AWS S3 storage with factory-based backend selection
 - **Token and cost management** — Token reduction for long conversations and usage metadata tracking via tiktoken
@@ -81,18 +81,6 @@ factory = FileManagerFactory(aws_client_factory=aws_factory)
 # Automatically selects local or S3 backend based on the folder path
 manager = factory.create("s3://my-bucket")
 await manager.save_file_async(file_data, "s3://my-bucket", "output.json", "application/json")
-```
-
-### MCP Tool Discovery
-
-```python
-from languagemodelcommon.mcp import ToolCatalog
-
-catalog = ToolCatalog()
-catalog.register_server("my-server", url="http://localhost:8080")
-
-# BM25-ranked search for relevant tools
-results = catalog.search("search patient records")
 ```
 
 ### Using the Dependency Injection Container
