@@ -83,18 +83,6 @@ manager = factory.create("s3://my-bucket")
 await manager.save_file_async(file_data, "s3://my-bucket", "output.json", "application/json")
 ```
 
-### MCP Tool Discovery
-
-```python
-from languagemodelcommon.mcp import ToolCatalog
-
-catalog = ToolCatalog()
-catalog.register_server("my-server", url="http://localhost:8080")
-
-# BM25-ranked search for relevant tools
-results = catalog.search("search patient records")
-```
-
 ### Using the Dependency Injection Container
 
 ```python
