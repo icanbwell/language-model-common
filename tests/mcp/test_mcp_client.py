@@ -11,7 +11,6 @@ from mcp.types import (
     TextContent,
     TextResourceContents,
 )
-from pydantic import AnyUrl
 
 from languagemodelcommon.mcp.mcp_client.content_conversion import (
     convert_call_tool_result,
@@ -139,7 +138,7 @@ class TestConvertMcpContentToLcBlock:
         assert result["text"] == "hello world"
 
     def test_image_content(self) -> None:
-        content = ImageContent(type="image", data="base64data", mimeType="image/png")
+        content = ImageContent(type="image", data="base64data", mime_type="image/png")
         result = convert_mcp_content_to_lc_block(content)
         assert result["type"] == "image"
 
@@ -147,7 +146,7 @@ class TestConvertMcpContentToLcBlock:
         content = EmbeddedResource(
             type="resource",
             resource=TextResourceContents(
-                uri=AnyUrl("file://test.txt"),
+                uri="file://test.txt",
                 text="some text",
             ),
         )
@@ -170,7 +169,7 @@ class TestConvertCallToolResult:
     def test_error_result_returns_error_text(self) -> None:
         result = CallToolResult(
             content=[TextContent(type="text", text="Something went wrong")],
-            isError=True,
+            is_error=True,
         )
         blocks = convert_call_tool_result(result)
         assert len(blocks) == 1

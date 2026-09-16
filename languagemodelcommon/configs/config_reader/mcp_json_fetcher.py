@@ -74,7 +74,7 @@ class McpJsonFetcher:
 
         raw_json = text_parts[0]
 
-        if getattr(result, "isError", False):
+        if getattr(result, "is_error", False):
             error_msg = (
                 f"get_mcp_servers_config returned an error for plugin "
                 f"'{plugin_name}' from {self._url}: {raw_json}"
@@ -140,7 +140,7 @@ class McpJsonFetcher:
 
         raw_json = text_parts[0]
 
-        if getattr(result, "isError", False):
+        if getattr(result, "is_error", False):
             logger.warning(
                 "get_mcp_servers_config returned an error from %s: %s",
                 self._url,

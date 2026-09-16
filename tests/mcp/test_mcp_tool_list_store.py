@@ -84,7 +84,7 @@ class TestPutToolsTtl:
 
         await store.put_tools(
             key="https://mcp.example.com",
-            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
         )
 
         backing_store.put.assert_awaited_once()
@@ -142,7 +142,7 @@ class TestClearVsConcurrentWriteRace:
         # (and lands) afterward.
         await store.put_tools(
             key=key,
-            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
             fetched_at=fetch_started_at,
         )
 
@@ -159,7 +159,7 @@ class TestClearVsConcurrentWriteRace:
 
         await store.put_tools(
             key=key,
-            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
             fetched_at=fetch_started_at,
         )
 
@@ -203,7 +203,7 @@ class TestClearVsConcurrentWriteRace:
         await store.clear()
         await store.put_tools(
             key=key,
-            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
             fetched_at=time.time(),
         )
         assert await store.get_tools(key=key) is not None
@@ -232,7 +232,7 @@ class TestGetAllToolsRoundTrips:
         for i, key in enumerate(keys):
             await store.put_tools(
                 key=key,
-                tools=[MCPTool(name=f"tool-{i}", inputSchema={"type": "object"})],
+                tools=[MCPTool(name=f"tool-{i}", input_schema={"type": "object"})],
                 fetched_at=time.time(),
             )
 
@@ -253,7 +253,7 @@ class TestGetAllToolsRoundTrips:
         key = "https://mcp.example.com"
         await store.put_tools(
             key=key,
-            tools=[MCPTool(name="search", inputSchema={"type": "object"})],
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
             fetched_at=time.time(),
         )
 

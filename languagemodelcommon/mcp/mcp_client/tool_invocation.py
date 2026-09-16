@@ -93,7 +93,7 @@ async def _tool_supports_tasks(
     """Check whether a specific tool supports task-augmented execution.
 
     Server-level task capability is necessary but not sufficient. Each tool
-    declares its own task support via execution.taskSupport in the tools/list
+    declares its own task support via execution.task_support in the tools/list
     response. Only tools with "optional" or "required" support tasks.
 
     Reads from the existing ToolListCache (populated when tools are listed)
@@ -112,7 +112,7 @@ async def _tool_supports_tasks(
     for tool in tools:
         if tool.name == tool_name:
             if tool.execution is not None:
-                task_support = getattr(tool.execution, "taskSupport", None)
+                task_support = getattr(tool.execution, "task_support", None)
                 return task_support in ("optional", "required")
             return False
 
@@ -120,20 +120,20 @@ async def _tool_supports_tasks(
 
 
 def _extract_task_id_from_create_result(create_result: Any) -> str:
-    """Extract taskId from CreateTaskResult, handling both spec versions.
+    """Extract task_id from CreateTaskResult, handling both spec versions.
 
-    Old spec: result.task.taskId (nested under 'task' field)
-    New spec: result.taskId (flat, Result & Task merged)
+    Old spec: result.task.task_id (nested under 'task' field)
+    New spec: result.task_id (flat, Result & Task merged)
     """
-    # New spec: taskId directly on result
-    if hasattr(create_result, "taskId"):
-        return str(create_result.taskId)
+    # New spec: task_id directly on result
+    if hasattr(create_result, "task_id"):
+        return str(create_result.task_id)
 
     # Old spec: nested under .task
     if hasattr(create_result, "task"):
-        return str(create_result.task.taskId)
+        return str(create_result.task.task_id)
 
-    raise ValueError(f"Cannot extract taskId from {type(create_result)}")
+    raise ValueError(f"Cannot extract task_id from {type(create_result)}")
 
 
 def _extract_result_from_task_status(task_status: Any) -> CallToolResult | None:
@@ -196,7 +196,7 @@ async def _execute_tool_as_task(
                 {
                     "task_id": task_id,
                     "status": status.status,
-                    "message": getattr(status, "statusMessage", None),
+                    "message": getattr(status, "status_message", None),
                     "server_name": server_name,
                     "tool_name": name,
                 },
@@ -297,7 +297,7 @@ def _make_execute_tool(
 
     If the server and tool both advertise task support, the tool is
     executed via the MCP task protocol with polling and progress events.
-    Per-tool ``execution.taskSupport`` is checked from the already-cached
+    Per-tool ``execution.task_support`` is checked from the already-cached
     tool list so that tools with ``"forbidden"`` (or no declaration) use
     normal call_tool.
     """

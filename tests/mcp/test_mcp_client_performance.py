@@ -17,7 +17,7 @@ def _make_tool(name: str = "test_tool") -> MCPTool:
     return MCPTool(
         name=name,
         description="A test tool",
-        inputSchema={"type": "object", "properties": {}},
+        input_schema={"type": "object", "properties": {}},
     )
 
 
@@ -130,7 +130,7 @@ class TestListAllToolsCached:
         tools = [_make_tool()]
         session = AsyncMock()
         session.list_tools = AsyncMock(
-            return_value=MagicMock(tools=tools, nextCursor=None)
+            return_value=MagicMock(tools=tools, next_cursor=None)
         )
 
         result = await list_all_tools_cached(
@@ -156,7 +156,7 @@ class TestListAllToolsCached:
         tools = [_make_tool()]
         session = AsyncMock()
         session.list_tools = AsyncMock(
-            return_value=MagicMock(tools=tools, nextCursor=None)
+            return_value=MagicMock(tools=tools, next_cursor=None)
         )
 
         result = await list_all_tools_cached(
@@ -171,7 +171,7 @@ class TestListAllToolsCached:
         tools = [_make_tool()]
         session = AsyncMock()
         session.list_tools = AsyncMock(
-            return_value=MagicMock(tools=tools, nextCursor=None)
+            return_value=MagicMock(tools=tools, next_cursor=None)
         )
 
         await list_all_tools_cached(session, url="https://example.com", cache=cache)
@@ -191,7 +191,7 @@ class TestListAllToolsCached:
         tools = [_make_tool()]
         session = AsyncMock()
         session.list_tools = AsyncMock(
-            return_value=MagicMock(tools=tools, nextCursor=None)
+            return_value=MagicMock(tools=tools, next_cursor=None)
         )
 
         await list_all_tools_cached(

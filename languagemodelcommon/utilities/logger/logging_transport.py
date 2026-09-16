@@ -1,7 +1,7 @@
 import logging
 from typing import override
 
-import httpx
+import httpx2
 
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.logger.logging_response import (
@@ -12,29 +12,29 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.HTTP)
 
 
-class LoggingTransport(httpx.AsyncBaseTransport):
+class LoggingTransport(httpx2.AsyncBaseTransport):
     """
     A custom HTTP transport that logs request and response details.
-    This class extends httpx.AsyncBaseTransport to log the request method, URL,
+    This class extends httpx2.AsyncBaseTransport to log the request method, URL,
     headers, and content before sending the request, and logs the response status code,
     headers, and content as it is streamed back.
-    It is designed to be used with httpx for asynchronous HTTP requests.
+    It is designed to be used with httpx2 for asynchronous HTTP requests.
     It logs the request method, URL, headers, and content before sending the request,
     and logs the response status code, headers, and content as it is streamed back.
     This transport can be used to monitor and debug HTTP requests and responses in an application.
     """
 
-    def __init__(self, transport: httpx.AsyncBaseTransport) -> None:
+    def __init__(self, transport: httpx2.AsyncBaseTransport) -> None:
         """
         Initialize the LoggingTransport with a given transport.
         Args:
-            transport (httpx.AsyncBaseTransport): The underlying transport to wrap.
+            transport (httpx2.AsyncBaseTransport): The underlying transport to wrap.
             This transport will handle the actual HTTP requests and responses.
         """
-        self.transport: httpx.AsyncBaseTransport = transport
+        self.transport: httpx2.AsyncBaseTransport = transport
 
     @override
-    async def handle_async_request(self, request: httpx.Request) -> LoggingResponse:
+    async def handle_async_request(self, request: httpx2.Request) -> LoggingResponse:
         """
         Handle an asynchronous HTTP request, logging the request details and returning a LoggingResponse.
         Args:
@@ -60,7 +60,7 @@ class LoggingTransport(httpx.AsyncBaseTransport):
                 stream=response.stream,
                 extensions=response.extensions,
             )
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             logger.exception(f"HTTP error occurred: {e}")
             raise
         except Exception as e:

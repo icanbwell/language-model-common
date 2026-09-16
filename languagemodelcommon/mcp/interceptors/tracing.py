@@ -116,7 +116,7 @@ class TracingMcpCallInterceptor:
                             span.set_attribute(
                                 "mcp.result.content_blocks", len(result.content)
                             )
-                            if result.structuredContent is not None:
+                            if result.structured_content is not None:
                                 span.set_attribute("mcp.result.structured", True)
                     except Exception:
                         pass
