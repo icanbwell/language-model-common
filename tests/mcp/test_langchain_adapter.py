@@ -21,7 +21,7 @@ class TestResolveMcpTitle:
             name="get_weather",
             title="Weather Info",
             description="Get weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
             annotations=ToolAnnotations(title="Annotated Weather"),
         )
         assert _resolve_mcp_title(tool) == "Weather Info"
@@ -30,7 +30,7 @@ class TestResolveMcpTitle:
         tool = MCPTool(
             name="get_weather",
             description="Get weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
             annotations=ToolAnnotations(title="Annotated Weather"),
         )
         assert _resolve_mcp_title(tool) == "Annotated Weather"
@@ -39,7 +39,7 @@ class TestResolveMcpTitle:
         tool = MCPTool(
             name="get_weather",
             description="Get weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         assert _resolve_mcp_title(tool) is None
 
@@ -48,7 +48,7 @@ class TestResolveMcpTitle:
             name="get_weather",
             title="",
             description="Get weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         assert _resolve_mcp_title(tool) is None
 
@@ -56,7 +56,7 @@ class TestResolveMcpTitle:
         tool = MCPTool(
             name="get_weather",
             description="Get weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
             annotations=ToolAnnotations(),
         )
         assert _resolve_mcp_title(tool) is None
@@ -82,7 +82,7 @@ class TestSanitizeToolName:
         mcp_tool = MCPTool(
             name="github.search_code",
             description="Search code",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         lc_tool = mcp_tool_to_langchain_tool(
             mcp_tool, connection=_make_connection_config()
@@ -96,7 +96,7 @@ class TestMcpToolToLangchainToolMetadata:
             name="get_weather",
             title="Weather Information Provider",
             description="Get weather data",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         lc_tool = mcp_tool_to_langchain_tool(
             mcp_tool, connection=_make_connection_config()
@@ -108,7 +108,7 @@ class TestMcpToolToLangchainToolMetadata:
         mcp_tool = MCPTool(
             name="get_weather",
             description="Get current weather data",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         lc_tool = mcp_tool_to_langchain_tool(
             mcp_tool, connection=_make_connection_config()
@@ -119,7 +119,7 @@ class TestMcpToolToLangchainToolMetadata:
     def test_metadata_is_none_when_no_mcp_metadata(self) -> None:
         mcp_tool = MCPTool(
             name="get_weather",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
         )
         lc_tool = mcp_tool_to_langchain_tool(
             mcp_tool, connection=_make_connection_config()
@@ -130,7 +130,7 @@ class TestMcpToolToLangchainToolMetadata:
         mcp_tool = MCPTool(
             name="get_weather",
             description="desc",
-            inputSchema={"type": "object"},
+            input_schema={"type": "object"},
             annotations=ToolAnnotations(title="Annotated Title"),
         )
         lc_tool = mcp_tool_to_langchain_tool(

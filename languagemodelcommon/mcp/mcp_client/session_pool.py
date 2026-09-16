@@ -23,7 +23,7 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 class _PooledSession:
     """A live MCP session whose CM lifecycle runs in a dedicated task.
 
-    ``streamablehttp_client`` uses anyio task groups whose cancel scopes
+    ``streamable_http_client`` uses anyio task groups whose cancel scopes
     enforce that ``__aexit__`` is called in the same asyncio task that
     called ``__aenter__``.  To satisfy this, a background task runs the
     CM and keeps it alive until ``close_event`` is set.  The session
@@ -119,7 +119,7 @@ class McpSessionPool:
     Each session's context manager lifecycle runs in a dedicated asyncio
     task so that ``__aenter__`` and ``__aexit__`` execute in the same
     task — required by anyio cancel scopes used inside
-    ``streamablehttp_client``.
+    ``streamable_http_client``.
     """
 
     def __init__(self) -> None:

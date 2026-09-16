@@ -31,15 +31,15 @@ def convert_mcp_content_to_lc_block(
         return create_text_block(text=content.text)
 
     if isinstance(content, ImageContent):
-        return create_image_block(base64=content.data, mime_type=content.mimeType)
+        return create_image_block(base64=content.data, mime_type=content.mime_type)
 
     if isinstance(content, AudioContent):
         raise NotImplementedError(
-            f"AudioContent conversion not supported. Mime type: {content.mimeType}"
+            f"AudioContent conversion not supported. Mime type: {content.mime_type}"
         )
 
     if isinstance(content, ResourceLink):
-        mime_type = content.mimeType or None
+        mime_type = content.mime_type or None
         if mime_type and mime_type.startswith("image/"):
             return create_image_block(url=str(content.uri), mime_type=mime_type)
         return create_file_block(url=str(content.uri), mime_type=mime_type)
@@ -49,7 +49,7 @@ def convert_mcp_content_to_lc_block(
         if isinstance(resource, TextResourceContents):
             return create_text_block(text=resource.text)
         if isinstance(resource, BlobResourceContents):
-            mime_type = resource.mimeType or None
+            mime_type = resource.mime_type or None
             if mime_type and mime_type.startswith("image/"):
                 return create_image_block(base64=resource.blob, mime_type=mime_type)
             return create_file_block(base64=resource.blob, mime_type=mime_type)
@@ -63,11 +63,11 @@ def convert_call_tool_result(
 ) -> list[ToolMessageContentBlock]:
     """Convert a CallToolResult to LangChain content blocks.
 
-    When the MCP server signals an error (isError=True), the error content is
+    When the MCP server signals an error (is_error=True), the error content is
     returned as normal text blocks prefixed with "Error:" so the LLM can see
     the failure reason and retry with corrected parameters.
     """
-    if result.isError:
+    if result.is_error:
         error_parts = [
             block.text for block in result.content if isinstance(block, TextContent)
         ]

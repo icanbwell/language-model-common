@@ -139,7 +139,7 @@ class TestFetchPluginAsync:
                 content=[
                     TextContent(type="text", text="Something went wrong on the server")
                 ],
-                isError=True,
+                is_error=True,
             )
         )
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")

@@ -8,7 +8,7 @@ from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
 
 
 def _make_mcp_tool(*, name: str) -> MCPTool:
-    return MCPTool(name=name, inputSchema={})
+    return MCPTool(name=name, input_schema={})
 
 
 class TestGetAllToolNames:

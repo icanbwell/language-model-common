@@ -80,7 +80,9 @@ class TruncationMcpCallInterceptor:
             if isinstance(result, CallToolResult):
                 if logger.isEnabledFor(DEBUG):
                     # See if there is structured_content
-                    structured_content: dict[str, Any] | None = result.structuredContent
+                    structured_content: dict[str, Any] | None = (
+                        result.structured_content
+                    )
                     logger.debug(
                         f"=== Tool structured output received: {type(structured_content)}: {structured_content} ==="
                     )

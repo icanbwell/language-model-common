@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from mcp import ClientSession
+from mcp.types import PaginatedRequestParams
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -266,12 +267,13 @@ async def list_all_tools(session: ClientSession) -> list[MCPTool]:
         if iterations > MAX_ITERATIONS:
             raise RuntimeError("Exceeded max iterations while listing tools")
 
-        result = await session.list_tools(cursor=cursor)
+        params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        result = await session.list_tools(params=params)
         if result.tools:
             all_tools.extend(result.tools)
-        if not result.nextCursor:
+        if not result.next_cursor:
             break
-        cursor = result.nextCursor
+        cursor = result.next_cursor
 
     return all_tools
 

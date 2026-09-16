@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 
-import httpx
+import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from typing_extensions import NotRequired, TypedDict
 
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
@@ -35,15 +35,15 @@ class McpSessionError(Exception):
 
 
 class McpHttpClientFactory:
-    """Protocol-compatible callable for creating httpx async clients."""
+    """Protocol-compatible callable for creating httpx2 async clients."""
 
     def __call__(
         self,
         headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
-    ) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
+        timeout: httpx2.Timeout | None = None,
+        auth: httpx2.Auth | None = None,
+    ) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(
             auth=auth,
             headers=headers,
             timeout=timeout,
@@ -73,11 +73,20 @@ async def create_mcp_session(
     headers = config.get("headers")
     timeout = config.get("timeout", DEFAULT_TIMEOUT)
     sse_read_timeout = config.get("sse_read_timeout", DEFAULT_SSE_READ_TIMEOUT)
-    httpx_client_factory = config.get("httpx_client_factory")
+    httpx_client_factory = config.get("httpx_client_factory") or McpHttpClientFactory()
 
-    kwargs: dict[str, Any] = {}
-    if httpx_client_factory is not None:
-        kwargs["httpx_client_factory"] = httpx_client_factory
+    # mcp>=2.0's streamable_http_client takes a ready-made httpx2.AsyncClient
+    # (http_client=) instead of individual headers/timeout/sse_read_timeout
+    # kwargs. connect/write/pool keep `timeout`; `read` gets the longer
+    # `sse_read_timeout`, since the streamable HTTP connection is a
+    # long-lived read that would otherwise be cut short by `timeout`.
+    http_client = httpx_client_factory(
+        headers=headers,
+        timeout=httpx2.Timeout(
+            timeout.total_seconds(),
+            read=sse_read_timeout.total_seconds(),
+        ),
+    )
 
     session_kwargs: dict[str, Any] = {}
     if mcp_callbacks is not None:
@@ -85,37 +94,38 @@ async def create_mcp_session(
             session_kwargs["logging_callback"] = mcp_callbacks.logging_callback
 
     try:
+        # streamable_http_client only manages the http_client's lifecycle
+        # when it creates one itself (http_client=None) -- since we always
+        # pass a pre-built client, we own closing it.
         async with (
-            streamablehttp_client(
+            http_client,
+            streamable_http_client(
                 url,
-                headers,
-                timeout,
-                sse_read_timeout,
-                **kwargs,
-            ) as (read, write, _),
+                http_client=http_client,
+            ) as (read, write),
             ClientSession(read, write, **session_kwargs) as session,
         ):
             yield session
-    except httpx.ConnectError as e:
+    except httpx2.ConnectError as e:
         raise McpSessionError(
             f"Connection refused — is the MCP server running at {url}? "
             f"({type(e).__name__}: {e})",
             url=url,
         ) from e
-    except httpx.ConnectTimeout as e:
+    except httpx2.ConnectTimeout as e:
         raise McpSessionError(
             f"Connection timed out reaching MCP server at {url} "
             f"(timeout={timeout}). ({type(e).__name__}: {e})",
             url=url,
         ) from e
-    except httpx.ReadTimeout as e:
+    except httpx2.ReadTimeout as e:
         raise McpSessionError(
             f"Read timed out waiting for MCP server at {url} "
             f"(sse_read_timeout={sse_read_timeout}). "
             f"({type(e).__name__}: {e})",
             url=url,
         ) from e
-    except httpx.HTTPStatusError as e:
+    except httpx2.HTTPStatusError as e:
         raise McpSessionError(
             f"MCP server at {url} returned HTTP {e.response.status_code}. "
             f"({type(e).__name__}: {e})",
