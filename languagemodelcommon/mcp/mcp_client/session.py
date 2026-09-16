@@ -75,25 +75,29 @@ async def create_mcp_session(
     sse_read_timeout = config.get("sse_read_timeout", DEFAULT_SSE_READ_TIMEOUT)
     httpx_client_factory = config.get("httpx_client_factory") or McpHttpClientFactory()
 
-    # mcp>=2.0's streamable_http_client takes a ready-made httpx2.AsyncClient
-    # (http_client=) instead of individual headers/timeout/sse_read_timeout
-    # kwargs. connect/write/pool keep `timeout`; `read` gets the longer
-    # `sse_read_timeout`, since the streamable HTTP connection is a
-    # long-lived read that would otherwise be cut short by `timeout`.
-    http_client = httpx_client_factory(
-        headers=headers,
-        timeout=httpx2.Timeout(
-            timeout.total_seconds(),
-            read=sse_read_timeout.total_seconds(),
-        ),
-    )
-
     session_kwargs: dict[str, Any] = {}
     if mcp_callbacks is not None:
         if mcp_callbacks.logging_callback is not None:
             session_kwargs["logging_callback"] = mcp_callbacks.logging_callback
 
     try:
+        # mcp>=2.0's streamable_http_client takes a ready-made
+        # httpx2.AsyncClient (http_client=) instead of individual
+        # headers/timeout/sse_read_timeout kwargs. connect/write/pool keep
+        # `timeout`; `read` gets the longer `sse_read_timeout`, since the
+        # streamable HTTP connection is a long-lived read that would
+        # otherwise be cut short by `timeout`. Built inside this try block
+        # (not before it) so a construction-time failure -- a malformed
+        # proxy env var, invalid headers, or a caller-supplied factory that
+        # raises on its own -- is still wrapped in McpSessionError below,
+        # same as a connection-time failure.
+        http_client = httpx_client_factory(
+            headers=headers,
+            timeout=httpx2.Timeout(
+                timeout.total_seconds(),
+                read=sse_read_timeout.total_seconds(),
+            ),
+        )
         # streamable_http_client only manages the http_client's lifecycle
         # when it creates one itself (http_client=None) -- since we always
         # pass a pre-built client, we own closing it.
