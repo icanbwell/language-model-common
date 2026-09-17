@@ -139,6 +139,7 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
     _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
         "too many tokens",
+        "too many requests",
         "rate limit",
         "rate_limit",
         "error code: 429",
@@ -150,7 +151,12 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
         Detects structurally rather than importing a specific vendor SDK: a
         ``status_code``/``code`` of 429, a class named ``*RateLimitError*``
-        (Anthropic, OpenAI), or a recognizable message pattern.
+        (Anthropic, OpenAI) or ``*ThrottlingException*`` (boto3/botocore Bedrock
+        Converse client), or a recognizable message pattern. Covers both Bedrock
+        client paths language-model-common can construct (BAI-765) — the
+        Anthropic SDK's "too many tokens" wording and botocore's "too many
+        requests"/``ThrottlingException`` wording were previously handled by
+        separate, inconsistent checks in different call sites.
         """
         current: BaseException | None = exception
         while current is not None:
@@ -159,7 +165,10 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 or getattr(current, "code", None) == 429
             ):
                 return True
-            if "ratelimiterror" in current.__class__.__name__.lower():
+            class_name = current.__class__.__name__.lower()
+            if class_name.endswith("ratelimiterror") or class_name.endswith(
+                "throttlingexception"
+            ):
                 return True
             msg = str(current).lower()
             if any(p in msg for p in LangGraphToOpenAIConverter._RATE_LIMIT_PATTERNS):
@@ -756,6 +765,18 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             config=config,
         )
         runtime_context = {"user_id": request_information.user_id}
+
+        # Deliberately no app-level retry-with-backoff here (unlike
+        # _stream_graph_with_messages_async's pre-first-token retry): a single
+        # ainvoke() call can span multiple graph steps (tool calls) with real
+        # side effects (e.g. writes via MCP tools), persisted through an
+        # optional checkpointer keyed by conversation_thread_id. Re-invoking
+        # the whole graph on a rate limit raised partway through a turn risks
+        # re-executing already-committed, non-idempotent tool calls (BAI-765
+        # review). Bedrock-level retry for a single throttled model call is
+        # instead handled at the SDK layer via ModelFactory's max_retries
+        # (see aws_bedrock_max_retries), which only retries the specific node
+        # that was throttled, not the whole graph.
         try:
             output: Dict[str, Any] = await compiled_state_graph.ainvoke(
                 input=input_,
@@ -767,16 +788,16 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             logger.exception("AttributeError in throttling handling")
             raise
         except Exception as e:
-            # Try to catch ThrottlingException dynamically
-            if (
-                hasattr(e, "__class__")
-                and e.__class__.__name__ == "ThrottlingException"
-            ):
-                logger.exception("AWS ThrottlingException: %s", e)
+            if self._is_rate_limit_error(e):
+                logger.exception(
+                    "Rate limited. request_id=%s error=%s",
+                    request_information.request_id,
+                    e,
+                )
                 raise HTTPException(
                     status_code=429,
                     detail="AWS request throttled. Please try again later.",
-                )
+                ) from e
             raise
         out_messages: List[AnyMessage] = output["messages"]
         return out_messages
@@ -898,14 +919,18 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         """Compute backoff delay for a rate-limit retry.
 
         Honors an upstream ``Retry-After`` hint when present; otherwise uses
-        exponential backoff with full jitter based on the configured base delay.
+        exponential backoff with full jitter based on the configured base
+        delay. Both branches are clamped to rate_limit_max_backoff_seconds
+        (BAI-765 review) so an unreasonable/malicious upstream Retry-After
+        value can't hang a request-handling coroutine indefinitely.
         """
+        max_delay_seconds = self.environment_variables.rate_limit_max_backoff_seconds
         if retry_after_seconds is not None and retry_after_seconds > 0:
-            return retry_after_seconds
+            return min(retry_after_seconds, max_delay_seconds)
         base_delay_seconds = (
             self.environment_variables.rate_limit_retry_base_delay_ms / 1000.0
         )
-        exponential_delay = base_delay_seconds * (2**attempt)
+        exponential_delay = min(base_delay_seconds * (2**attempt), max_delay_seconds)
         # Full jitter: random point in [0, exponential_delay] avoids thundering herd.
         return random.uniform(0, exponential_delay)
 

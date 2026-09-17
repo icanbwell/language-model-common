@@ -199,6 +199,36 @@ class ModelFactory:
 
         model_parameters_dict = dict(model_parameters_dict)
 
+        if "max_retries" not in model_parameters_dict:
+            max_attempts = (
+                self._environment_variables.aws_bedrock_max_retries
+                if self._environment_variables
+                else None
+            )
+            if max_attempts is not None:
+                # aws_bedrock_max_retries returns boto3 max_attempts semantics
+                # (total attempts including the first, matching
+                # AwsClientFactory.create_bedrock_client's Converse client
+                # config), but ChatAnthropicBedrock's max_retries kwarg counts
+                # only retries *after* the first attempt. Convert so the same
+                # env var value yields the same total attempt count on both
+                # Bedrock client paths (BAI-765 review).
+                max_retries = max(0, max_attempts - 1)
+                model_parameters_dict["max_retries"] = max_retries
+                source_env_var = (
+                    "AWS_BEDROCK_MAX_ATTEMPTS"
+                    if os.environ.get("AWS_BEDROCK_MAX_ATTEMPTS")
+                    else "AWS_BEDROCK_MAX_RETRIES"
+                )
+                logger.info(
+                    "Using %s=%d (max_retries=%d) for Anthropic Bedrock client %s "
+                    "(overriding langchain_aws's hardcoded default of 2; BAI-765)",
+                    source_env_var,
+                    max_attempts,
+                    max_retries,
+                    model_name,
+                )
+
         if "max_tokens" not in model_parameters_dict:
             resolved_max_tokens = self._resolve_anthropic_bedrock_max_tokens(
                 model_name=model_name

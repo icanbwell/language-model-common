@@ -3,6 +3,7 @@ from typing import Any, AsyncGenerator, Optional, cast
 
 import pytest
 from botocore.exceptions import TokenRetrievalError
+from fastapi import HTTPException
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
@@ -71,6 +72,7 @@ class _FakeCompiledStateGraph:
         self.error = error
         self.fail_count = fail_count
         self._call_count = 0
+        self.ainvoke_call_count = 0
         self.last_stream_config: dict[str, Any] | None = None
         self.last_ainvoke_config: dict[str, Any] | None = None
 
@@ -95,6 +97,11 @@ class _FakeCompiledStateGraph:
         self, *, input: Any, config: dict[str, Any], **kwargs: Any
     ) -> dict[str, Any]:
         self.last_ainvoke_config = config
+        self.ainvoke_call_count += 1
+        if self.error is not None and self.ainvoke_call_count <= self.fail_count:
+            raise self.error
+        if self.error is not None and self.fail_count == 0:
+            raise self.error
         return {"messages": []}
 
 
@@ -456,6 +463,81 @@ def test_is_rate_limit_error_true_for_wrapped_cause() -> None:
     assert LangGraphToOpenAIConverter._is_rate_limit_error(wrapped)
 
 
+class ThrottlingException(Exception):
+    """Mimics botocore's Bedrock Converse throttling error: class name only,
+    generic "too many requests" wording (distinct from Anthropic's "too many
+    tokens" message) — the wording the previous ThrottlingException-name-only
+    check in _run_graph_with_messages_async relied on (BAI-765)."""
+
+
+def test_is_rate_limit_error_true_for_throttling_exception_class_name() -> None:
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(
+        ThrottlingException(
+            "An error occurred (ThrottlingException) when calling the "
+            "InvokeModelWithResponseStream operation: Too many requests, "
+            "please wait before trying again."
+        )
+    )
+
+
+def test_is_rate_limit_error_true_for_too_many_requests_message() -> None:
+    assert LangGraphToOpenAIConverter._is_rate_limit_error(
+        RuntimeError("Too many requests, please wait before trying again.")
+    )
+
+
+class NotThrottlingExceptionAtAll(Exception):
+    """Class name contains "ThrottlingException" as a substring but is not
+    one — must NOT be misclassified as a rate limit (adversarial review)."""
+
+
+def test_is_rate_limit_error_false_for_class_name_containing_substring() -> None:
+    assert not LangGraphToOpenAIConverter._is_rate_limit_error(
+        NotThrottlingExceptionAtAll("something unrelated")
+    )
+
+
+def test_compute_rate_limit_backoff_clamps_large_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An upstream Retry-After value must not be honored verbatim past the
+    configured ceiling (adversarial review: unbounded sleep from an
+    unreasonable/misconfigured upstream header)."""
+    monkeypatch.setenv("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60")
+    converter = _build_converter(monkeypatch)
+
+    delay = converter._compute_rate_limit_backoff(
+        attempt=0, retry_after_seconds=999_999.0
+    )
+
+    assert delay == 60.0
+
+
+def test_compute_rate_limit_backoff_clamps_large_exponential_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exponential-backoff branch (no Retry-After hint) must also be
+    capped, since it grows unbounded with the attempt number."""
+    monkeypatch.setenv("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60")
+    monkeypatch.setenv("RATE_LIMIT_RETRY_BASE_DELAY_MS", "500")
+    converter = _build_converter(monkeypatch)
+
+    delay = converter._compute_rate_limit_backoff(attempt=20, retry_after_seconds=None)
+
+    assert 0.0 <= delay <= 60.0
+
+
+def test_compute_rate_limit_backoff_honors_retry_after_below_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60")
+    converter = _build_converter(monkeypatch)
+
+    delay = converter._compute_rate_limit_backoff(attempt=0, retry_after_seconds=5.0)
+
+    assert delay == 5.0
+
+
 def test_is_rate_limit_error_false_for_unrelated_error() -> None:
     assert not LangGraphToOpenAIConverter._is_rate_limit_error(
         RuntimeError("something else entirely")
@@ -584,3 +666,124 @@ async def test_stream_resp_async_generator_reports_rate_limit_after_retries_exha
     assert chunks[-1] == "final"
     # initial attempt + 1 retry, then the exhausted RateLimitException propagates
     assert fake_graph._call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_graph_raises_http_429_on_rate_limit_without_retrying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_run_graph_with_messages_async (the non-streaming path) must NOT retry
+    the whole ainvoke() call on a rate limit (BAI-765 adversarial review): a
+    single ainvoke() can span multiple graph steps with side-effecting tool
+    calls persisted via an optional checkpointer, so re-invoking the whole
+    graph risks re-executing already-committed, non-idempotent tool calls.
+    Retrying a single throttled model call safely (without re-running the
+    graph) is instead the job of ModelFactory's SDK-level max_retries."""
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        error=_AnthropicRateLimitError(),
+        fail_count=1,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await converter._run_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+
+    assert exc_info.value.status_code == 429
+    assert fake_graph.ainvoke_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_graph_raises_http_429_for_botocore_style_throttling_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boto3 Converse client's ThrottlingException ("too many requests"
+    wording, no 429 status_code attribute) must be classified as a rate
+    limit and mapped to the same clear 429, not just the Anthropic client's
+    "too many tokens" RateLimitError (BAI-765)."""
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        error=ThrottlingException(
+            "An error occurred (ThrottlingException) when calling the "
+            "InvokeModel operation: Too many requests, please wait before "
+            "trying again."
+        ),
+        fail_count=1,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await converter._run_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+
+    assert exc_info.value.status_code == 429
+    assert fake_graph.ainvoke_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_graph_does_not_retry_non_rate_limit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unrelated errors from ainvoke() must propagate immediately, unretried."""
+    converter = _build_converter(monkeypatch)
+
+    fake_graph = _FakeCompiledStateGraph(
+        error=_GenericException("boom"),
+        fail_count=1,
+    )
+
+    with pytest.raises(_GenericException):
+        await converter._run_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+
+    assert fake_graph.ainvoke_call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_graph_does_not_reexecute_completed_tool_call_on_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for the adversarial-review CRITICAL finding: a rate
+    limit raised after a side-effecting tool call has already run must not
+    cause that tool call to run again. Simulates a graph whose first call
+    commits a tool-call side effect (recorded via a mutable counter, standing
+    in for a non-idempotent MCP tool write) then fails with a rate limit on
+    the follow-up model call; a second ainvoke() attempt would re-run the
+    tool. Asserting no retry happens is what keeps this side effect from
+    firing twice."""
+    converter = _build_converter(monkeypatch)
+    tool_call_count = {"count": 0}
+
+    class _GraphWithSideEffectingTool:
+        async def ainvoke(
+            self, *, input: Any, config: dict[str, Any], **kwargs: Any
+        ) -> dict[str, Any]:
+            tool_call_count["count"] += 1
+            raise _AnthropicRateLimitError()
+
+    with pytest.raises(HTTPException):
+        await converter._run_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=_GraphWithSideEffectingTool(),  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        )
+
+    assert tool_call_count["count"] == 1

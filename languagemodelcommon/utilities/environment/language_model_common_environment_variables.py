@@ -265,6 +265,17 @@ class LanguageModelCommonEnvironmentVariables(
         return int(os.environ.get("RATE_LIMIT_RETRY_BASE_DELAY_MS", "500"))
 
     @property
+    def rate_limit_max_backoff_seconds(self) -> float:
+        """Upper bound on a single rate-limit retry delay, in seconds.
+
+        Applies to both the exponential-backoff and upstream Retry-After
+        branches of _compute_rate_limit_backoff, so an unreasonable or
+        malicious Retry-After header value can't hang a request-handling
+        coroutine indefinitely (BAI-765 review).
+        """
+        return float(os.environ.get("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
@@ -356,6 +367,30 @@ class LanguageModelCommonEnvironmentVariables(
     @property
     def aws_bedrock_retry_mode(self) -> str:
         return os.environ.get("AWS_BEDROCK_RETRY_MODE", "adaptive")
+
+    @property
+    def aws_bedrock_max_retries(self) -> Optional[int]:
+        """Max Bedrock call attempts, in boto3 max_attempts semantics (total
+        attempts including the first).
+
+        Shares AWS_BEDROCK_MAX_ATTEMPTS/AWS_BEDROCK_MAX_RETRIES with
+        AwsClientFactory.create_bedrock_client's boto3 retry config (BAI-765).
+        Despite this property's name, the returned value is *attempts*, not
+        *retries* — callers that hand it to an SDK using retries-after-first
+        semantics (e.g. ChatAnthropicBedrock's max_retries kwarg) must convert
+        it (max(0, value - 1)) to keep total attempt counts consistent across
+        Bedrock client paths (BAI-765 review). Returns None when unset so
+        callers keep the underlying SDK's own default instead of forcing one.
+        """
+        value = os.environ.get("AWS_BEDROCK_MAX_ATTEMPTS") or os.environ.get(
+            "AWS_BEDROCK_MAX_RETRIES"
+        )
+        if value is None or value.strip() == "":
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
 
     @property
     def aws_credentials_profile(self) -> Optional[str]:
