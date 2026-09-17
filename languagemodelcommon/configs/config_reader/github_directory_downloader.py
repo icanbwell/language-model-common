@@ -219,7 +219,9 @@ class GithubDirectoryDownloader:
                 storage_options["username"] = self._github_token_username
                 storage_options["token"] = github_token
 
-            filesystem = fsspec.filesystem("github", **storage_options)
+            filesystem = fsspec.filesystem(
+                "github", skip_instance_cache=True, **storage_options
+            )
             if source_path:
                 filesystem.get(source_path, str(staging_dir), recursive=True)
             else:
