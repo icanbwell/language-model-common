@@ -199,6 +199,21 @@ class ModelFactory:
 
         model_parameters_dict = dict(model_parameters_dict)
 
+        if "max_retries" not in model_parameters_dict:
+            max_retries = (
+                self._environment_variables.aws_bedrock_max_retries
+                if self._environment_variables
+                else None
+            )
+            if max_retries is not None:
+                model_parameters_dict["max_retries"] = max_retries
+                logger.info(
+                    "Using AWS_BEDROCK_MAX_RETRIES=%d for Anthropic Bedrock client %s "
+                    "(overriding langchain_aws's hardcoded default of 2; BAI-765)",
+                    max_retries,
+                    model_name,
+                )
+
         if "max_tokens" not in model_parameters_dict:
             resolved_max_tokens = self._resolve_anthropic_bedrock_max_tokens(
                 model_name=model_name

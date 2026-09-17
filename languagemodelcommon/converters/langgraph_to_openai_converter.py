@@ -139,6 +139,7 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
     _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
         "too many tokens",
+        "too many requests",
         "rate limit",
         "rate_limit",
         "error code: 429",
@@ -150,7 +151,12 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
 
         Detects structurally rather than importing a specific vendor SDK: a
         ``status_code``/``code`` of 429, a class named ``*RateLimitError*``
-        (Anthropic, OpenAI), or a recognizable message pattern.
+        (Anthropic, OpenAI) or ``*ThrottlingException*`` (boto3/botocore Bedrock
+        Converse client), or a recognizable message pattern. Covers both Bedrock
+        client paths language-model-common can construct (BAI-765) — the
+        Anthropic SDK's "too many tokens" wording and botocore's "too many
+        requests"/``ThrottlingException`` wording were previously handled by
+        separate, inconsistent checks in different call sites.
         """
         current: BaseException | None = exception
         while current is not None:
@@ -159,7 +165,8 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 or getattr(current, "code", None) == 429
             ):
                 return True
-            if "ratelimiterror" in current.__class__.__name__.lower():
+            class_name = current.__class__.__name__.lower()
+            if "ratelimiterror" in class_name or "throttlingexception" in class_name:
                 return True
             msg = str(current).lower()
             if any(p in msg for p in LangGraphToOpenAIConverter._RATE_LIMIT_PATTERNS):
@@ -756,30 +763,56 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             config=config,
         )
         runtime_context = {"user_id": request_information.user_id}
-        try:
-            output: Dict[str, Any] = await compiled_state_graph.ainvoke(
-                input=input_,
-                config=config,
-                context=runtime_context,  # type: ignore[call-overload]
-            )
-        except AttributeError:
-            # Fallback if errorfactory is not available
-            logger.exception("AttributeError in throttling handling")
-            raise
-        except Exception as e:
-            # Try to catch ThrottlingException dynamically
-            if (
-                hasattr(e, "__class__")
-                and e.__class__.__name__ == "ThrottlingException"
-            ):
-                logger.exception("AWS ThrottlingException: %s", e)
-                raise HTTPException(
-                    status_code=429,
-                    detail="AWS request throttled. Please try again later.",
+
+        # Non-streaming call: unlike _stream_graph_with_messages_async, there is
+        # no partial-output-already-sent constraint, so every rate-limited
+        # attempt is safe to retry with the same backoff budget (BAI-765).
+        rate_limit_attempt = 0
+        while True:
+            try:
+                output: Dict[str, Any] = await compiled_state_graph.ainvoke(
+                    input=input_,
+                    config=config,
+                    context=runtime_context,  # type: ignore[call-overload]
                 )
-            raise
-        out_messages: List[AnyMessage] = output["messages"]
-        return out_messages
+            except AttributeError:
+                # Fallback if errorfactory is not available
+                logger.exception("AttributeError in throttling handling")
+                raise
+            except Exception as e:
+                if not self._is_rate_limit_error(e):
+                    raise
+                if (
+                    not self.environment_variables.rate_limit_retry_enabled
+                    or rate_limit_attempt
+                    >= self.environment_variables.rate_limit_max_retries
+                ):
+                    logger.exception(
+                        "Rate limit retries exhausted. request_id=%s error=%s",
+                        request_information.request_id,
+                        e,
+                    )
+                    raise HTTPException(
+                        status_code=429,
+                        detail="AWS request throttled. Please try again later.",
+                    ) from e
+
+                delay_seconds = self._compute_rate_limit_backoff(
+                    attempt=rate_limit_attempt,
+                    retry_after_seconds=self._get_retry_after_seconds(e),
+                )
+                logger.warning(
+                    "Retrying after rate limit. request_id=%s attempt=%d delay_seconds=%.2f",
+                    request_information.request_id,
+                    rate_limit_attempt + 1,
+                    delay_seconds,
+                )
+                await asyncio.sleep(delay_seconds)
+                rate_limit_attempt += 1
+                continue
+            else:
+                out_messages: List[AnyMessage] = output["messages"]
+                return out_messages
 
     # noinspection PyMethodMayBeStatic
     async def _stream_graph_with_messages_async(

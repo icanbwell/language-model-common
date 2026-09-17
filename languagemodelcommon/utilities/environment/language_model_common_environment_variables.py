@@ -358,6 +358,26 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("AWS_BEDROCK_RETRY_MODE", "adaptive")
 
     @property
+    def aws_bedrock_max_retries(self) -> Optional[int]:
+        """Max retry attempts for Bedrock model calls.
+
+        Shares AWS_BEDROCK_MAX_ATTEMPTS/AWS_BEDROCK_MAX_RETRIES with
+        AwsClientFactory.create_bedrock_client's boto3 retry config (BAI-765),
+        so the same env var also governs ChatAnthropicBedrock's retry count
+        when BEDROCK_USE_ANTHROPIC_CLIENT is enabled. Returns None when unset
+        so callers keep the underlying SDK's own default instead of forcing one.
+        """
+        value = os.environ.get("AWS_BEDROCK_MAX_ATTEMPTS") or os.environ.get(
+            "AWS_BEDROCK_MAX_RETRIES"
+        )
+        if value is None or value.strip() == "":
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    @property
     def aws_credentials_profile(self) -> Optional[str]:
         return os.environ.get("AWS_CREDENTIALS_PROFILE")
 
