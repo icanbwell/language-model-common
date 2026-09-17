@@ -105,24 +105,6 @@ Keep interfaces small and focused. If a consumer only needs read access, do not 
 ### Dependency Inversion
 Depend on abstractions at module and service boundaries. Inject dependencies through constructors. Never instantiate infrastructure inside business logic. Never use service locators when constructor injection is available.
 
-### IoC Container (`simple_container`)
-
-This project uses the `simple_container` library for inversion of control. All service registrations live in `languagemodelcommon/container/container_factory.py`.
-
-**Rules:**
-- Register new services as singletons in `LanguageModelCommonContainerFactory.register_services_in_container()` — do not instantiate services directly in calling code.
-- When creating a new service class, add its registration to `container_factory.py` and inject its dependencies from the container (not by constructing them inline).
-- Tests can override registrations by constructing a test container with mock implementations.
-
-### Environment Variables (`LanguageModelCommonEnvironmentVariables`)
-
-Access environment variables through the `LanguageModelCommonEnvironmentVariables` class (`languagemodelcommon/utilities/environment/language_model_common_environment_variables.py`), not via `os.environ` directly. This class is registered in the IoC container.
-
-**Rules:**
-- Add new environment variable access as `@property` methods on `LanguageModelCommonEnvironmentVariables`.
-- Inject the environment variables class via the container — do not instantiate it inline or call `os.environ.get()` in business logic.
-- Provide sensible defaults in the property when the variable is optional.
-
 ---
 
 ## Architectural Boundaries
@@ -169,25 +151,6 @@ Use current language idioms for the repo's language version. Do not write legacy
 **Java:** Use records for data carriers, not POJOs with boilerplate getters/setters. Use sealed interfaces for closed type hierarchies. Use pattern matching where available. Use `var` for local variables when the type is obvious from the right side. Use streams and Optional appropriately, not for every operation.
 
 **Python:** Use dataclasses or Pydantic models, not manual dict manipulation. Use type hints everywhere. Use structural pattern matching (3.10+) where it improves clarity. Use `Protocol` for structural typing. Use `async`/`await` for IO-bound operations in async services.
-
-**Keyword arguments are mandatory in Python code.** This applies to both definitions and call sites:
-- **Definitions:** All public functions, methods, and constructors must use the `*` separator to enforce keyword-only arguments (after `self`/`cls` if present). The only exception is callback signatures required by frameworks (e.g., LangGraph `RunnableLambda` expects `func(state, config)` positionally).
-- **Call sites:** Always pass parameters by keyword, not by position — this applies to function calls, constructor invocations, and method calls. Positional arguments are fragile and break when signatures change.
-- **Tests:** Test code must also use keyword arguments when calling production code. No exceptions.
-
-```python
-# Good — definition enforces keyword-only
-def resolve_mcp_servers(*, configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
-
-# Good — call site uses keywords
-resolve_mcp_servers(configs=[config], mcp_config=mcp)
-
-# Bad — positional args at call site
-resolve_mcp_servers([config], mcp)
-
-# Bad — definition allows positional
-def resolve_mcp_servers(configs: list[ChatModelConfig], mcp_config: McpJsonConfig) -> None: ...
-```
 
 **TypeScript:** Use discriminated unions for variant types, not type casting chains. Use strict mode. Use `readonly` and `as const` where appropriate. Use modern `satisfies` operator for type-safe object literals. Use optional chaining and nullish coalescing instead of manual null checks.
 
@@ -305,7 +268,7 @@ Understand the constraints of the system you are working in. If branch protectio
 When a user tells you an action is blocked or explains a constraint, internalize it. Do not re-propose the same blocked action with different wording. If you are unsure whether a constraint applies, ask once. If the answer is "no, that won't work", do not ask again or try to find a loophole.
 
 ### Don't Guess Commands
-Find and use the repo's canonical build, test, and lint commands. Check the Makefile, package.json scripts, build.gradle, pyproject.toml, or uv.lock. This repo uses `uv` for Python dependency management (not pip/pipenv). If the commands are unclear, say so and point to where you looked. Do not invent commands.
+Find and use the repo's canonical build, test, and lint commands. Check the Makefile, package.json scripts, build.gradle, or Pipfile. If the commands are unclear, say so and point to where you looked. Do not invent commands.
 
 ### Don't Introduce Dependencies Casually
 Check `approved-tech.yaml` before adding any new dependency. If the dependency is not listed, flag it for review. Do not assume a library is approved because it is popular.
@@ -322,9 +285,6 @@ If you encounter code that violates these principles - tenant isolation missing 
 ### Code Ownership
 Do not add "Co-Authored-By", "Generated by", or any other AI attribution to commits, PRs, or code comments. Engineers own their code regardless of what tool assisted in writing it. The tool is irrelevant. The author on the commit is the owner.
 
-
-### Branch Protection
-Direct commits and merges to `main` are blocked by branch protection rules. All changes must go through a pull request. If you are not already on a feature branch, create one before making any commits. Do not attempt to push directly to `main`, force-push to `main`, or bypass branch protection. If the user asks you to make a change and you are on `main`, create a branch first following the naming convention below.
 
 ### Branch Naming
 Branch names must follow the pattern: `{initials}-{project}-{ticket-number}`
@@ -439,3 +399,89 @@ Assume clients may receive unknown enum values and new fields at any time. Desig
 ## Code Style
 
 Follow whatever linter, formatter, and static analysis configuration exists in the repo. Do not duplicate what automated tooling already enforces. These instructions are for architectural and design decisions that linters cannot catch.
+
+
+----
+
+## Terraform
+
+Create simple modules and compose from them
+    A base module should do just as much as needed to create a single resource, e.g. an S3 bucket, a VPC private link, 
+    Compose more complex infrastructure from these base modules
+    You should never create a resource directly in the root module
+Avoid code that creates singletons
+    Never expect you will only create one instance of an object
+    Use Terraform nested data structures and for_each to allow multiple instantiation of a resource/module with different input values
+Start from the API and work toward the implementation
+    Think first of how a user/engineer will add a new instance of the infrastructure component, what values can/should they provide?
+        Make it as simple as possible
+    From these inputs, build toward the desired implementation
+        Make use of data sources where possible instead of requiring the user to provide the value(s)
+    If the inputs start getting complex, it is a sign to refactor your design
+Never use terraform_remote_state
+    This pattern introduces a cascading dependency between projects
+        A single terraform/tofu plan is no longer sufficient for a change, you have to plan/apply the dependency project to get the most updated state
+    Use data sources to fetch the live current state of the infrastructure
+    Use AWS Tags as labels and filter on those labels in data sources
+        Example: subnets to be used for a transit gateway attachment are tagged bwell/transit-gateway = main
+        Tag names should be prefixed with bwell/
+Use of OpenTofu quality-of-life features are encouraged
+    OpenTofu adds a number of features on top of Terraform, use them
+Do not use count
+    Resources created by count have the collection index as part of the resource key
+        Creates problems when selectively cleaning resources
+    Use enabled meta-argument, or
+    Use for_each = { for v in var.vpc_names : v => v }
+When updating modules in this repository, always increment the module version and the module README.
+
+<!-- SYNC:PRESERVE-BELOW (do not edit this line -- content below survives the AGENTS.md sync) -->
+
+<!-- REPO-SPECIFIC ADDENDUM — complaint-parser only. Everything above this line is the org-wide
+     baseline, synced from icanbwell/.github (see CODEOWNERS, PR review by @icanbwell/enterprise-architecture).
+     This section is preserved across syncs automatically by the SYNC:PRESERVE-BELOW sentinel above
+     (icanbwell/.github .github/workflows/sync-agents-md.yml) -- no manual restoration needed on
+     future sync PRs. -->
+
+## complaint-parser: repo-specific pointers
+
+Two things below are always relevant at the start of a session in this repo — check them early,
+not just when a task obviously needs them:
+
+- **`sessions/index.md`** — a pending → complete lifecycle for self-contained implementation
+  plans. Read it first if you're picking up work with no other specific instruction; it names a
+  recommended next session.
+- **`.claude/guidelines/index.md`** — repo-specific process guidance (deploying, etc.), organized
+  so each file is read only when the task at hand actually needs it. Not duplicated here to avoid
+  this baseline file growing unbounded as more guidance accumulates.
+
+<!-- SYNC:PRESERVE-BELOW (do not edit this line -- content below survives the AGENTS.md sync) -->
+
+## Repo-Specific: ai-health-optimization — Cross-Repo Impact Checklist
+
+<!-- Everything above this line is the org-wide baseline, synced from icanbwell/.github
+     (see CODEOWNERS, PR review by @icanbwell/enterprise-architecture). This section is
+     preserved across syncs automatically by the SYNC:PRESERVE-BELOW sentinel above
+     (icanbwell/.github .github/workflows/sync-agents-md.yml) -- no manual restoration
+     needed on future sync PRs. -->
+
+> Repo-specific context, additive to the baseline above. When changing aggregation, unit handling, validation, scoring, or composition output, check **both ends** of the dependency chain before merging:
+
+- **Upstream — `device-codex`** (GitHub `icanbwell/device-codex`, pip package `devicecodex`): the source of truth for LOINC metadata, unit families, canonical units, valid ranges, and FHIR unit/code normalization (`interop.normalize_fhir_unit`, `is_plausible_unit`, `normalize_code`; `registry.get_metric_by_code`). Fix unit/range/code-alias gaps upstream there rather than patching locally; this repo should consume device-codex, not re-implement it.
+- **Downstream — `bwell-databricks`** (GitHub `icanbwell/bwell-databricks`): within that repo, `bundle/device-data-ingest-job/src/bwell/device_data_ingest_job/health_insights.py` calls `aihealthoptimization.pipeline.create_compositions_from_observations` and writes the returned Compositions to FHIR. It **exact-pins** `aihealthoptimization`/`devicecodex` in that bundle's `requirements.txt`, so scoring/value changes reach production only when the pin is bumped — coordinate that as a score-recompute / data-quality event, not a silent rollout. Keep the pipeline signature and composition keys (`device_metrics` + body-system names) stable.
+
+<!-- SYNC:PRESERVE-BELOW (do not edit this line -- content below survives the AGENTS.md sync) -->
+
+## Repo-Specific: ai-care-gap-scoring — Context
+
+<!-- Everything above this line is the org-wide baseline, synced from icanbwell/.github
+     (see CODEOWNERS, PR review by @icanbwell/enterprise-architecture). This section is
+     preserved across syncs automatically by the SYNC:PRESERVE-BELOW sentinel above
+     (icanbwell/.github .github/workflows/sync-agents-md.yml) -- no manual restoration
+     needed on future sync PRs. -->
+
+> Repo-specific context, additive to the baseline above.
+
+- **Purpose & phase:** Care gap closure **propensity scoring**. Currently **Phase 0 — feasibility**: produce PHI-safe aggregate feasibility/EDA reports (no model, no FHIR writes) to decide GO/NO-GO per measure. First measure: Breast Cancer Screening. See `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+- **Data source — Databricks.** Reads normalized FHIR from `silver.fhir_lite.*` and quality-measure data from `bronze.dqm.*` via **`bwell-databricks-valet`** (`get_spark()` + env→catalog resolution). Catalogs are env-scoped (`nophi_dev` test, `silver_dev`/`silver` dev/prod). Do not read another service's private datastore directly.
+- **PHI is paramount.** Every emitted artifact is an aggregate only (counts/rates/correlations/binned distributions) with small-cell suppression (n<11) and no identifiers or exact dates. An output guard fails the run on PHI-like content. Never write row-level patient data to disk or logs.
+- **Eventual downstream (deferred to a later phase):** propensity scores will be written to the FHIR server as **`RiskAssessment`** resources, pending a new FDR ("Care Gap Propensity Score"). Nothing is written to FHIR in Phase 0.
