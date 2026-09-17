@@ -482,3 +482,95 @@ async def test_download_cached_returns_content_subdir(tmp_path: Path) -> None:
     assert result is not None
     assert result.name == "prompts"
     assert (result / "my_prompt.txt").read_text() == "fresh content"
+
+
+@pytest.mark.asyncio
+async def test_fetch_skips_fsspec_instance_cache_for_unpinned_ref(
+    tmp_path: Path,
+) -> None:
+    """Regression test: an unpinned ref must not reuse a stale cached
+    GithubFileSystem/DirCache across calls, or new commits on the default
+    branch would never be picked up until the process restarts."""
+    cache_path = tmp_path / "cache"
+
+    captured_storage_options: dict[str, object] = {}
+
+    class _FakeGithubFilesystem:
+        def get(
+            self, remote_path: str, local_path: str, recursive: bool = False
+        ) -> None:
+            del remote_path, recursive
+            Path(local_path).mkdir(parents=True, exist_ok=True)
+
+        def ls(self, path: str, detail: bool = False) -> list[str]:
+            del path, detail
+            return []
+
+    def _fake_filesystem(
+        protocol: str, **storage_options: object
+    ) -> _FakeGithubFilesystem:
+        assert protocol == "github"
+        captured_storage_options.update(storage_options)
+        return _FakeGithubFilesystem()
+
+    with patch(
+        "languagemodelcommon.configs.config_reader.github_directory_downloader.fsspec.filesystem",
+        side_effect=_fake_filesystem,
+    ):
+        downloader = GithubDirectoryDownloader()
+        await downloader.download(
+            source_uri="github://my-org/private-repo/configs",
+            github_token=None,
+            cache_path=cache_path,
+        )
+
+    assert "sha" not in captured_storage_options
+    assert captured_storage_options["skip_instance_cache"] is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_passes_skip_instance_cache_for_pinned_ref(
+    tmp_path: Path,
+) -> None:
+    """A pinned '?ref=' must still pass skip_instance_cache alongside sha."""
+    cache_path = tmp_path / "cache"
+
+    captured_storage_options: dict[str, object] = {}
+
+    class _FakeGithubFilesystem:
+        def get(
+            self, remote_path: str, local_path: str, recursive: bool = False
+        ) -> None:
+            del remote_path, recursive
+            Path(local_path).mkdir(parents=True, exist_ok=True)
+
+        def ls(self, path: str, detail: bool = False) -> list[str]:
+            del path, detail
+            return []
+
+    def _fake_filesystem(
+        protocol: str, **storage_options: object
+    ) -> _FakeGithubFilesystem:
+        assert protocol == "github"
+        captured_storage_options.update(storage_options)
+        return _FakeGithubFilesystem()
+
+    with patch(
+        "languagemodelcommon.configs.config_reader.github_directory_downloader.fsspec.filesystem",
+        side_effect=_fake_filesystem,
+    ):
+        downloader = GithubDirectoryDownloader()
+        await downloader.download(
+            source_uri="github://my-org/private-repo/configs?ref=main",
+            github_token="token-value",
+            cache_path=cache_path,
+        )
+
+    assert captured_storage_options == {
+        "org": "my-org",
+        "repo": "private-repo",
+        "sha": "main",
+        "username": "x-access-token",
+        "token": "token-value",
+        "skip_instance_cache": True,
+    }
