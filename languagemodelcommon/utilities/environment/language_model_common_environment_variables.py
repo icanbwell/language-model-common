@@ -265,6 +265,17 @@ class LanguageModelCommonEnvironmentVariables(
         return int(os.environ.get("RATE_LIMIT_RETRY_BASE_DELAY_MS", "500"))
 
     @property
+    def rate_limit_max_backoff_seconds(self) -> float:
+        """Upper bound on a single rate-limit retry delay, in seconds.
+
+        Applies to both the exponential-backoff and upstream Retry-After
+        branches of _compute_rate_limit_backoff, so an unreasonable or
+        malicious Retry-After header value can't hang a request-handling
+        coroutine indefinitely (BAI-765 review).
+        """
+        return float(os.environ.get("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
