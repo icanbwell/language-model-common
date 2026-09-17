@@ -119,6 +119,10 @@ class TestCreateAnthropicBedrockModelMaxRetries:
     def test_sets_max_retries_from_environment_variable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """AWS_BEDROCK_MAX_RETRIES=5 means 5 total attempts in boto3 semantics
+        (matching AwsClientFactory.create_bedrock_client), so the Anthropic
+        SDK's retries-after-first max_retries kwarg must be 4, not 5
+        (BAI-765 review: parity between the two Bedrock client paths)."""
         monkeypatch.setenv("AWS_BEDROCK_MAX_RETRIES", "5")
         factory = ModelFactory(
             environment_variables=LanguageModelCommonEnvironmentVariables(),
@@ -137,7 +141,7 @@ class TestCreateAnthropicBedrockModelMaxRetries:
                 model_parameters_dict=model_parameters_dict,
             )
 
-        assert mock_chat_cls.call_args.kwargs["max_retries"] == 5
+        assert mock_chat_cls.call_args.kwargs["max_retries"] == 4
 
     def test_prefers_max_attempts_over_max_retries(
         self, monkeypatch: pytest.MonkeyPatch
@@ -161,7 +165,33 @@ class TestCreateAnthropicBedrockModelMaxRetries:
                 model_parameters_dict=model_parameters_dict,
             )
 
-        assert mock_chat_cls.call_args.kwargs["max_retries"] == 7
+        assert mock_chat_cls.call_args.kwargs["max_retries"] == 6
+
+    def test_clamps_max_retries_to_zero_when_max_attempts_is_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AWS_BEDROCK_MAX_ATTEMPTS=1 means "no retries" in boto3 semantics
+        (matching AwsClientFactory.create_bedrock_client's default); the
+        Anthropic client must get max_retries=0, not -1 or 1."""
+        monkeypatch.setenv("AWS_BEDROCK_MAX_ATTEMPTS", "1")
+        factory = ModelFactory(
+            environment_variables=LanguageModelCommonEnvironmentVariables(),
+            aws_client_factory=MagicMock(),
+        )
+        model_parameters_dict: dict[str, object] = {
+            "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        }
+
+        with patch("langchain_aws.ChatAnthropicBedrock") as mock_chat_cls:
+            factory._create_anthropic_bedrock_model(
+                model_name="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                aws_credentials_profile=None,
+                aws_region_name="us-east-1",
+                thinking_budget=None,
+                model_parameters_dict=model_parameters_dict,
+            )
+
+        assert mock_chat_cls.call_args.kwargs["max_retries"] == 0
 
     def test_does_not_override_explicit_max_retries(
         self, monkeypatch: pytest.MonkeyPatch

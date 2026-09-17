@@ -370,13 +370,17 @@ class LanguageModelCommonEnvironmentVariables(
 
     @property
     def aws_bedrock_max_retries(self) -> Optional[int]:
-        """Max retry attempts for Bedrock model calls.
+        """Max Bedrock call attempts, in boto3 max_attempts semantics (total
+        attempts including the first).
 
         Shares AWS_BEDROCK_MAX_ATTEMPTS/AWS_BEDROCK_MAX_RETRIES with
-        AwsClientFactory.create_bedrock_client's boto3 retry config (BAI-765),
-        so the same env var also governs ChatAnthropicBedrock's retry count
-        when BEDROCK_USE_ANTHROPIC_CLIENT is enabled. Returns None when unset
-        so callers keep the underlying SDK's own default instead of forcing one.
+        AwsClientFactory.create_bedrock_client's boto3 retry config (BAI-765).
+        Despite this property's name, the returned value is *attempts*, not
+        *retries* — callers that hand it to an SDK using retries-after-first
+        semantics (e.g. ChatAnthropicBedrock's max_retries kwarg) must convert
+        it (max(0, value - 1)) to keep total attempt counts consistent across
+        Bedrock client paths (BAI-765 review). Returns None when unset so
+        callers keep the underlying SDK's own default instead of forcing one.
         """
         value = os.environ.get("AWS_BEDROCK_MAX_ATTEMPTS") or os.environ.get(
             "AWS_BEDROCK_MAX_RETRIES"
