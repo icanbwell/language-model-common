@@ -1,13 +1,18 @@
 """Tests for mcp_client — session management, interceptor chain, content conversion."""
 
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock
 
 import pytest
 from mcp.types import (
     CallToolResult,
+    ElicitRequest,
+    ElicitRequestFormParams,
     EmbeddedResource,
     ImageContent,
+    InputRequiredResult,
     TextContent,
     TextResourceContents,
 )
@@ -16,8 +21,11 @@ from languagemodelcommon.mcp.mcp_client.content_conversion import (
     convert_call_tool_result,
     convert_mcp_content_to_lc_block,
 )
+from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
 from languagemodelcommon.mcp.mcp_client.tool_invocation import (
+    _execute_tool_call_with_heartbeat,
     build_interceptor_chain,
+    call_mcp_tool_raw,
 )
 from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,
@@ -128,6 +136,124 @@ class TestBuildInterceptorChain:
         request = MCPToolCallRequest(name="test", args={}, server_name="s1")
         result = await handler(request)
         assert result.content[0].text == "injected"  # type: ignore[union-attr]
+
+
+def test_mcp_tool_call_request_carries_input_responses_and_request_state() -> None:
+    """MCPToolCallRequest accepts the SEP-2322 retry fields, defaulting to None."""
+    from mcp.types import ElicitResult
+
+    bare = MCPToolCallRequest(name="test", args={}, server_name="s1")
+    assert bare.input_responses is None
+    assert bare.request_state is None
+
+    retry = MCPToolCallRequest(
+        name="test",
+        args={},
+        server_name="s1",
+        input_responses={
+            "confirm": ElicitResult(action="accept", content={"confirm": True})
+        },
+        request_state="opaque-state-123",
+    )
+    assert retry.request_state == "opaque-state-123"
+    assert retry.input_responses is not None
+    assert retry.input_responses["confirm"].action == "accept"  # type: ignore[union-attr]
+
+
+class TestExecuteToolCallWithHeartbeat:
+    @pytest.mark.asyncio
+    async def test_returns_input_required_result_when_allowed(self) -> None:
+        """A guard-tool ask is returned to the caller, not raised, when
+        allow_input_required=True."""
+        input_required = InputRequiredResult(
+            result_type="input_required",
+            input_requests={
+                "confirm": ElicitRequest(
+                    method="elicitation/create",
+                    params=ElicitRequestFormParams(
+                        message="Proceed?",
+                        requested_schema={
+                            "type": "object",
+                            "properties": {"confirm": {"type": "boolean"}},
+                            "required": ["confirm"],
+                        },
+                    ),
+                )
+            },
+        )
+        session = AsyncMock()
+        session.call_tool = AsyncMock(return_value=input_required)
+
+        result = await _execute_tool_call_with_heartbeat(
+            session=session,
+            name="save_fhir_resource",
+            arguments={"resource": {"resourceType": "Patient"}},
+            progress_callback=None,
+            server_name="mcp-fhir-agent",
+            heartbeat_interval_seconds=15.0,
+            input_responses=None,
+            request_state=None,
+            allow_input_required=True,
+        )
+
+        assert result is input_required
+        session.call_tool.assert_awaited_once_with(
+            "save_fhir_resource",
+            {"resource": {"resourceType": "Patient"}},
+            progress_callback=None,
+            input_responses=None,
+            request_state=None,
+            allow_input_required=True,
+        )
+
+
+@asynccontextmanager
+async def _fake_session_cm() -> AsyncIterator[AsyncMock]:
+    session = AsyncMock()
+    session.initialize = AsyncMock()
+    yield session
+
+
+class TestCallMcpToolRaw:
+    @pytest.mark.asyncio
+    async def test_forwards_input_responses_and_request_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """call_mcp_tool_raw forwards retry fields to the underlying session call."""
+        from mcp.types import ElicitResult
+
+        captured: dict[str, Any] = {}
+
+        async def fake_execute_tool_call_with_heartbeat(
+            **kwargs: Any,
+        ) -> CallToolResult:
+            captured.update(kwargs)
+            return CallToolResult(content=[TextContent(type="text", text="saved")])
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation._execute_tool_call_with_heartbeat",
+            fake_execute_tool_call_with_heartbeat,
+        )
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            lambda *args, **kwargs: _fake_session_cm(),
+        )
+
+        result = await call_mcp_tool_raw(
+            config=MCPConnectionConfig(url="https://example.test/mcp"),
+            tool_name="save_fhir_resource",
+            arguments={"resource": {"resourceType": "Patient"}},
+            server_name="mcp-fhir-agent",
+            input_responses={
+                "confirm": ElicitResult(action="accept", content={"confirm": True})
+            },
+            request_state="opaque-state-123",
+        )
+
+        assert isinstance(result, CallToolResult)
+        assert captured["request_state"] == "opaque-state-123"
+        assert captured["input_responses"]["confirm"].action == "accept"
+        assert captured["allow_input_required"] is True
 
 
 class TestConvertMcpContentToLcBlock:
