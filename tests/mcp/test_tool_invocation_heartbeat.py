@@ -42,6 +42,9 @@ async def test_slow_call_emits_periodic_heartbeats() -> None:
         name: str,
         arguments: dict[str, Any],
         progress_callback: Any = None,
+        input_responses: Any = None,
+        request_state: str | None = None,
+        allow_input_required: bool = False,
     ) -> CallToolResult:
         await asyncio.sleep(0.25)
         return slow_result
@@ -79,6 +82,9 @@ async def test_outer_cancellation_cancels_inner_call_task() -> None:
         name: str,
         arguments: dict[str, Any],
         progress_callback: Any = None,
+        input_responses: Any = None,
+        request_state: str | None = None,
+        allow_input_required: bool = False,
     ) -> None:
         started.set()
         try:
@@ -125,6 +131,9 @@ async def test_inner_cleanup_exception_after_cancellation_is_not_swallowed() -> 
         name: str,
         arguments: dict[str, Any],
         progress_callback: Any = None,
+        input_responses: Any = None,
+        request_state: str | None = None,
+        allow_input_required: bool = False,
     ) -> None:
         started.set()
         try:
@@ -165,6 +174,9 @@ async def test_non_runtime_error_from_dispatch_still_cancels_inner_call_task() -
         name: str,
         arguments: dict[str, Any],
         progress_callback: Any = None,
+        input_responses: Any = None,
+        request_state: str | None = None,
+        allow_input_required: bool = False,
     ) -> None:
         started.set()
         try:

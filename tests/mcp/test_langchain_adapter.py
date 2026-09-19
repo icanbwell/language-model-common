@@ -1,9 +1,17 @@
 """Tests for mcp_client.langchain_adapter — MCP metadata propagation."""
 
 import pytest
+from langchain_core.tools import StructuredTool
+from mcp.types import (
+    ElicitRequest,
+    ElicitRequestFormParams,
+    InputRequiredResult,
+)
 from mcp.types import Tool as MCPTool, ToolAnnotations
 
+from languagemodelcommon.mcp.interceptors.types import MCPToolCallRequest
 from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
+    MCPInputRequiredError,
     _resolve_mcp_title,
     _sanitize_tool_name,
     mcp_tool_to_langchain_tool,
@@ -138,3 +146,59 @@ class TestMcpToolToLangchainToolMetadata:
         )
         assert lc_tool.metadata is not None
         assert lc_tool.metadata["mcp_title"] == "Annotated Title"
+
+
+class TestMcpToolToLangchainToolInputRequired:
+    @pytest.mark.asyncio
+    async def test_raises_mcp_input_required_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An InputRequiredResult from the handler chain surfaces as
+        MCPInputRequiredError, not silently stringified tool output."""
+        input_required = InputRequiredResult(
+            result_type="input_required",
+            input_requests={
+                "confirm": ElicitRequest(
+                    method="elicitation/create",
+                    params=ElicitRequestFormParams(
+                        message="About to save a Patient. Proceed?",
+                        requested_schema={
+                            "type": "object",
+                            "properties": {"confirm": {"type": "boolean"}},
+                            "required": ["confirm"],
+                        },
+                    ),
+                )
+            },
+            request_state="opaque-state-123",
+        )
+
+        async def fake_execute_tool(request: MCPToolCallRequest) -> InputRequiredResult:
+            return input_required
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.langchain_adapter._make_execute_tool",
+            lambda **kwargs: fake_execute_tool,
+        )
+
+        mcp_tool = MCPTool(
+            name="save_fhir_resource",
+            description="Save a FHIR resource",
+            input_schema={"type": "object", "properties": {}},
+        )
+        connection = MCPConnectionConfig(url="https://mcp-fhir-agent.test/mcp")
+        tool = mcp_tool_to_langchain_tool(
+            tool=mcp_tool, connection=connection, server_name="mcp-fhir-agent"
+        )
+        assert isinstance(tool, StructuredTool)
+        assert tool.coroutine is not None
+
+        with pytest.raises(MCPInputRequiredError) as exc_info:
+            await tool.coroutine(resource={"resourceType": "Patient"})
+
+        err = exc_info.value
+        assert err.tool_name == "save_fhir_resource"
+        assert err.arguments == {"resource": {"resourceType": "Patient"}}
+        assert err.server_name == "mcp-fhir-agent"
+        assert err.request_state == "opaque-state-123"
+        assert "confirm" in err.input_requests

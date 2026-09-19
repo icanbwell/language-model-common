@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
+from mcp.types import InputRequest, InputRequiredResult
 from mcp.types import Tool as MCPTool
 
 from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext, _MCPCallbacks
@@ -25,6 +26,68 @@ from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
 
 
 _INVALID_TOOL_NAME_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+class MCPInputRequiredError(RuntimeError):
+    """Raised when an MCP tool call returns InputRequiredResult (SEP-2322
+    guard-tool ask) instead of a terminal CallToolResult.
+
+    Carries everything a caller needs to resubmit the *exact same* call via
+    ``call_mcp_tool_raw`` once it has collected an answer to
+    ``input_requests`` -- this package has no opinion on how that answer is
+    collected (a human-in-the-loop UI, a LangGraph ``interrupt()``, or
+    anything else); it only guarantees the retry leg has what it needs.
+
+    Deliberately a plain ``RuntimeError`` subclass, not ``BaseException``:
+    unlike mcp-fhir-agent's server-side ``ElicitationRequired`` (which must
+    survive broad `except Exception` handlers several call layers below the
+    tool function), this exception is raised directly at the LangChain tool
+    boundary with no intermediate layer *in this package* that could swallow
+    it -- this package makes no guarantee beyond its own boundary.
+
+    IMPORTANT -- this is the caller's responsibility, not something this
+    package can enforce: if you execute this tool's coroutine through a
+    framework that wraps tool execution in its own broad, default
+    exception-to-error-message conversion, that framework's handling sits
+    between this raise site and any "top-level catcher" you may have and
+    WILL swallow this exception before your code ever sees it. The primary
+    example is LangGraph's prebuilt ``ToolNode``, whose default
+    ``handle_tool_errors=True`` wraps every tool call in `except Exception`
+    and converts it to a generic error ``ToolMessage``, discarding
+    ``input_requests``/``request_state`` in the process. If you wire this
+    tool into a ``ToolNode``-style executor, you MUST catch
+    ``MCPInputRequiredError`` yourself at or before the point where that
+    framework invokes the tool -- do not rely on it propagating further up.
+    baileyai's ``wrap_tool_for_guard_tool_bridge``
+    (`baileyai/services/mcp/guard_tool_bridge.py`) is the correct pattern:
+    it catches ``MCPInputRequiredError`` immediately around its own
+    ``await tool.ainvoke(...)`` call, before ``ToolNode`` (or any other
+    framework-level handler) ever gets a chance to intercept it -- see the
+    companion baileyai ADR
+    (`adrs/006-mcp-guard-tool-elicitation-support.md`) for how it's
+    consumed.
+    """
+
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        connection: "MCPConnectionConfig",
+        server_name: str | None,
+        input_requests: dict[str, InputRequest],
+        request_state: str | None,
+    ) -> None:
+        self.tool_name = tool_name
+        self.arguments = arguments
+        self.connection = connection
+        self.server_name = server_name
+        self.input_requests = input_requests
+        self.request_state = request_state
+        super().__init__(
+            f"MCP tool {tool_name!r} requires input before it can proceed "
+            f"(fields: {sorted(input_requests)})"
+        )
 
 
 def _sanitize_tool_name(name: str) -> str:
@@ -99,8 +162,18 @@ def mcp_tool_to_langchain_tool(
             args=arguments,
             server_name=server_name or "unknown",
             headers=None,
+            allow_input_required=True,
         )
         call_tool_result = await handler(request)
+        if isinstance(call_tool_result, InputRequiredResult):
+            raise MCPInputRequiredError(
+                tool_name=tool.name,
+                arguments=arguments,
+                connection=connection,
+                server_name=server_name,
+                input_requests=call_tool_result.input_requests or {},
+                request_state=call_tool_result.request_state,
+            )
         content = convert_call_tool_result(call_tool_result)
         return content, None
 

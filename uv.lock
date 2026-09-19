@@ -1801,7 +1801,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-mongodb", specifier = ">=0.3.1" },
     { name = "langgraph-store-mongodb", specifier = ">=0.1.0" },
     { name = "markdownify", specifier = ">=0.14.1" },
-    { name = "mcp", specifier = ">=1.27.2" },
+    { name = "mcp", specifier = ">=2.2.0" },
     { name = "oidcauthlib", specifier = ">=3.0.21" },
     { name = "openai", specifier = ">=2.5.0" },
     { name = "py-key-value-aio", specifier = ">=0.4.4" },

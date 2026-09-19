@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_core.callbacks.manager import adispatch_custom_event
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, InputRequiredResult, InputResponses
 from pydantic import ValidationError
 
 from languagemodelcommon.mcp.callbacks import Callbacks, CallbackContext, _MCPCallbacks
@@ -231,10 +231,19 @@ async def _execute_tool_call_with_heartbeat(
     progress_callback: Any,
     server_name: str,
     heartbeat_interval_seconds: float,
-) -> CallToolResult:
+    input_responses: InputResponses | None = None,
+    request_state: str | None = None,
+    allow_input_required: bool = False,
+) -> CallToolResult | InputRequiredResult:
     """Call ``session.call_tool``, emitting a synthetic ``mcp_tool_heartbeat``
     custom event every ``heartbeat_interval_seconds`` while the call is in
     flight, regardless of whether the tool reports real progress.
+
+    ``input_responses``/``request_state`` are SEP-2322 guard-tool retry
+    fields, forwarded byte-exact to ``session.call_tool``. When
+    ``allow_input_required`` is True, an ``InputRequiredResult`` is returned
+    to the caller instead of raising -- see ``ClientSession.call_tool``'s own
+    docstring for the raise-vs-return contract.
 
     Uses ``asyncio.shield`` so a heartbeat tick's wait_for timeout never
     cancels the underlying tool call -- only the local wait is abandoned and
@@ -242,8 +251,17 @@ async def _execute_tool_call_with_heartbeat(
     (e.g. the overall chat turn is aborted), the inner call_task is
     cancelled too rather than left running in the background.
     """
-    call_task: "asyncio.Task[CallToolResult]" = asyncio.ensure_future(
-        session.call_tool(name, arguments, progress_callback=progress_callback)
+    call_task: "asyncio.Task[CallToolResult | InputRequiredResult]" = (
+        asyncio.ensure_future(
+            session.call_tool(
+                name,
+                arguments,
+                progress_callback=progress_callback,
+                input_responses=input_responses,
+                request_state=request_state,
+                allow_input_required=allow_input_required,
+            )
+        )
     )
     elapsed_seconds = 0.0
     try:
@@ -350,6 +368,9 @@ def _make_execute_tool(
                     progress_callback=mcp_callbacks.progress_callback,
                     server_name=request.server_name,
                     heartbeat_interval_seconds=heartbeat_interval_seconds,
+                    input_responses=request.input_responses,
+                    request_state=request.request_state,
+                    allow_input_required=request.allow_input_required,
                 )
             except Exception:
                 await session_pool.evict(effective_config)
@@ -363,6 +384,7 @@ def _make_execute_tool(
             effective_config, mcp_callbacks=mcp_callbacks
         ) as session:
             await session.initialize()
+            result: CallToolResult | InputRequiredResult
             try:
                 if await _tool_supports_tasks(
                     session=session,
@@ -392,6 +414,9 @@ def _make_execute_tool(
                             progress_callback=mcp_callbacks.progress_callback,
                             server_name=request.server_name,
                             heartbeat_interval_seconds=heartbeat_interval_seconds,
+                            input_responses=request.input_responses,
+                            request_state=request.request_state,
+                            allow_input_required=request.allow_input_required,
                         )
                 else:
                     result = await _execute_tool_call_with_heartbeat(
@@ -401,6 +426,9 @@ def _make_execute_tool(
                         progress_callback=mcp_callbacks.progress_callback,
                         server_name=request.server_name,
                         heartbeat_interval_seconds=heartbeat_interval_seconds,
+                        input_responses=request.input_responses,
+                        request_state=request.request_state,
+                        allow_input_required=request.allow_input_required,
                     )
             except Exception as e:
                 captured_exception = e
@@ -423,11 +451,24 @@ async def call_mcp_tool_raw(
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
-) -> CallToolResult:
-    """Call an MCP tool and return the raw CallToolResult.
+    input_responses: InputResponses | None = None,
+    request_state: str | None = None,
+    allow_input_required: bool = False,
+) -> MCPToolCallResult:
+    """Call an MCP tool and return the raw CallToolResult (or, for a
+    guard-tool-gated tool, an InputRequiredResult).
 
     This is used by the call_tool meta-tool to proxy calls without
-    converting to LangChain format.
+    converting to LangChain format, and by callers resubmitting a SEP-2322
+    guard-tool answer (``input_responses``/``request_state``) directly,
+    bypassing the LangChain tool-call path entirely since the retry leg
+    isn't driven by a fresh LLM tool call.
+
+    ``allow_input_required`` defaults to False so existing callers that
+    don't handle ``InputRequiredResult`` keep getting the pre-SEP-2322
+    behavior: the underlying session raises rather than returning one.
+    Pass True only if the caller actually checks
+    ``isinstance(result, InputRequiredResult)``.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
@@ -452,5 +493,8 @@ async def call_mcp_tool_raw(
         args=arguments,
         server_name=server_name,
         headers=None,
+        input_responses=input_responses,
+        request_state=request_state,
+        allow_input_required=allow_input_required,
     )
     return await handler(request)
