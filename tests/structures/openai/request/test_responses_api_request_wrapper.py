@@ -510,3 +510,25 @@ class TestCreateImageOutputSseEvent:
         assert item["image_url"] == "https://example.com/chart.png"
         assert item["mime_type"] == "image/png"
         assert item["id"].startswith("img_req-1_")
+
+    def test_multiple_images_in_same_turn_get_distinct_ids(self) -> None:
+        """Regression for BAI-806 review finding: len(self._messages) alone
+        is constant across calls within one turn, so without a per-image
+        discriminator two images emitted back-to-back would collide on id."""
+        wrapper = _make_wrapper()
+        image_part = {
+            "type": "output_image",
+            "image_url": "https://example.com/chart.png",
+            "mime_type": "image/png",
+        }
+        first_raw = wrapper.create_image_output_sse_event(
+            request_id="req-1", image_part=image_part
+        )
+        second_raw = wrapper.create_image_output_sse_event(
+            request_id="req-1", image_part=image_part
+        )
+        assert first_raw is not None
+        assert second_raw is not None
+        first = json.loads(first_raw[len("data: ") :])
+        second = json.loads(second_raw[len("data: ") :])
+        assert first["item"]["id"] != second["item"]["id"]

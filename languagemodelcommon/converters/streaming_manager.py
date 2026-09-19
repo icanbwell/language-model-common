@@ -255,9 +255,27 @@ class LangGraphStreamingManager(StreamContextMixin):
             # through the text-delta path above. Unlike the debug-only block
             # below, this is real response content and is not gated on
             # enable_debug_logging.
-            for image_part in extract_image_output_parts(
-                content_chunks.non_text_blocks
-            ):
+            image_parts = extract_image_output_parts(
+                non_text_blocks=content_chunks.non_text_blocks
+            )
+            if image_parts:
+                # Force-flush any text still sitting in the buffer so it is
+                # yielded before the image event -- otherwise text preceding
+                # (or accompanying) the image in this chunk could still be
+                # buffered (see StreamBufferManager.buffer_content) and would
+                # reach the client after the image, breaking reading order.
+                trailing_flush = await self._stream_buffer_manager.buffer_content(
+                    content_text="",
+                    force_flush=True,
+                )
+                if trailing_flush:
+                    yield chat_request_wrapper.create_sse_message(
+                        request_id=request_information.request_id,
+                        content=trailing_flush,
+                        usage_metadata=chunk.usage_metadata if chunk else None,
+                        source="on_chat_model_stream",
+                    )
+            for image_part in image_parts:
                 image_event = chat_request_wrapper.create_image_output_sse_event(
                     request_id=request_information.request_id,
                     image_part=image_part,

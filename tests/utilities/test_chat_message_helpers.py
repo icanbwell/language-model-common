@@ -231,6 +231,37 @@ class TestLangchainToChatMessage:
             "mime_type": "image/png",
         }
 
+    def test_tool_message_with_text_and_image_content_and_no_artifact_keeps_both(
+        self,
+    ) -> None:
+        """Regression for BAI-806 review finding: a ToolMessage with no
+        artifact and mixed text + image content (e.g. a tool result summary
+        alongside a screenshot) must keep the text, not just the image."""
+        message = ToolMessage(
+            content=[
+                {"type": "text", "text": "Here is the result:"},
+                {
+                    "type": "image",
+                    "url": "https://example.com/chart.png",
+                    "mime_type": "image/png",
+                },
+            ],
+            tool_call_id="tool_1",
+            artifact=None,
+        )
+        result = langchain_to_chat_message(message)
+        assert isinstance(result, ChatCompletionMessage)
+        assert isinstance(result.content, list)
+        assert result.content[0] == {
+            "type": "text",
+            "text": "Here is the result:",
+        }
+        assert result.content[1] == {
+            "type": "output_image",
+            "image_url": "https://example.com/chart.png",
+            "mime_type": "image/png",
+        }
+
     def test_system_message_raises_value_error(self) -> None:
         with pytest.raises(ValueError):
             langchain_to_chat_message(SystemMessage(content="sys"))
@@ -269,7 +300,7 @@ class TestExtractImageOutputParts:
 
     def test_langchain_image_block_with_url(self) -> None:
         parts = extract_image_output_parts(
-            [
+            non_text_blocks=[
                 {
                     "type": "image",
                     "url": "https://example.com/a.png",
@@ -287,7 +318,9 @@ class TestExtractImageOutputParts:
 
     def test_langchain_image_block_with_base64_builds_data_uri(self) -> None:
         parts = extract_image_output_parts(
-            [{"type": "image", "base64": "Zm9v", "mime_type": "image/jpeg"}]
+            non_text_blocks=[
+                {"type": "image", "base64": "Zm9v", "mime_type": "image/jpeg"}
+            ]
         )
         assert parts == [
             {
@@ -298,13 +331,17 @@ class TestExtractImageOutputParts:
         ]
 
     def test_langchain_image_block_with_neither_url_nor_base64_skipped(self) -> None:
-        parts = extract_image_output_parts([{"type": "image", "file_id": "file-123"}])
+        parts = extract_image_output_parts(
+            non_text_blocks=[{"type": "image", "file_id": "file-123"}]
+        )
         assert parts == []
 
     @pytest.mark.parametrize("block_type", ["image_url", "input_image", "output_image"])
     def test_openai_style_dict_image_url(self, block_type: str) -> None:
         parts = extract_image_output_parts(
-            [{"type": block_type, "image_url": {"url": "https://example.com/b.png"}}]
+            non_text_blocks=[
+                {"type": block_type, "image_url": {"url": "https://example.com/b.png"}}
+            ]
         )
         assert parts == [
             {
@@ -316,7 +353,9 @@ class TestExtractImageOutputParts:
 
     def test_openai_style_bare_string_image_url(self) -> None:
         parts = extract_image_output_parts(
-            [{"type": "input_image", "image_url": "https://example.com/c.png"}]
+            non_text_blocks=[
+                {"type": "input_image", "image_url": "https://example.com/c.png"}
+            ]
         )
         assert parts == [
             {
@@ -327,7 +366,9 @@ class TestExtractImageOutputParts:
         ]
 
     def test_non_image_blocks_ignored(self) -> None:
-        parts = extract_image_output_parts([{"type": "reasoning", "reasoning": "x"}])
+        parts = extract_image_output_parts(
+            non_text_blocks=[{"type": "reasoning", "reasoning": "x"}]
+        )
         assert parts == []
 
 
@@ -335,17 +376,20 @@ class TestBuildOpenAiMessageContent:
     """Tests for build_openai_message_content."""
 
     def test_string_content_returned_unchanged(self) -> None:
-        assert build_openai_message_content("hello") == "hello"
+        assert build_openai_message_content(content="hello") == "hello"
 
     def test_text_only_list_returns_string(self) -> None:
         result = build_openai_message_content(
-            [{"type": "text", "text": "hello"}, {"type": "text", "text": " world"}]
+            content=[
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": " world"},
+            ]
         )
         assert result == "hello world"
 
     def test_text_and_image_returns_content_parts(self) -> None:
         result = build_openai_message_content(
-            [
+            content=[
                 {"type": "text", "text": "here"},
                 {"type": "image", "url": "https://example.com/a.png"},
             ]
@@ -361,7 +405,7 @@ class TestBuildOpenAiMessageContent:
 
     def test_image_only_returns_content_parts_with_no_text_part(self) -> None:
         result = build_openai_message_content(
-            [{"type": "image", "url": "https://example.com/a.png"}]
+            content=[{"type": "image", "url": "https://example.com/a.png"}]
         )
         assert result == [
             {

@@ -140,6 +140,7 @@ def iter_message_content_text_chunks(
 
 
 def extract_image_output_parts(
+    *,
     non_text_blocks: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
@@ -179,6 +180,7 @@ def extract_image_output_parts(
 
 
 def build_openai_message_content(
+    *,
     content: str | list[str | Dict[str, Any]],
 ) -> str | list[dict[str, Any]]:
     """
@@ -197,7 +199,7 @@ def build_openai_message_content(
         content=content, include_non_text_placeholders=False
     )
     text = "".join(chunks.text_chunks)
-    image_parts = extract_image_output_parts(chunks.non_text_blocks)
+    image_parts = extract_image_output_parts(non_text_blocks=chunks.non_text_blocks)
     if not image_parts:
         return text
     parts: list[dict[str, Any]] = []
@@ -266,7 +268,7 @@ def langchain_to_chat_message(message: BaseMessage) -> Optional[ChatCompletionMe
                 "Human messages should not be converted to ChatCompletionMessage"
             )
         case AIMessage():
-            content_value = build_openai_message_content(message.content)
+            content_value = build_openai_message_content(content=message.content)
             if isinstance(content_value, list):
                 # openai's ChatCompletionMessage.content is declared Optional[str];
                 # a content-part list is an additive extension of that contract
@@ -285,16 +287,20 @@ def langchain_to_chat_message(message: BaseMessage) -> Optional[ChatCompletionMe
             return ai_message
         case ToolMessage():
             artifact: str = message.artifact
-            image_parts: list[dict[str, Any]] = (
-                extract_image_output_parts(
-                    iter_message_content_text_chunks(
-                        content=message.content,
-                        include_non_text_placeholders=False,
-                    ).non_text_blocks
+            # Non-text content (e.g. an image from an MCP tool result) is
+            # only present when message.content is a content-block list, not
+            # a plain string.
+            content_text: str = ""
+            image_parts: list[dict[str, Any]] = []
+            if not isinstance(message.content, str):
+                content_chunks = iter_message_content_text_chunks(
+                    content=message.content,
+                    include_non_text_placeholders=False,
                 )
-                if not isinstance(message.content, str)
-                else []
-            )
+                content_text = "".join(content_chunks.text_chunks)
+                image_parts = extract_image_output_parts(
+                    non_text_blocks=content_chunks.non_text_blocks
+                )
             if artifact:
                 if image_parts:
                     parts: list[dict[str, Any]] = [
@@ -311,9 +317,19 @@ def langchain_to_chat_message(message: BaseMessage) -> Optional[ChatCompletionMe
                 )
                 return ai_message
             if image_parts:
+                # BAI-806 fix: preserve any accompanying text (e.g. the MCP
+                # response_format="content_and_artifact" shape where the
+                # model's summary text and the image are both in
+                # message.content, and artifact is always None) instead of
+                # dropping it -- mirrors build_openai_message_content's
+                # text-then-image ordering used for the AIMessage case.
+                parts = []
+                if content_text:
+                    parts.append({"type": "text", "text": content_text})
+                parts.extend(image_parts)
                 return ChatCompletionMessage.model_construct(
                     role="assistant",
-                    content=image_parts,  # type: ignore[arg-type]
+                    content=parts,  # type: ignore[arg-type]
                 )
         case LangchainChatMessage():
             raise ValueError(
