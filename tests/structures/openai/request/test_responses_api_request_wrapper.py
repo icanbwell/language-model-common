@@ -486,3 +486,27 @@ class TestCreateToolEndSseEvent:
         assert item["runtime_seconds"] is None
         assert item["output"] == ""
         assert item["is_error"] is False
+
+
+class TestCreateImageOutputSseEvent:
+    """Tests for create_image_output_sse_event (BAI-806)."""
+
+    def test_emits_output_item_done_with_output_image_item(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_image_output_sse_event(
+            request_id="req-1",
+            image_part={
+                "type": "output_image",
+                "image_url": "https://example.com/chart.png",
+                "mime_type": "image/png",
+            },
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["type"] == "response.output_item.done"
+        item = event["item"]
+        assert item["type"] == "output_image"
+        assert item["status"] == "completed"
+        assert item["image_url"] == "https://example.com/chart.png"
+        assert item["mime_type"] == "image/png"
+        assert item["id"].startswith("img_req-1_")

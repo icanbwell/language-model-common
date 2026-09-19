@@ -367,6 +367,39 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         return f"data: {json.dumps(event)}\n\n"
 
     @override
+    def create_image_output_sse_event(
+        self,
+        *,
+        request_id: str,
+        image_part: Dict[str, Any],
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with an ``output_image``
+        item.
+
+        Images can't be token-streamed like text, so unlike
+        ``ChoiceDelta.content``'s incremental append path, this ships the
+        whole image atomically in one event -- the same "whole payload, one
+        event" shape ``create_tool_end_sse_event`` already uses for tool
+        output. ``output_image`` is this repo's own additive item type (not
+        one of ``openai.types.responses``'s built-ins), matching how
+        ``create_tool_start_sse_event``/``create_tool_end_sse_event`` already
+        emit a raw ``function_call`` dict rather than a validated model.
+        """
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "output_image",
+                "id": f"img_{request_id}_{len(self._messages)}",
+                "status": "completed",
+                "image_url": image_part.get("image_url"),
+                "mime_type": image_part.get("mime_type"),
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
     def create_task_progress_sse_event(
         self,
         *,

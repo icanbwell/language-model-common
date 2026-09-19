@@ -66,6 +66,14 @@ class _FakeChatRequestWrapper:
     ) -> str | None:
         return f"heartbeat:{tool_name}:{elapsed_seconds:.0f}"
 
+    def create_image_output_sse_event(
+        self,
+        *,
+        request_id: str,
+        image_part: dict[str, Any],
+    ) -> str | None:
+        return f"image:{image_part.get('image_url')}"
+
 
 @pytest.fixture()
 def streaming_manager_factory(
@@ -284,3 +292,116 @@ async def test_resuming_after_tool_call_inserts_missing_separator(
     rendered = "".join(chunk for chunk in resumed_chunks if chunk)
     assert "to.Let" not in rendered
     assert "to. Let" in rendered
+
+
+@pytest.mark.asyncio
+async def test_chat_model_stream_emits_image_event_for_image_only_chunk(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """BAI-806: an image content block must produce an atomic image SSE
+    event instead of being silently dropped by the text-delta path."""
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-4")
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {
+                "chunk": AIMessageChunk(
+                    content=[
+                        {
+                            "type": "image",
+                            "url": "https://example.com/chart.png",
+                            "mime_type": "image/png",
+                        }
+                    ]
+                )
+            },
+        },
+    )
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_stream(
+            event=stream_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+    assert chunks == ["image:https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_chat_model_stream_emits_text_and_image_for_mixed_chunk(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-5")
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {
+                "chunk": AIMessageChunk(
+                    content=[
+                        {"type": "text", "text": "Here is the chart:"},
+                        {
+                            "type": "image",
+                            "url": "https://example.com/chart.png",
+                        },
+                    ]
+                )
+            },
+        },
+    )
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_stream(
+            event=stream_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+    # The image event rides its own atomic path and is not subject to the
+    # text buffer's flush timing (unlike the text chunk alongside it, which
+    # may still be buffered -- see test_chat_model_end_includes_streamed_text_
+    # when_debug_enabled's equivalent "streamed_chunks == []" assertion).
+    assert "image:https://example.com/chart.png" in chunks
+
+
+@pytest.mark.asyncio
+async def test_chat_model_stream_text_only_emits_no_image_event(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-6")
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="just text")},
+        },
+    )
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_stream(
+            event=stream_event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+    ]
+    assert not any(c and c.startswith("image:") for c in chunks)

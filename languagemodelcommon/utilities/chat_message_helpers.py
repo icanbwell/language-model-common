@@ -53,6 +53,13 @@ def iter_message_content_text_chunks(
                 else:
                     text_chunks.append("[refusal]")
                 non_text_blocks.append(content_item)
+            elif content_item_type == "image":
+                # LangChain's own ImageContentBlock (langchain_core.messages.content),
+                # e.g. from convert_call_tool_result. Never a text chunk on its own;
+                # extract_image_output_parts is how callers recover the image itself.
+                if include_non_text_placeholders:
+                    text_chunks.append("[image]")
+                non_text_blocks.append(content_item)
             elif content_item_type == "image_url":
                 image_url = content_item.get("image_url")
                 url_value = (
@@ -132,6 +139,74 @@ def iter_message_content_text_chunks(
     return ContentChunks(text_chunks=text_chunks, non_text_blocks=non_text_blocks)
 
 
+def extract_image_output_parts(
+    non_text_blocks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Build OpenAI-style ``output_image`` content parts from the non-text
+    content blocks captured by `iter_message_content_text_chunks`.
+
+    Recognizes both LangChain's own `ImageContentBlock` (`type: "image"`,
+    with `url`/`base64`/`mime_type` -- e.g. from `convert_call_tool_result`)
+    and the OpenAI/Anthropic-style `image_url`/`input_image`/`output_image`
+    dict shapes. Blocks with no resolvable URL (e.g. a bare `file_id`
+    reference with no inline data) are skipped rather than emitting a part
+    with nothing to render.
+    """
+    image_parts: list[dict[str, Any]] = []
+    for block in non_text_blocks:
+        block_type = block.get("type")
+        if block_type == "image":
+            mime_type = block.get("mime_type")
+            url = block.get("url")
+            base64_data = block.get("base64")
+            if not url and base64_data:
+                url = f"data:{mime_type or 'application/octet-stream'};base64,{base64_data}"
+            if not url:
+                continue
+            image_parts.append(
+                {"type": "output_image", "image_url": url, "mime_type": mime_type}
+            )
+        elif block_type in ("image_url", "input_image", "output_image"):
+            image_url = block.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if not isinstance(url, str) or not url:
+                continue
+            image_parts.append(
+                {"type": "output_image", "image_url": url, "mime_type": None}
+            )
+    return image_parts
+
+
+def build_openai_message_content(
+    content: str | list[str | Dict[str, Any]],
+) -> str | list[dict[str, Any]]:
+    """
+    Convert LangChain message content into an OpenAI-compatible content value.
+
+    Returns a plain `str` when the content has no image parts -- byte-for-byte
+    what `convert_message_content_to_string` would have produced, so every
+    existing text-only consumer is unaffected. Only when an image content
+    block (see `extract_image_output_parts`) is present does this return a
+    list of content parts (`text` + `output_image`) instead of silently
+    dropping the image.
+    """
+    if isinstance(content, str):
+        return content
+    chunks = iter_message_content_text_chunks(
+        content=content, include_non_text_placeholders=False
+    )
+    text = "".join(chunks.text_chunks)
+    image_parts = extract_image_output_parts(chunks.non_text_blocks)
+    if not image_parts:
+        return text
+    parts: list[dict[str, Any]] = []
+    if text:
+        parts.append({"type": "text", "text": text})
+    parts.extend(image_parts)
+    return parts
+
+
 def convert_message_content_to_string(content: str | list[str | Dict[str, Any]]) -> str:
     """
     Convert message content (string or list of content blocks) to a single string.
@@ -191,19 +266,55 @@ def langchain_to_chat_message(message: BaseMessage) -> Optional[ChatCompletionMe
                 "Human messages should not be converted to ChatCompletionMessage"
             )
         case AIMessage():
+            content_value = build_openai_message_content(message.content)
+            if isinstance(content_value, list):
+                # openai's ChatCompletionMessage.content is declared Optional[str];
+                # a content-part list is an additive extension of that contract
+                # (see BAI-806 design doc), so bypass field validation via
+                # model_construct rather than raising on the list we intend to
+                # carry. Serialization (model_dump/model_dump_json) still emits
+                # exactly what was assigned.
+                return ChatCompletionMessage.model_construct(
+                    role="assistant",
+                    content=content_value,  # type: ignore[arg-type]
+                )
             ai_message = ChatCompletionMessage(
                 role="assistant",
-                content=convert_message_content_to_string(message.content),
+                content=content_value,
             )
             return ai_message
         case ToolMessage():
             artifact: str = message.artifact
+            image_parts: list[dict[str, Any]] = (
+                extract_image_output_parts(
+                    iter_message_content_text_chunks(
+                        content=message.content,
+                        include_non_text_placeholders=False,
+                    ).non_text_blocks
+                )
+                if not isinstance(message.content, str)
+                else []
+            )
             if artifact:
+                if image_parts:
+                    parts: list[dict[str, Any]] = [
+                        {"type": "text", "text": f"\n[{artifact}]\n"}
+                    ]
+                    parts.extend(image_parts)
+                    return ChatCompletionMessage.model_construct(
+                        role="assistant",
+                        content=parts,  # type: ignore[arg-type]
+                    )
                 ai_message = ChatCompletionMessage(
                     role="assistant",
                     content=f"\n[{artifact}]\n",
                 )
                 return ai_message
+            if image_parts:
+                return ChatCompletionMessage.model_construct(
+                    role="assistant",
+                    content=image_parts,  # type: ignore[arg-type]
+                )
         case LangchainChatMessage():
             raise ValueError(
                 "Chat messages should not be converted to ChatCompletionMessage"

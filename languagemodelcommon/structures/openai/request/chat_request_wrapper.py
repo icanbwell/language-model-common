@@ -326,6 +326,25 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_image_output_sse_event(
+        self,
+        *,
+        request_id: str,
+        image_part: dict[str, Any],
+    ) -> str | None:
+        """Emit an SSE event carrying an image content part atomically.
+
+        Images can't be incrementally token-streamed the way text can, so
+        this rides a whole-payload item event instead of ``ChoiceDelta.content``
+        -- the same pattern already used for tool-call start/end
+        (``create_tool_start_sse_event``/``create_tool_end_sse_event``).
+
+        The default implementation returns None (no-op). Subclasses that
+        support structured atomic item events (e.g. Responses API) override
+        this to emit a typed SSE frame the client can use to render the image.
+        """
+        return None
+
     @property
     @abstractmethod
     def enable_debug_logging(self) -> bool:
