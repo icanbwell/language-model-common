@@ -22,6 +22,7 @@ class _MCPToolCallRequestOverrides(TypedDict, total=False):
     headers: NotRequired[dict[str, Any] | None]
     input_responses: NotRequired["InputResponses | None"]
     request_state: NotRequired[str | None]
+    allow_input_required: NotRequired[bool]
 
 
 @dataclass
@@ -36,6 +37,13 @@ class MCPToolCallRequest:
             (SEP-2322 guard-tool retry). None on a first-round call.
         request_state: Opaque state echoed from a prior InputRequiredResult.
             Must be passed through byte-exact; never inspected here.
+        allow_input_required: Whether the caller is prepared to receive an
+            InputRequiredResult instead of a terminal CallToolResult.
+            Defaults to False so existing callers that don't handle
+            InputRequiredResult keep getting the pre-SEP-2322 behavior
+            (session.call_tool raises instead of returning one). Only
+            callers that actually check isinstance(result,
+            InputRequiredResult) should set this to True.
 
     Context fields (read-only, for routing/logging):
         server_name: Name of the MCP server handling the tool.
@@ -47,6 +55,7 @@ class MCPToolCallRequest:
     headers: dict[str, Any] | None = None
     input_responses: InputResponses | None = None
     request_state: str | None = None
+    allow_input_required: bool = False
 
     def override(self, **overrides: Unpack[_MCPToolCallRequestOverrides]) -> Self:
         return replace(self, **overrides)

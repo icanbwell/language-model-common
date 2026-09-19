@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp.types import (
@@ -214,12 +214,22 @@ async def _fake_session_cm() -> AsyncIterator[AsyncMock]:
     yield session
 
 
+@asynccontextmanager
+async def _fake_session_cm_with(session: AsyncMock) -> AsyncIterator[AsyncMock]:
+    """Like ``_fake_session_cm`` but wraps a caller-provided, pre-configured
+    session (e.g. one with a custom ``call_tool`` side effect)."""
+    session.initialize = AsyncMock()
+    session.get_server_capabilities = MagicMock(return_value=None)
+    yield session
+
+
 class TestCallMcpToolRaw:
     @pytest.mark.asyncio
     async def test_forwards_input_responses_and_request_state(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """call_mcp_tool_raw forwards retry fields to the underlying session call."""
+        """call_mcp_tool_raw forwards retry fields (and an explicit
+        allow_input_required=True opt-in) to the underlying session call."""
         from mcp.types import ElicitResult
 
         captured: dict[str, Any] = {}
@@ -248,12 +258,110 @@ class TestCallMcpToolRaw:
                 "confirm": ElicitResult(action="accept", content={"confirm": True})
             },
             request_state="opaque-state-123",
+            allow_input_required=True,
         )
 
         assert isinstance(result, CallToolResult)
         assert captured["request_state"] == "opaque-state-123"
         assert captured["input_responses"]["confirm"].action == "accept"
         assert captured["allow_input_required"] is True
+
+    @pytest.mark.asyncio
+    async def test_default_allow_input_required_preserves_pre_sep2322_raise_behavior(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression test: a caller that never passes allow_input_required
+        (e.g. baileyai-skills-service's meta-tools, pinned to the old
+        CallToolResult-only contract) must keep getting a RuntimeError raised
+        on an InputRequiredResult, not the value silently returned -- this
+        mirrors ClientSession.call_tool's own raise-vs-return contract.
+        """
+
+        async def fake_call_tool(
+            name: str,
+            arguments: dict[str, Any],
+            progress_callback: Any = None,
+            *,
+            input_responses: Any = None,
+            request_state: str | None = None,
+            allow_input_required: bool = False,
+        ) -> CallToolResult:
+            if allow_input_required:
+                raise AssertionError("expected allow_input_required=False by default")
+            raise RuntimeError("Server requires input before call_tool can complete")
+
+        session = AsyncMock()
+        session.call_tool = fake_call_tool
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            lambda *args, **kwargs: _fake_session_cm_with(session),
+        )
+
+        with pytest.raises(
+            RuntimeError, match="Server requires input before call_tool can complete"
+        ):
+            await call_mcp_tool_raw(
+                config=MCPConnectionConfig(url="https://example.test/mcp"),
+                tool_name="save_fhir_resource",
+                arguments={"resource": {"resourceType": "Patient"}},
+                server_name="mcp-fhir-agent",
+            )
+
+    @pytest.mark.asyncio
+    async def test_allow_input_required_true_returns_input_required_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With allow_input_required=True explicitly requested, an
+        InputRequiredResult is returned to the caller instead of raising."""
+        input_required = InputRequiredResult(
+            result_type="input_required",
+            input_requests={
+                "confirm": ElicitRequest(
+                    method="elicitation/create",
+                    params=ElicitRequestFormParams(
+                        message="Proceed?",
+                        requested_schema={
+                            "type": "object",
+                            "properties": {"confirm": {"type": "boolean"}},
+                            "required": ["confirm"],
+                        },
+                    ),
+                )
+            },
+            request_state="opaque-state-123",
+        )
+
+        async def fake_call_tool(
+            name: str,
+            arguments: dict[str, Any],
+            progress_callback: Any = None,
+            *,
+            input_responses: Any = None,
+            request_state: str | None = None,
+            allow_input_required: bool = False,
+        ) -> CallToolResult | InputRequiredResult:
+            if not allow_input_required:
+                raise AssertionError("expected allow_input_required=True")
+            return input_required
+
+        session = AsyncMock()
+        session.call_tool = fake_call_tool
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            lambda *args, **kwargs: _fake_session_cm_with(session),
+        )
+
+        result = await call_mcp_tool_raw(
+            config=MCPConnectionConfig(url="https://example.test/mcp"),
+            tool_name="save_fhir_resource",
+            arguments={"resource": {"resourceType": "Patient"}},
+            server_name="mcp-fhir-agent",
+            allow_input_required=True,
+        )
+
+        assert result is input_required
 
 
 class TestConvertMcpContentToLcBlock:

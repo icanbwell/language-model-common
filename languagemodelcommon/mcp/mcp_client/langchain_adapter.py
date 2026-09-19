@@ -144,6 +144,7 @@ def mcp_tool_to_langchain_tool(
             args=arguments,
             server_name=server_name or "unknown",
             headers=None,
+            allow_input_required=True,
         )
         call_tool_result = await handler(request)
         if isinstance(call_tool_result, InputRequiredResult):

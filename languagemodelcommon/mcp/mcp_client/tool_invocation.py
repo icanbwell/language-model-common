@@ -370,7 +370,7 @@ def _make_execute_tool(
                     heartbeat_interval_seconds=heartbeat_interval_seconds,
                     input_responses=request.input_responses,
                     request_state=request.request_state,
-                    allow_input_required=True,
+                    allow_input_required=request.allow_input_required,
                 )
             except Exception:
                 await session_pool.evict(effective_config)
@@ -416,7 +416,7 @@ def _make_execute_tool(
                             heartbeat_interval_seconds=heartbeat_interval_seconds,
                             input_responses=request.input_responses,
                             request_state=request.request_state,
-                            allow_input_required=True,
+                            allow_input_required=request.allow_input_required,
                         )
                 else:
                     result = await _execute_tool_call_with_heartbeat(
@@ -428,7 +428,7 @@ def _make_execute_tool(
                         heartbeat_interval_seconds=heartbeat_interval_seconds,
                         input_responses=request.input_responses,
                         request_state=request.request_state,
-                        allow_input_required=True,
+                        allow_input_required=request.allow_input_required,
                     )
             except Exception as e:
                 captured_exception = e
@@ -453,6 +453,7 @@ async def call_mcp_tool_raw(
     heartbeat_interval_seconds: float = 15.0,
     input_responses: InputResponses | None = None,
     request_state: str | None = None,
+    allow_input_required: bool = False,
 ) -> MCPToolCallResult:
     """Call an MCP tool and return the raw CallToolResult (or, for a
     guard-tool-gated tool, an InputRequiredResult).
@@ -462,6 +463,12 @@ async def call_mcp_tool_raw(
     guard-tool answer (``input_responses``/``request_state``) directly,
     bypassing the LangChain tool-call path entirely since the retry leg
     isn't driven by a fresh LLM tool call.
+
+    ``allow_input_required`` defaults to False so existing callers that
+    don't handle ``InputRequiredResult`` keep getting the pre-SEP-2322
+    behavior: the underlying session raises rather than returning one.
+    Pass True only if the caller actually checks
+    ``isinstance(result, InputRequiredResult)``.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
@@ -488,5 +495,6 @@ async def call_mcp_tool_raw(
         headers=None,
         input_responses=input_responses,
         request_state=request_state,
+        allow_input_required=allow_input_required,
     )
     return await handler(request)
