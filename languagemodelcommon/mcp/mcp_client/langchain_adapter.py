@@ -42,10 +42,28 @@ class MCPInputRequiredError(RuntimeError):
     unlike mcp-fhir-agent's server-side ``ElicitationRequired`` (which must
     survive broad `except Exception` handlers several call layers below the
     tool function), this exception is raised directly at the LangChain tool
-    boundary with no intermediate layer in this package that could swallow
-    it. A caller building a broad `except Exception` around a tool
-    invocation should already expect to see this type explicitly if it
-    wants guard-tool support -- see the companion baileyai ADR
+    boundary with no intermediate layer *in this package* that could swallow
+    it -- this package makes no guarantee beyond its own boundary.
+
+    IMPORTANT -- this is the caller's responsibility, not something this
+    package can enforce: if you execute this tool's coroutine through a
+    framework that wraps tool execution in its own broad, default
+    exception-to-error-message conversion, that framework's handling sits
+    between this raise site and any "top-level catcher" you may have and
+    WILL swallow this exception before your code ever sees it. The primary
+    example is LangGraph's prebuilt ``ToolNode``, whose default
+    ``handle_tool_errors=True`` wraps every tool call in `except Exception`
+    and converts it to a generic error ``ToolMessage``, discarding
+    ``input_requests``/``request_state`` in the process. If you wire this
+    tool into a ``ToolNode``-style executor, you MUST catch
+    ``MCPInputRequiredError`` yourself at or before the point where that
+    framework invokes the tool -- do not rely on it propagating further up.
+    baileyai's ``wrap_tool_for_guard_tool_bridge``
+    (`baileyai/services/mcp/guard_tool_bridge.py`) is the correct pattern:
+    it catches ``MCPInputRequiredError`` immediately around its own
+    ``await tool.ainvoke(...)`` call, before ``ToolNode`` (or any other
+    framework-level handler) ever gets a chance to intercept it -- see the
+    companion baileyai ADR
     (`adrs/006-mcp-guard-tool-elicitation-support.md`) for how it's
     consumed.
     """

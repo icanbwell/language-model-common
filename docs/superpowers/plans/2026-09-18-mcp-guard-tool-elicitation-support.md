@@ -269,7 +269,7 @@ async def _execute_tool_call_with_heartbeat(
                 await call_task
 ```
 
-Then update both call sites inside `_make_execute_tool`'s `execute_tool()` (the `session_pool is not None` branch and the one-shot-session fallback branch) to forward `input_responses=request.input_responses, request_state=request.request_state, allow_input_required=True` — always `True`: a caller that never sends `input_responses` on a non-gated tool gets a plain `CallToolResult` back exactly as before, since only a guard-tool-gated tool ever returns `InputRequiredResult` in the first place. Also widen `execute_tool`'s return type annotation from `MCPToolCallResult` (already widened in Task 1) — no further signature change needed there since `MCPToolCallRequest`/`MCPToolCallResult` were already updated.
+Then update all three call sites of `_execute_tool_call_with_heartbeat` inside `_make_execute_tool`'s `execute_tool()` — the `session_pool is not None` branch, and, within the one-shot-session fallback branch, both the post-`TaskProtocolError` retry and the plain `else` branch (used when the tool doesn't support tasks) — to forward `input_responses=request.input_responses, request_state=request.request_state, allow_input_required=True` — always `True`: a caller that never sends `input_responses` on a non-gated tool gets a plain `CallToolResult` back exactly as before, since only a guard-tool-gated tool ever returns `InputRequiredResult` in the first place. Also widen `execute_tool`'s return type annotation from `MCPToolCallResult` (already widened in Task 1) — no further signature change needed there since `MCPToolCallRequest`/`MCPToolCallResult` were already updated.
 
 - [ ] **Step 4: Run test to verify it passes**
 
