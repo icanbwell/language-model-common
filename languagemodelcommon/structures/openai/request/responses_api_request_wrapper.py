@@ -78,6 +78,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         self._enable_debug_logging: bool = enable_debug_logging
         self._debug_prefixes = environment_variables.debug_prefixes
         self._apply_debug_prefix_toggle()
+        # Disambiguates multiple output_image items emitted within the same
+        # response -- len(self._messages) alone doesn't change between
+        # successive create_image_output_sse_event calls in one turn, which
+        # would otherwise give them identical item ids.
+        self._image_output_counter: int = 0
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (
@@ -362,6 +367,44 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "runtime_seconds": runtime_seconds,
                 "output": output or "",
                 "is_error": is_error,
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_image_output_sse_event(
+        self,
+        *,
+        request_id: str,
+        image_part: Dict[str, Any],
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with an ``output_image``
+        item.
+
+        Images can't be token-streamed like text, so unlike
+        ``ChoiceDelta.content``'s incremental append path, this ships the
+        whole image atomically in one event -- the same "whole payload, one
+        event" shape ``create_tool_end_sse_event`` already uses for tool
+        output. ``output_image`` is this repo's own additive item type (not
+        one of ``openai.types.responses``'s built-ins), matching how
+        ``create_tool_start_sse_event``/``create_tool_end_sse_event`` already
+        emit a raw ``function_call`` dict rather than a validated model.
+        """
+        # len(self._messages) alone is constant across every image emitted
+        # within the same response (it only changes via append_message,
+        # never mid-stream), so a per-image counter is needed to keep ids
+        # distinct when a single turn carries more than one image.
+        self._image_output_counter += 1
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "output_image",
+                "id": f"img_{request_id}_{len(self._messages)}_{self._image_output_counter}",
+                "status": "completed",
+                "image_url": image_part.get("image_url"),
+                "mime_type": image_part.get("mime_type"),
             },
         }
         return f"data: {json.dumps(event)}\n\n"
