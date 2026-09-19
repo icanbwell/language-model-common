@@ -363,6 +363,67 @@ class TestCallMcpToolRaw:
 
         assert result is input_required
 
+    @pytest.mark.asyncio
+    async def test_session_pool_branch_forwards_retry_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The `session_pool is not None` branch of `_make_execute_tool`'s
+        execute_tool() forwards input_responses/request_state/allow_input_required
+        to the underlying session.call_tool, the same way the one-shot
+        fallback branches (tested above) already do."""
+        from mcp.types import ElicitResult
+
+        from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
+
+        captured: dict[str, Any] = {}
+
+        async def fake_call_tool(
+            name: str,
+            arguments: dict[str, Any],
+            progress_callback: Any = None,
+            *,
+            input_responses: Any = None,
+            request_state: str | None = None,
+            allow_input_required: bool = False,
+        ) -> CallToolResult:
+            captured["input_responses"] = input_responses
+            captured["request_state"] = request_state
+            captured["allow_input_required"] = allow_input_required
+            return CallToolResult(content=[TextContent(type="text", text="saved")])
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = fake_call_tool
+        mock_session.get_server_capabilities = MagicMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session",
+            MagicMock(return_value=mock_cm),
+        )
+
+        config: MCPConnectionConfig = {"url": "https://example.test/mcp"}
+
+        async with McpSessionPool() as pool:
+            result = await call_mcp_tool_raw(
+                config=config,
+                tool_name="save_fhir_resource",
+                arguments={"resource": {"resourceType": "Patient"}},
+                server_name="mcp-fhir-agent",
+                session_pool=pool,
+                input_responses={
+                    "confirm": ElicitResult(action="accept", content={"confirm": True})
+                },
+                request_state="opaque-state-123",
+                allow_input_required=True,
+            )
+
+        assert isinstance(result, CallToolResult)
+        assert captured["request_state"] == "opaque-state-123"
+        assert captured["input_responses"]["confirm"].action == "accept"
+        assert captured["allow_input_required"] is True
+
 
 class TestConvertMcpContentToLcBlock:
     def test_text_content(self) -> None:

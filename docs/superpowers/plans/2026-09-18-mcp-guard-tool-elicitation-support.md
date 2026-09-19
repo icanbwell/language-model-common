@@ -4,7 +4,7 @@
 
 **Goal:** Let this repo's MCP client stack surface a server's `InputRequiredResult` (SEP-2322 guard-tool ask) to its caller instead of raising `RuntimeError`, and let a caller resubmit the same tool call with the collected answer — without this package knowing anything about how the caller (e.g. baileyai's LangGraph agent) actually asks the human.
 
-**Architecture:** Widen the existing tool-call plumbing (`MCPToolCallRequest`/`MCPToolCallResult`, `_execute_tool_call_with_heartbeat`, `_make_execute_tool`, `call_mcp_tool_raw`) to pass `allow_input_required=True`, `input_responses`, and `request_state` through to `ClientSession.call_tool`. At the LangChain boundary (`mcp_tool_to_langchain_tool`), an `InputRequiredResult` is not silently converted to tool output — it's raised as a new typed exception, `MCPInputRequiredError`, carrying everything needed to retry the exact same call (tool name, arguments, connection, server name, the embedded `input_requests`, and `request_state`). This mirrors `mcp-fhir-agent`'s own `ElicitationRequired` decision (that repo's `adrs/0023-guard-tool-elicitation-pattern.md`): an exception-based short-circuit so intermediate layers (the interceptor chain, `ToolCatalogMcpClient`) don't need any awareness of the new control flow, only the top-level catcher does.
+**Architecture:** Widen the existing tool-call plumbing (`MCPToolCallRequest`/`MCPToolCallResult`, `_execute_tool_call_with_heartbeat`, `_make_execute_tool`, `call_mcp_tool_raw`) to pass `allow_input_required`, `input_responses`, and `request_state` through to `ClientSession.call_tool`. `allow_input_required` is an explicit, opt-in parameter (default `False`) at every layer — preserving pre-SEP-2322 behavior for existing callers — rather than being hardcoded `True`; only `mcp_tool_to_langchain_tool`'s internal call explicitly opts in with `allow_input_required=True`. At the LangChain boundary (`mcp_tool_to_langchain_tool`), an `InputRequiredResult` is not silently converted to tool output — it's raised as a new typed exception, `MCPInputRequiredError`, carrying everything needed to retry the exact same call (tool name, arguments, connection, server name, the embedded `input_requests`, and `request_state`). This mirrors `mcp-fhir-agent`'s own `ElicitationRequired` decision (that repo's `adrs/0023-guard-tool-elicitation-pattern.md`): an exception-based short-circuit so intermediate layers (the interceptor chain, `ToolCatalogMcpClient`) don't need any awareness of the new control flow, only the top-level catcher does.
 
 **Tech Stack:** Python 3.13, `mcp` SDK (`ClientSession.call_tool(..., allow_input_required=..., input_responses=..., request_state=...)`, already present in the pinned `mcp` dependency — see `mcp/client/session.py`), `langchain-core` `StructuredTool`, `pytest` + `pytest-asyncio`.
 
@@ -126,8 +126,8 @@ git commit -m "BAI-774 widen MCPToolCallResult/Request for SEP-2322 guard-tool r
 - Test: `tests/mcp/test_mcp_client.py`
 
 **Interfaces:**
-- Consumes: `MCPToolCallRequest.input_responses`/`.request_state` (Task 1).
-- Produces: `_execute_tool_call_with_heartbeat(..., input_responses=..., request_state=..., allow_input_required=...) -> CallToolResult | InputRequiredResult`. `_make_execute_tool(...)`'s returned `execute_tool` handler always calls the session with `allow_input_required=True` and forwards the request's retry fields, so any caller (guard-tool-aware or not) gets back whatever the server actually returned instead of a raised `RuntimeError`.
+- Consumes: `MCPToolCallRequest.input_responses`/`.request_state`/`.allow_input_required` (Task 1; `allow_input_required` is an explicit, opt-in field defaulting to `False`).
+- Produces: `_execute_tool_call_with_heartbeat(..., input_responses=..., request_state=..., allow_input_required=...) -> CallToolResult | InputRequiredResult`. `_make_execute_tool(...)`'s returned `execute_tool` handler forwards the request's `input_responses`/`request_state`/`allow_input_required` byte-exact to the session call — it does not hardcode `allow_input_required=True`. Only a caller that explicitly opts in (Task 4's `mcp_tool_to_langchain_tool` sets `allow_input_required=True` on its `MCPToolCallRequest`) gets an `InputRequiredResult` back instead of the session raising; any caller that leaves the field at its default `False` keeps the pre-SEP-2322 behavior unchanged.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -269,7 +269,7 @@ async def _execute_tool_call_with_heartbeat(
                 await call_task
 ```
 
-Then update all three call sites of `_execute_tool_call_with_heartbeat` inside `_make_execute_tool`'s `execute_tool()` — the `session_pool is not None` branch, and, within the one-shot-session fallback branch, both the post-`TaskProtocolError` retry and the plain `else` branch (used when the tool doesn't support tasks) — to forward `input_responses=request.input_responses, request_state=request.request_state, allow_input_required=True` — always `True`: a caller that never sends `input_responses` on a non-gated tool gets a plain `CallToolResult` back exactly as before, since only a guard-tool-gated tool ever returns `InputRequiredResult` in the first place. Also widen `execute_tool`'s return type annotation from `MCPToolCallResult` (already widened in Task 1) — no further signature change needed there since `MCPToolCallRequest`/`MCPToolCallResult` were already updated.
+Then update all three call sites of `_execute_tool_call_with_heartbeat` inside `_make_execute_tool`'s `execute_tool()` — the `session_pool is not None` branch, and, within the one-shot-session fallback branch, both the post-`TaskProtocolError` retry and the plain `else` branch (used when the tool doesn't support tasks) — to forward `input_responses=request.input_responses, request_state=request.request_state, allow_input_required=request.allow_input_required`. Do **not** hardcode `allow_input_required=True`: it must come from the request, so a caller that never opts in (leaves `MCPToolCallRequest.allow_input_required` at its default `False`) keeps the pre-SEP-2322 behavior unchanged — `session.call_tool` raises rather than returning an `InputRequiredResult`. Only `mcp_tool_to_langchain_tool` (Task 4) explicitly sets `allow_input_required=True` when it builds its `MCPToolCallRequest`. Also widen `execute_tool`'s return type annotation from `MCPToolCallResult` (already widened in Task 1) — no further signature change needed there since `MCPToolCallRequest`/`MCPToolCallResult` were already updated.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -298,7 +298,7 @@ git commit -m "BAI-774 forward SEP-2322 guard-tool retry fields through execute_
 
 **Interfaces:**
 - Consumes: `_make_execute_tool` (Task 2, already forwards retry fields from the `MCPToolCallRequest` it's given).
-- Produces: `call_mcp_tool_raw(..., input_responses: InputResponses | None = None, request_state: str | None = None) -> CallToolResult | InputRequiredResult`. This is the function baileyai's LangGraph-side bridge (see the companion `baileyai` plan) calls directly to resubmit a guard-tool answer — it does not go through `mcp_tool_to_langchain_tool`'s LangChain-specific coroutine for the retry leg, since that leg isn't driven by a fresh LLM tool call.
+- Produces: `call_mcp_tool_raw(..., input_responses: InputResponses | None = None, request_state: str | None = None, allow_input_required: bool = False) -> CallToolResult | InputRequiredResult`. `allow_input_required` defaults to `False` for backward compatibility — this is the function baileyai's LangGraph-side bridge (see the companion `baileyai` plan) calls directly to resubmit a guard-tool answer, and it must pass `allow_input_required=True` explicitly to get an `InputRequiredResult` back instead of the session raising. It does not go through `mcp_tool_to_langchain_tool`'s LangChain-specific coroutine for the retry leg, since that leg isn't driven by a fresh LLM tool call.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -340,6 +340,7 @@ class TestCallMcpToolRaw:
                 "confirm": ElicitResult(action="accept", content={"confirm": True})
             },
             request_state="opaque-state-123",
+            allow_input_required=True,
         )
 
         assert isinstance(result, CallToolResult)
@@ -372,6 +373,7 @@ async def call_mcp_tool_raw(
     heartbeat_interval_seconds: float = 15.0,
     input_responses: InputResponses | None = None,
     request_state: str | None = None,
+    allow_input_required: bool = False,
 ) -> CallToolResult | InputRequiredResult:
     """Call an MCP tool and return the raw CallToolResult (or, for a
     guard-tool-gated tool, an InputRequiredResult).
@@ -381,6 +383,12 @@ async def call_mcp_tool_raw(
     guard-tool answer (``input_responses``/``request_state``) directly,
     bypassing the LangChain tool-call path entirely since the retry leg
     isn't driven by a fresh LLM tool call.
+
+    ``allow_input_required`` defaults to False so existing callers that
+    don't handle InputRequiredResult keep getting the pre-SEP-2322 behavior
+    (session.call_tool raises instead of returning one). Pass True only if
+    the caller actually checks isinstance(result, InputRequiredResult) —
+    e.g. a caller resubmitting a guard-tool answer.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
@@ -407,6 +415,7 @@ async def call_mcp_tool_raw(
         headers=None,
         input_responses=input_responses,
         request_state=request_state,
+        allow_input_required=allow_input_required,
     )
     return await handler(request)
 ```
@@ -570,6 +579,7 @@ Then, in `mcp_tool_to_langchain_tool`'s `call_tool` closure:
             args=arguments,
             server_name=server_name or "unknown",
             headers=None,
+            allow_input_required=True,
         )
         call_tool_result = await handler(request)
         if isinstance(call_tool_result, InputRequiredResult):
@@ -585,7 +595,7 @@ Then, in `mcp_tool_to_langchain_tool`'s `call_tool` closure:
         return content, None
 ```
 
-`_make_execute_tool` is called without `allow_input_required` at this call site — that's fine, because Task 2 made `_make_execute_tool`'s inner `execute_tool()` always pass `allow_input_required=True` to the session, regardless of caller; the raw `MCPToolCallRequest` built above has `input_responses=None`/`request_state=None` (this is always a fresh LLM-driven call, never a retry), which is exactly what an unanswered first guard-tool round expects.
+This is the one call site in this package that explicitly opts in to `allow_input_required=True` on the `MCPToolCallRequest` it builds — Task 2's `_execute_tool_call_with_heartbeat` forwards whatever the request says rather than hardcoding `True`, so this explicit opt-in is what makes `mcp_tool_to_langchain_tool` receive an `InputRequiredResult` instead of a raised `RuntimeError`. The raw `MCPToolCallRequest` built above has `input_responses=None`/`request_state=None` (this is always a fresh LLM-driven call, never a retry), which is exactly what an unanswered first guard-tool round expects.
 
 - [ ] **Step 4: Run test to verify it passes**
 
