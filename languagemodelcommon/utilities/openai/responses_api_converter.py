@@ -146,6 +146,14 @@ def convert_responses_api_to_single_message(
     combined_content = ""
     combined_kwargs: Dict[str, Any] = {}
     function_calls_list: List[Dict[str, Any]] = []
+    # Tracks which LangChain message class to return. Defaults to "assistant" to
+    # preserve pre-existing behavior for Responses API *output* items (assistant
+    # message/function_call items), which never carried a non-assistant role.
+    # Only the `else` branch below -- which handles plain input items such as
+    # EasyInputMessageParam (role + content, no "type": "message" wrapper) -- can
+    # override this to "user"/"system", since only *input* items legitimately
+    # carry those roles here.
+    target_role: str = "assistant"
 
     if output_type == "message" and response.get("role") == "assistant":
         content_list = response.get("content", [])
@@ -185,6 +193,10 @@ def convert_responses_api_to_single_message(
                 elif isinstance(item, str):
                     combined_content += item
 
+        role = response.get("role")
+        if role in ("user", "system"):
+            target_role = role
+
     if function_calls_list:
         combined_kwargs["tool_calls"] = function_calls_list
         if not combined_content:
@@ -193,6 +205,10 @@ def convert_responses_api_to_single_message(
     if not combined_content and not combined_kwargs:
         raise ValueError("No valid message content found in output_item")
 
+    if target_role == "user":
+        return HumanMessage(content=combined_content)
+    if target_role == "system":
+        return SystemMessage(content=combined_content)
     return AIMessage(content=combined_content, additional_kwargs=combined_kwargs)
 
 
