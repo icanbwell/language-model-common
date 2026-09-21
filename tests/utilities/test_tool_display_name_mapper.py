@@ -217,7 +217,7 @@ class TestWithTools:
         mapper = ToolDisplayNameMapper()
         tool = _make_tool_stub("get_weather", {"mcp_title": "Weather Info"})
 
-        merged = mapper.with_tools([tool])
+        merged = mapper.with_tools(tools=[tool])
 
         assert merged is not mapper
         assert merged.get_display_name(tool_name="get_weather") == "🛠️ Weather Info"
@@ -226,7 +226,7 @@ class TestWithTools:
         singleton = ToolDisplayNameMapper()
         tool = _make_tool_stub("get_weather", {"mcp_title": "Weather Info"})
 
-        singleton.with_tools([tool])
+        singleton.with_tools(tools=[tool])
 
         # The singleton itself must be untouched -- a second, unrelated
         # request sharing this instance must not see the first request's
@@ -241,7 +241,7 @@ class TestWithTools:
         )
         tool = _make_tool_stub("get_weather", {"mcp_title": "MCP Weather Title"})
 
-        merged = static_mapper.with_tools([tool])
+        merged = static_mapper.with_tools(tools=[tool])
 
         assert merged.get_display_name(tool_name="get_weather") == "🛠️ Custom Weather"
 
@@ -254,8 +254,8 @@ class TestWithTools:
             "custom_search", {"mcp_title": "Client B Search"}
         )
 
-        mapper_a = singleton.with_tools([request_a_tool])
-        mapper_b = singleton.with_tools([request_b_tool])
+        mapper_a = singleton.with_tools(tools=[request_a_tool])
+        mapper_b = singleton.with_tools(tools=[request_b_tool])
 
         assert (
             mapper_a.get_display_name(tool_name="custom_search") == "🛠️ Client A Search"

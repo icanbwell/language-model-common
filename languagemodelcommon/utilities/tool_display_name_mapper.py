@@ -78,7 +78,7 @@ class ToolDisplayNameMapper:
                 if stripped_title:
                     self._name_to_display_name[tool.name] = stripped_title
 
-    def with_tools(self, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
+    def with_tools(self, *, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
         """Return a new mapper with this request's live tool titles merged in.
 
         Unlike ``register_from_tools``, this never mutates ``self``. Callers
