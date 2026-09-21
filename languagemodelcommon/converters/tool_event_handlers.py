@@ -19,6 +19,10 @@ from languagemodelcommon.converters.streaming_formatters import (
     convert_message_content_into_string,
     make_tool_key,
 )
+from languagemodelcommon.utilities.chat_message_helpers import (
+    extract_image_output_parts,
+    iter_message_content_text_chunks,
+)
 from languagemodelcommon.file_managers.file_writer import (
     DebugFileWriteResult,
     FileWriter,
@@ -201,6 +205,29 @@ class ToolEventHandler(StreamContextMixin):
             )
             if tool_end_event:
                 yield tool_end_event
+
+            # A tool's own returned image (e.g. create_health_link's QR code) lives on
+            # tool_message.content as an ImageContent-derived block, not on `artifact`.
+            # create_tool_end_sse_event above only ever carries `tool_message_content`,
+            # which redacts image blocks to a "[image: mime]" placeholder
+            # (convert_message_content_into_string -> _summarize_content_block) -- that
+            # string is the only thing BAI-806's streaming fix (_handle_on_chat_model_stream)
+            # doesn't cover, since that hook only sees the model's own AIMessage chunks, never
+            # a ToolMessage. Emit the same atomic output_image event here so a tool-returned
+            # image reaches the client without depending on the model echoing it back.
+            image_parts = extract_image_output_parts(
+                non_text_blocks=iter_message_content_text_chunks(
+                    content=tool_message.content,
+                    include_non_text_placeholders=False,
+                ).non_text_blocks
+            )
+            for image_part in image_parts:
+                image_event = chat_request_wrapper.create_image_output_sse_event(
+                    request_id=request_information.request_id,
+                    image_part=image_part,
+                )
+                if image_event:
+                    yield image_event
 
             logger.debug(
                 "Tool %s has artifact of type %s: %s",
