@@ -167,6 +167,53 @@ class TestUserInput:
         assert "part one" in user_input
         assert "part two" in user_input
 
+    def test_messages_preserve_role_separation_for_multi_turn_input(self) -> None:
+        """`user_input` joins every item's text regardless of role (see test above) --
+        that's the known flattening behavior consumed by the old
+        AssembleResponsesMessagesStep. `wrapper.messages` is the role-aware,
+        per-item accessor that replaced it (mirroring
+        ChatCompletionApiRequestWrapper.messages): each Responses API `input`
+        item becomes its own LangChain message with role preserved, instead of
+        being collapsed into one string.
+        """
+        wrapper = _make_wrapper(
+            input_=[
+                {"role": "user", "content": "first user turn"},
+                {"role": "assistant", "content": "assistant reply"},
+                {"role": "user", "content": "second user turn"},
+            ]
+        )
+
+        converted: List[AnyMessage] = [
+            m.to_langchain_message() for m in wrapper.messages
+        ]
+
+        assert len(converted) == 3
+        assert isinstance(converted[0], HumanMessage)
+        assert converted[0].content == "first user turn"
+        assert isinstance(converted[1], AIMessage)
+        assert converted[1].content == "assistant reply"
+        assert isinstance(converted[2], HumanMessage)
+        assert converted[2].content == "second user turn"
+
+    def test_messages_preserve_system_role_for_multi_turn_input(self) -> None:
+        wrapper = _make_wrapper(
+            input_=[
+                {"role": "system", "content": "system turn"},
+                {"role": "user", "content": "user turn"},
+            ]
+        )
+
+        converted: List[AnyMessage] = [
+            m.to_langchain_message() for m in wrapper.messages
+        ]
+
+        assert len(converted) == 2
+        assert isinstance(converted[0], SystemMessage)
+        assert converted[0].content == "system turn"
+        assert isinstance(converted[1], HumanMessage)
+        assert converted[1].content == "user turn"
+
 
 class TestSSEMessages:
     """Tests for SSE message creation methods."""
