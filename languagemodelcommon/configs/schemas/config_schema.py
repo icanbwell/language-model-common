@@ -380,6 +380,16 @@ class AgentConfig(AuthenticationConfig):
         description="Static tool definitions for lazy-loaded tools. Each entry provides a tool name and description.",
     )
 
+    tool_argument_allowlist: Dict[str, List[str]] | None = Field(
+        None,
+        description=(
+            "Reviewer-approved map of tool_name -> allowed argument keys for this "
+            "server. Required (non-None, non-empty per-tool) for any auth='headers' "
+            "server's tools to be discoverable or callable at all. Absence means "
+            "'never reviewed', not 'no restrictions'."
+        ),
+    )
+
 
 class ModelConfig(BaseModel):
     """Model configuration"""
