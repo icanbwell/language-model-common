@@ -78,6 +78,22 @@ class ToolDisplayNameMapper:
                 if stripped_title:
                     self._name_to_display_name[tool.name] = stripped_title
 
+    def with_tools(self, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
+        """Return a new mapper with this request's live tool titles merged in.
+
+        Unlike ``register_from_tools``, this never mutates ``self``. Callers
+        holding a process-wide singleton mapper (static config only) must use
+        this to fold in per-request/ad-hoc tool titles (e.g. from
+        ``request_tools``) without leaking one request's titles into another
+        concurrent request or growing the singleton's dict unboundedly over
+        the process lifetime.
+        """
+        merged = ToolDisplayNameMapper(
+            name_to_display_name=dict(self._name_to_display_name)
+        )
+        merged.register_from_tools(tools)
+        return merged
+
     @staticmethod
     def _starts_with_emoji(text: str) -> bool:
         if not text:
