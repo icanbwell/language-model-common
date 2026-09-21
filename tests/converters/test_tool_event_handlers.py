@@ -30,6 +30,7 @@ class _FakeChatRequestWrapper:
         self.enable_debug_logging = enable_debug_logging
         self.last_tool_end_output: str | None = None
         self.last_tool_end_is_error: bool = False
+        self.image_output_events: list[dict[str, Any]] = []
 
     def create_sse_message(
         self, *, request_id: str, content: str | None, usage_metadata: Any, source: str
@@ -62,6 +63,12 @@ class _FakeChatRequestWrapper:
 
     def create_mcp_app_sse_event(self, **kwargs: Any) -> str | None:
         return None
+
+    def create_image_output_sse_event(
+        self, *, request_id: str, image_part: dict[str, Any]
+    ) -> str | None:
+        self.image_output_events.append(image_part)
+        return f"data: {image_part}\n\n"
 
 
 @pytest.fixture
@@ -156,6 +163,101 @@ async def test_tool_end_yields_content(
     fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
     assert (fake_wrapper.last_tool_end_output or "").strip() == "search results here"
     assert fake_wrapper.last_tool_end_is_error is False
+
+
+@pytest.mark.asyncio
+async def test_tool_end_emits_image_output_event_for_tool_returned_image(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """A tool's own returned image (e.g. create_health_link's QR code) lives on
+    ToolMessage.content, not `artifact` -- handle_tool_end must extract it and emit
+    an output_image event, since BAI-806's streaming fix only covers the model's
+    own AIMessage chunks, never a ToolMessage."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "create_health_link",
+            "data": {
+                "input": {"label": "For my doctor"},
+                "output": ToolMessage(
+                    content=[
+                        {"type": "text", "text": "Health link created."},
+                        {
+                            "type": "image",
+                            "base64": "aGVsbG8=",
+                            "mime_type": "image/png",
+                        },
+                    ],
+                    tool_call_id="tc3",
+                    name="create_health_link",
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    async for _ in tool_event_handler.handle_tool_end(
+        event=event,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=request_information,
+        tool_start_times=tool_start_times,
+    ):
+        pass
+
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert len(fake_wrapper.image_output_events) == 1
+    image_part = fake_wrapper.image_output_events[0]
+    assert image_part["type"] == "output_image"
+    assert image_part["image_url"] == "data:image/png;base64,aGVsbG8="
+    assert image_part["mime_type"] == "image/png"
+    # The redacted text placeholder, not the raw image, is what rides the
+    # existing tool_end text event -- the image only reaches the client via
+    # the new atomic output_image event.
+    assert "aGVsbG8=" not in (fake_wrapper.last_tool_end_output or "")
+
+
+@pytest.mark.asyncio
+async def test_tool_end_yields_no_image_event_for_text_only_output(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "search_tool",
+            "data": {
+                "input": {"query": "test"},
+                "output": ToolMessage(
+                    content="search results here",
+                    tool_call_id="tc1",
+                    name="search_tool",
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    async for _ in tool_event_handler.handle_tool_end(
+        event=event,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=request_information,
+        tool_start_times=tool_start_times,
+    ):
+        pass
+
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert fake_wrapper.image_output_events == []
 
 
 @pytest.mark.asyncio
