@@ -156,7 +156,7 @@ def mcp_tool_to_langchain_tool(
 
     async def call_tool(
         **arguments: dict[str, Any],
-    ) -> tuple[list[ToolMessageContentBlock], None]:
+    ) -> tuple[list[ToolMessageContentBlock], dict[str, Any] | None]:
         request = MCPToolCallRequest(
             name=tool.name,
             args=arguments,
@@ -175,7 +175,11 @@ def mcp_tool_to_langchain_tool(
                 request_state=call_tool_result.request_state,
             )
         content = convert_call_tool_result(call_tool_result)
-        return content, None
+        # structured_content (MCP's structuredContent) never reaches the LLM --
+        # LangChain only sends `content` back to the model, never `artifact` --
+        # so this is purely for the UI's debugging details panel (BAI-879).
+        # Previously discarded entirely: this call returned (content, None).
+        return content, call_tool_result.structured_content
 
     metadata: dict[str, Any] = {}
     mcp_title = _resolve_mcp_title(tool)

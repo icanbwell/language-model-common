@@ -74,6 +74,22 @@ class _FakeChatRequestWrapper:
     ) -> str | None:
         return f"image:{image_part.get('image_url')}"
 
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]],
+    ) -> str | None:
+        return None
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+    ) -> str | None:
+        return None
+
 
 @pytest.fixture()
 def streaming_manager_factory(

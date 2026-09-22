@@ -56,6 +56,25 @@ def _truncate_for_trace(
     return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
 
 
+def _extract_structured_output(artifact: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """Pull the tool's own MCP ``structuredContent`` out of a ToolMessage's
+    ``artifact``, for the ``structured_output`` SSE field (BAI-879).
+
+    ``artifact`` has one of two shapes depending on which tool produced it:
+    a regular MCP tool binding (``create_langchain_tool``) sets it directly
+    to ``call_tool_result.structured_content``, while the ``call_tool``
+    meta-tool wraps its own result in ``{"is_error": ..., "result": ...,
+    "structured_content": {...}}`` -- unwrap the latter so callers always
+    see the tool's actual structured payload, not the meta-tool's envelope.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    nested = artifact.get("structured_content")
+    if isinstance(nested, dict):
+        return nested
+    return artifact
+
+
 class ToolEventHandler(StreamContextMixin):
     def __init__(
         self,
@@ -214,6 +233,7 @@ class ToolEventHandler(StreamContextMixin):
                 if tool_message_content
                 else None,
                 is_error=is_error,
+                structured_output=_extract_structured_output(artifact),
             )
             if tool_end_event:
                 yield tool_end_event
