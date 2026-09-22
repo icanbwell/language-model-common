@@ -184,3 +184,54 @@ class TestCreateGraphForLlmAsyncHistoryCacheMiddlewareGating:
             monkeypatch=monkeypatch, enable_history_prompt_caching=True
         )
         assert any(type(m).__name__ == "HistoryCacheMiddleware" for m in middleware)
+
+
+class TestCreateGraphForLlmAsyncAdditionalMiddleware:
+    """`additional_middleware` lets callers (e.g. baileyai's tool-result
+    truncator) inject their own AgentMiddleware into the compiled graph
+    without this converter needing to know about it. BAI-901."""
+
+    async def _middleware_with(
+        self, *, additional_middleware: list[Any] | None
+    ) -> list[Any]:
+        converter = _build_converter()
+        with patch(
+            "languagemodelcommon.converters.langgraph_to_openai_converter.create_agent"
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MagicMock()
+            await converter.create_graph_for_llm_async(
+                llm=MagicMock(),
+                tools=[],
+                store=None,
+                checkpointer=None,
+                system_prompts=None,
+                additional_middleware=additional_middleware,
+            )
+        return cast(list[Any], mock_create_agent.call_args.kwargs["middleware"])
+
+    @pytest.mark.asyncio
+    async def test_none_leaves_middleware_list_unaffected(self) -> None:
+        middleware = await self._middleware_with(additional_middleware=None)
+        assert middleware == []
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_middleware_is_appended(self) -> None:
+        sentinel = MagicMock(name="CallerMiddleware")
+        middleware = await self._middleware_with(additional_middleware=[sentinel])
+        assert middleware == [sentinel]
+
+    @pytest.mark.asyncio
+    async def test_caller_supplied_middleware_runs_after_this_converters_own(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Composition order matters: the first entry in `middleware` is the
+        outermost layer, so this converter's own middleware must stay ahead
+        of caller-supplied middleware in the list."""
+        monkeypatch.setenv("ENABLE_HISTORY_PROMPT_CACHING", "true")
+        sentinel = MagicMock(name="CallerMiddleware")
+        middleware = await self._middleware_with(additional_middleware=[sentinel])
+        assert [type(m).__name__ for m in middleware] == [
+            "HistoryCacheMiddleware",
+            "MagicMock",
+        ]
+        assert middleware[-1] is sentinel
