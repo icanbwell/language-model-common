@@ -204,10 +204,15 @@ async def open_initialized_mcp_session(
         try:
             session = await cm.__aenter__()
             await session.initialize()
-        except Exception as exc:
-            last_exc = exc
+        except BaseException as exc:
             with contextlib.suppress(Exception):
                 await cm.__aexit__(type(exc), exc, exc.__traceback__)
+            # Cancellation (and other non-Exception BaseExceptions) must
+            # propagate immediately — retrying here would swallow a
+            # shutdown/timeout signal the caller is relying on.
+            if not isinstance(exc, Exception):
+                raise
+            last_exc = exc
             if attempt == max_attempts - 1:
                 raise
             delay = _compute_session_retry_delay_seconds(

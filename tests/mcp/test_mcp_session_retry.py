@@ -7,6 +7,7 @@ non-idempotent tools; a failure during `call_tool` itself must never be
 retried by this function.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, patch
@@ -117,6 +118,52 @@ class TestOpenInitializedMcpSession:
                 )
 
         assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_initialize_closes_session_and_propagates(
+        self,
+    ) -> None:
+        """A CancelledError during `initialize()` must still close the
+        underlying session (matching the base branch's `async with`
+        cleanup) and must propagate immediately, without retrying."""
+        session = AsyncMock()
+        session.initialize = AsyncMock(side_effect=asyncio.CancelledError())
+        aexit_calls: list[Any] = []
+
+        @asynccontextmanager
+        async def _cm() -> AsyncIterator[AsyncMock]:
+            try:
+                yield session
+            except BaseException as exc:
+                aexit_calls.append(exc)
+                raise
+
+        call_count = 0
+
+        def _next_cm(*args: Any, **kwargs: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return _cm()
+
+        with (
+            patch(
+                "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
+                side_effect=_next_cm,
+            ),
+            patch(
+                "languagemodelcommon.mcp.mcp_client.session.asyncio.sleep"
+            ) as mock_sleep,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await open_initialized_mcp_session(
+                    MCPConnectionConfig(url="https://example.test/mcp"),
+                    max_attempts=3,
+                )
+
+        assert call_count == 1
+        assert len(aexit_calls) == 1
+        assert isinstance(aexit_calls[0], asyncio.CancelledError)
+        mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_does_not_retry_call_tool_failures(self) -> None:
