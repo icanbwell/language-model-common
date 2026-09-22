@@ -78,6 +78,27 @@ class ToolDisplayNameMapper:
                 if stripped_title:
                     self._name_to_display_name[tool.name] = stripped_title
 
+    def register_title(self, *, tool_name: str, title: str) -> None:
+        """Learn a tool's display title discovered at runtime.
+
+        For MCP tools dispatched through the ``call_tool`` discovery
+        meta-tool (BAI-903), the target tool (e.g. ``start_onboarding``) is
+        never bound as a LangChain tool object, so ``register_from_tools``
+        never sees its ``mcp_title`` metadata. The tool-catalog server
+        instead surfaces the title directly in ``search_tools``'/
+        ``call_tool``'s own results; callers that parse those results
+        (``ToolEventHandler``) call this to register it for subsequent
+        ``call_tool`` invocations of the same tool name in this request.
+        Entries already present (static config or ``register_from_tools``)
+        are not overwritten -- first-registered wins, same precedence rule
+        as ``register_from_tools``.
+        """
+        if tool_name in self._name_to_display_name:
+            return
+        stripped_title = title.strip()
+        if stripped_title:
+            self._name_to_display_name[tool_name] = stripped_title
+
     def with_tools(self, *, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
         """Return a new mapper with this request's live tool titles merged in.
 

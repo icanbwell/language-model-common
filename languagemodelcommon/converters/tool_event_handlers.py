@@ -136,6 +136,86 @@ class ToolEventHandler(StreamContextMixin):
             or self._tool_display_name_mapper
         )
 
+    def _learn_runtime_tool_titles(
+        self,
+        *,
+        tool_name: str,
+        tool_input: Optional[Dict[str, Any]],
+        tool_message_content: str,
+        artifact: Optional[Any],
+        request_information: RequestInformation,
+    ) -> None:
+        """Learn dynamically-discovered MCP tool titles (BAI-903).
+
+        Tools dispatched through the tool-catalog server's ``call_tool``
+        discovery meta-tool (e.g. mcp-fhir-agent's ``start_onboarding``) are
+        never bound as LangChain tool objects on this side, so
+        ``ToolDisplayNameMapper.register_from_tools`` never sees their
+        ``mcp_title``. The tool-catalog server instead surfaces each tool's
+        title directly in ``search_tools``' JSON result (a ``"title"`` key
+        per entry) and in ``call_tool``'s own structured_content (a
+        ``"tool_title"`` key) -- both parsed here and registered into the
+        active per-request mapper so a subsequent ``call_tool`` invocation
+        of the same tool name in this request/conversation renders with the
+        real title/emoji instead of the generic humanized fallback.
+
+        Only mutates a mapper already scoped to this request
+        (``request_information.tool_display_name_mapper``, produced by
+        ``ToolDisplayNameMapper.with_tools()``) -- never the process-wide
+        singleton, which is shared across concurrent requests and must not
+        learn one request's titles (see ``with_tools``'s own docstring).
+        """
+        mapper = request_information.tool_display_name_mapper
+        if mapper is None:
+            return
+        if tool_name == "search_tools":
+            self._learn_titles_from_search_tools_result(
+                mapper=mapper, tool_message_content=tool_message_content
+            )
+        elif tool_name == "call_tool":
+            self._learn_title_from_call_tool_result(
+                mapper=mapper, tool_input=tool_input, artifact=artifact
+            )
+
+    @staticmethod
+    def _learn_titles_from_search_tools_result(
+        *, mapper: ToolDisplayNameMapper, tool_message_content: str
+    ) -> None:
+        try:
+            parsed = json.loads(tool_message_content)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(parsed, list):
+            return
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            title = entry.get("title")
+            if isinstance(name, str) and isinstance(title, str):
+                mapper.register_title(tool_name=name, title=title)
+
+    @staticmethod
+    def _learn_title_from_call_tool_result(
+        *,
+        mapper: ToolDisplayNameMapper,
+        tool_input: Optional[Dict[str, Any]],
+        artifact: Optional[Any],
+    ) -> None:
+        if not isinstance(tool_input, dict):
+            return
+        target_name = tool_input.get("name")
+        if not isinstance(target_name, str) or not target_name:
+            return
+        if not isinstance(artifact, dict):
+            return
+        structured_content = artifact.get("structured_content")
+        if not isinstance(structured_content, dict):
+            return
+        title = structured_content.get("tool_title")
+        if isinstance(title, str) and title:
+            mapper.register_title(tool_name=target_name, title=title)
+
     async def handle_tool_start(
         self,
         *,
@@ -249,6 +329,15 @@ class ToolEventHandler(StreamContextMixin):
             is_error: bool = tool_message.status == "error" or (
                 isinstance(artifact, dict) and artifact.get("is_error") is True
             )
+
+            if not is_error:
+                self._learn_runtime_tool_titles(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_message_content=tool_message_content,
+                    artifact=artifact,
+                    request_information=request_information,
+                )
 
             tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
                 request_id=request_information.request_id,

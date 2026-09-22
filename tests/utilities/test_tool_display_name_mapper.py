@@ -265,6 +265,58 @@ class TestWithTools:
         )
 
 
+class TestRegisterTitle:
+    """register_title() lets callers learn a tool's title at runtime (BAI-903),
+    for tools dispatched via call_tool that are never bound as tool objects.
+    """
+
+    def test_registers_runtime_title(self) -> None:
+        mapper = ToolDisplayNameMapper()
+
+        mapper.register_title(tool_name="start_onboarding", title="🚀 Start Onboarding")
+
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            == "🚀 Start Onboarding"
+        )
+
+    def test_static_config_takes_precedence_over_runtime_title(
+        self, tmp_path: Path
+    ) -> None:
+        config_path = tmp_path / "names.json"
+        config_path.write_text(
+            '{"start_onboarding": "Custom Onboarding"}', encoding="utf-8"
+        )
+        mapper = ToolDisplayNameMapper.from_config_path(config_path=str(config_path))
+
+        mapper.register_title(tool_name="start_onboarding", title="🚀 Start Onboarding")
+
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            == "🛠️ Custom Onboarding"
+        )
+
+    def test_first_registered_runtime_title_wins(self) -> None:
+        mapper = ToolDisplayNameMapper()
+
+        mapper.register_title(tool_name="start_onboarding", title="🚀 Start Onboarding")
+        mapper.register_title(tool_name="start_onboarding", title="🔁 Different Title")
+
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            == "🚀 Start Onboarding"
+        )
+
+    def test_ignores_blank_title(self) -> None:
+        mapper = ToolDisplayNameMapper()
+
+        mapper.register_title(tool_name="start_onboarding", title="   ")
+
+        assert "Start Onboarding" in mapper.get_display_name(
+            tool_name="start_onboarding"
+        )
+
+
 class TestGetMessageForToolFormat:
     """Format invariants for streamed tool-progress messages.
 
