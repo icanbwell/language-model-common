@@ -1,8 +1,11 @@
 """MCP session management — creating and connecting to MCP servers."""
 
+import asyncio
+import contextlib
 import logging
+import random
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import timedelta
 from typing import Any
 
@@ -20,6 +23,13 @@ logger.setLevel(SRC_LOG_LEVELS.MCP)
 
 DEFAULT_TIMEOUT = timedelta(seconds=30)
 DEFAULT_SSE_READ_TIMEOUT = timedelta(seconds=300)
+
+# BAI-889: a backend MCP server scaling (HPA) or redeploying can reset an
+# in-flight connect/initialize handshake before any tool call is sent.
+# These defaults bound the added latency to a couple of seconds worst case
+# while giving a fresh request a chance to land on a healthy pod.
+DEFAULT_SESSION_RETRY_MAX_ATTEMPTS = 3
+DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS = 0.5
 
 
 class McpSessionError(Exception):
@@ -156,3 +166,72 @@ async def create_mcp_session(
                 url=url,
             ) from e
         raise
+
+
+def _compute_session_retry_delay_seconds(
+    attempt: int, *, base_delay_seconds: float
+) -> float:
+    """Exponential backoff with full jitter, keyed off a 0-indexed attempt
+    number (the delay before retrying after attempt's failure)."""
+    return float(base_delay_seconds * (2**attempt) * random.random())
+
+
+async def open_initialized_mcp_session(
+    config: MCPConnectionConfig,
+    *,
+    mcp_callbacks: _MCPCallbacks | None = None,
+    max_attempts: int = DEFAULT_SESSION_RETRY_MAX_ATTEMPTS,
+    base_delay_seconds: float = DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS,
+) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
+    """Open an MCP session and complete its ``initialize()`` handshake,
+    retrying transient failures with exponential backoff and full jitter.
+
+    Retries are scoped strictly to session *establishment* — connect and
+    ``initialize()`` — which happens before any tool call reaches the
+    server, so retrying here is safe even for non-idempotent tools. A
+    failure during ``call_tool`` itself must never be retried by this
+    function or its callers (BAI-889).
+
+    Returns the entered context manager and the initialized session. The
+    caller owns the context manager's lifecycle from here — it must call
+    ``await cm.__aexit__(...)`` itself (e.g. in a ``finally`` block, or via
+    `McpSessionPool`'s own close/evict path) since this function cannot
+    express "yield across retries" as a plain ``@asynccontextmanager``.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(max_attempts):
+        cm = create_mcp_session(config, mcp_callbacks=mcp_callbacks)
+        try:
+            session = await cm.__aenter__()
+            await session.initialize()
+        except BaseException as exc:
+            with contextlib.suppress(Exception):
+                await cm.__aexit__(type(exc), exc, exc.__traceback__)
+            # Cancellation (and other non-Exception BaseExceptions) must
+            # propagate immediately — retrying here would swallow a
+            # shutdown/timeout signal the caller is relying on.
+            if not isinstance(exc, Exception):
+                raise
+            last_exc = exc
+            if attempt == max_attempts - 1:
+                raise
+            delay = _compute_session_retry_delay_seconds(
+                attempt, base_delay_seconds=base_delay_seconds
+            )
+            logger.warning(
+                "MCP session establishment attempt %d/%d failed for %s "
+                "(retrying in %.2fs): %s",
+                attempt + 1,
+                max_attempts,
+                config.get("url"),
+                delay,
+                exc,
+            )
+            await asyncio.sleep(delay)
+            continue
+        return cm, session
+
+    # Unreachable: the loop above always either returns or raises on its
+    # final attempt. Satisfies mypy's control-flow analysis.
+    assert last_exc is not None
+    raise last_exc

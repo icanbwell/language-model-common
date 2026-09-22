@@ -11,7 +11,7 @@ from mcp import ClientSession
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    create_mcp_session,
+    open_initialized_mcp_session,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -32,6 +32,9 @@ class _PooledSession:
 
     url: str
     session: ClientSession = field(init=False)
+    _cm: AbstractAsyncContextManager[ClientSession] | None = field(
+        default=None, init=False
+    )
     _task: asyncio.Task[None] = field(init=False)
     _close_event: asyncio.Event = field(default_factory=asyncio.Event)
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -55,24 +58,21 @@ class _PooledSession:
         *,
         mcp_callbacks: _MCPCallbacks | None = None,
     ) -> None:
-        """Enter the session CM, signal readiness, then wait for close."""
-        cm: AbstractAsyncContextManager[ClientSession] = create_mcp_session(
-            config, mcp_callbacks=mcp_callbacks
-        )
+        """Enter the session CM, signal readiness, then wait for close.
 
+        ``self._cm`` is published as an instance field (rather than staying
+        a local variable) so ``close()``/eviction can be seen to own its
+        exit. It is still exited from *this* task, not from ``close()``'s
+        caller task: ``streamable_http_client``'s anyio task group requires
+        its cancel scope to be entered and exited by the same asyncio task.
+        """
         try:
-            session = await cm.__aenter__()
+            self._cm, session = await open_initialized_mcp_session(
+                config, mcp_callbacks=mcp_callbacks
+            )
         except BaseException as exc:
             self._error = exc
             self._ready_event.set()
-            return
-
-        try:
-            await session.initialize()
-        except BaseException as exc:
-            self._error = exc
-            self._ready_event.set()
-            await self._safe_exit(cm)
             return
 
         self.session = session
@@ -80,16 +80,18 @@ class _PooledSession:
         try:
             await self._close_event.wait()
         finally:
-            await self._safe_exit(cm)
+            await self._safe_exit()
 
-    async def _safe_exit(self, cm: AbstractAsyncContextManager[ClientSession]) -> None:
+    async def _safe_exit(self) -> None:
+        if self._cm is None:
+            return
         try:
-            await cm.__aexit__(None, None, None)
+            await self._cm.__aexit__(None, None, None)
         except Exception as e:
             logger.warning("Error closing MCP session for %s: %s", self.url, e)
 
     async def close(self) -> None:
-        """Signal the background task to exit and wait for it."""
+        """Signal the background task to exit ``self._cm`` and wait for it."""
         self._close_event.set()
         try:
             await self._task
@@ -124,7 +126,7 @@ class McpSessionPool:
 
     def __init__(self) -> None:
         self._sessions: dict[str, _PooledSession] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
 
     @staticmethod
     def _cache_key(config: MCPConnectionConfig) -> str:
@@ -136,6 +138,20 @@ class McpSessionPool:
         # Sort for deterministic key regardless of dict insertion order
         sorted_items = sorted(headers.items())
         return f"{url}|{sorted_items}"
+
+    def _lock_for_key(self, key: str) -> asyncio.Lock:
+        """Get or create the per-key lock, scoping connect/evict serialization
+        to a single server URL. A pool-wide lock would make a slow or
+        unhealthy server's retrying connect (see
+        ``open_initialized_mcp_session``) block every other server's
+        ``get_session`` call in the same pool. This lookup is synchronous
+        (no ``await`` between the check and the insert), so it can't race
+        under asyncio's cooperative scheduling."""
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
 
     async def __aenter__(self) -> Self:
         return self
@@ -181,7 +197,7 @@ class McpSessionPool:
         if pooled is not None:
             return pooled.session
 
-        async with self._lock:
+        async with self._lock_for_key(key):
             pooled = self._sessions.get(key)
             if pooled is not None:
                 return pooled.session
@@ -200,7 +216,7 @@ class McpSessionPool:
         fresh connection instead of reusing the broken one.
         """
         key = self._cache_key(config)
-        async with self._lock:
+        async with self._lock_for_key(key):
             pooled = self._sessions.pop(key, None)
             if pooled is None:
                 return

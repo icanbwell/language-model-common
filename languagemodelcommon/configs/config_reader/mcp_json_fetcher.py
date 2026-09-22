@@ -7,7 +7,7 @@ from typing import Any
 from languagemodelcommon.configs.schemas.mcp_json_schema import McpJsonConfig
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    create_mcp_session,
+    open_initialized_mcp_session,
 )
 from languagemodelcommon.utilities.config_substitution import substitute_env_vars
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -47,11 +47,13 @@ class McpJsonFetcher:
             "transport": "streamable_http",
         }
         try:
-            async with create_mcp_session(config) as session:
-                await session.initialize()
+            cm, session = await open_initialized_mcp_session(config)
+            try:
                 result = await session.call_tool(
                     TOOL_NAME, {"plugin_name": plugin_name}
                 )
+            finally:
+                await cm.__aexit__(None, None, None)
         except Exception as e:
             error_msg = (
                 f"Failed to fetch MCP config for plugin '{plugin_name}' "
@@ -118,9 +120,11 @@ class McpJsonFetcher:
             "transport": "streamable_http",
         }
         try:
-            async with create_mcp_session(config) as session:
-                await session.initialize()
+            cm, session = await open_initialized_mcp_session(config)
+            try:
                 result = await session.call_tool(TOOL_NAME, {})
+            finally:
+                await cm.__aexit__(None, None, None)
         except Exception:
             logger.exception(
                 "Failed to fetch all MCP configs from %s",
