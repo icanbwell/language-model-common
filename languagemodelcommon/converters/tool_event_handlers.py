@@ -17,6 +17,7 @@ from languagemodelcommon.converters.stream_debug_output_manager import (
 )
 from languagemodelcommon.converters.streaming_formatters import (
     convert_message_content_into_string,
+    format_message_content,
     make_tool_key,
 )
 from languagemodelcommon.utilities.chat_message_helpers import (
@@ -166,7 +167,13 @@ class ToolEventHandler(StreamContextMixin):
         learn one request's titles (see ``with_tools``'s own docstring).
         """
         mapper = request_information.tool_display_name_mapper
-        if mapper is None:
+        # Only a mapper already scoped to this request (produced by
+        # ToolDisplayNameMapper.with_tools()) may learn titles. A caller that
+        # assigns the process-wide singleton directly onto
+        # request_information (bypassing with_tools()) must not have it
+        # mutated here -- that would leak one request's MCP catalog titles
+        # into every other concurrent request sharing the singleton.
+        if mapper is None or mapper is self._tool_display_name_mapper:
             return
         if tool_name == "search_tools":
             self._learn_titles_from_search_tools_result(
@@ -184,8 +191,16 @@ class ToolEventHandler(StreamContextMixin):
         try:
             parsed = json.loads(tool_message_content)
         except (TypeError, ValueError):
+            logger.debug(
+                "search_tools result is not valid JSON, skipping title learning: %.200s",
+                tool_message_content,
+            )
             return
         if not isinstance(parsed, list):
+            logger.debug(
+                "search_tools result is not a JSON list, skipping title learning: %s",
+                type(parsed),
+            )
             return
         for entry in parsed:
             if not isinstance(entry, dict):
@@ -211,6 +226,12 @@ class ToolEventHandler(StreamContextMixin):
             return
         structured_content = artifact.get("structured_content")
         if not isinstance(structured_content, dict):
+            logger.debug(
+                "call_tool artifact has no structured_content dict for tool %s, "
+                "skipping title learning: %s",
+                target_name,
+                type(structured_content),
+            )
             return
         title = structured_content.get("tool_title")
         if isinstance(title, str) and title:
@@ -331,10 +352,16 @@ class ToolEventHandler(StreamContextMixin):
             )
 
             if not is_error:
+                # search_tools' ToolMessage.content is a list of LangChain
+                # content blocks (it's bound via create_langchain_tool, not a
+                # plain string), so title-learning needs the raw joined text
+                # (format_message_content) rather than tool_message_content
+                # above, which is display-oriented and would json.loads() a
+                # Python repr instead of the underlying JSON array.
                 self._learn_runtime_tool_titles(
                     tool_name=tool_name,
                     tool_input=tool_input,
-                    tool_message_content=tool_message_content,
+                    tool_message_content=format_message_content(tool_message.content),
                     artifact=artifact,
                     request_information=request_information,
                 )

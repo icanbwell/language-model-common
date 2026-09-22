@@ -826,10 +826,21 @@ class TestLearnRuntimeToolTitles:
                 "data": {
                     "input": {"query": "onboarding"},
                     "output": ToolMessage(
-                        content=(
-                            '[{"name": "start_onboarding", '
-                            '"title": "🚀 Start Onboarding", "description": "..."}]'
-                        ),
+                        # search_tools is a remote MCP meta-tool bound via
+                        # create_langchain_tool, so its content is a list of
+                        # LangChain content blocks (never a plain str) -- see
+                        # ToolMessage docs and how convert_call_tool_result
+                        # populates .content elsewhere in this codebase.
+                        content=[
+                            {
+                                "type": "text",
+                                "text": (
+                                    '[{"name": "start_onboarding", '
+                                    '"title": "🚀 Start Onboarding", '
+                                    '"description": "..."}]'
+                                ),
+                            }
+                        ],
                         tool_call_id="tc1",
                         name="search_tools",
                     ),
@@ -908,7 +919,7 @@ class TestLearnRuntimeToolTitles:
         )
 
     @pytest.mark.asyncio
-    async def test_does_not_mutate_process_wide_singleton(
+    async def test_does_not_mutate_process_wide_singleton_when_no_request_mapper(
         self, tool_event_handler: ToolEventHandler
     ) -> None:
         """No per-request mapper on RequestInformation (falls back to the
@@ -924,7 +935,12 @@ class TestLearnRuntimeToolTitles:
                 "data": {
                     "input": {"query": "onboarding"},
                     "output": ToolMessage(
-                        content='[{"name": "start_onboarding", "title": "🚀 Start Onboarding"}]',
+                        content=[
+                            {
+                                "type": "text",
+                                "text": '[{"name": "start_onboarding", "title": "🚀 Start Onboarding"}]',
+                            }
+                        ],
                         tool_call_id="tc1",
                         name="search_tools",
                     ),
@@ -945,6 +961,66 @@ class TestLearnRuntimeToolTitles:
             pass
 
         assert request_information.tool_display_name_mapper is None
+        assert (
+            tool_event_handler._tool_display_name_mapper.get_display_name(
+                tool_name="start_onboarding"
+            )
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_mutate_singleton_when_request_mapper_is_the_singleton(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        """A caller may mistakenly assign the process-wide singleton mapper
+        directly onto RequestInformation instead of using
+        ToolDisplayNameMapper.with_tools(). Even then, this must not learn
+        titles onto it -- that shared instance is reused across concurrent
+        requests.
+        """
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=tool_event_handler._tool_display_name_mapper,
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        content=[
+                            {
+                                "type": "text",
+                                "text": '[{"name": "start_onboarding", "title": "🚀 Start Onboarding"}]',
+                            }
+                        ],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        assert (
+            tool_event_handler._tool_display_name_mapper.get_display_name(
+                tool_name="start_onboarding"
+            )
+            != "🚀 Start Onboarding"
+        )
 
     @pytest.mark.asyncio
     async def test_skips_learning_on_error(
