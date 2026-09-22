@@ -75,7 +75,7 @@ def _extract_input_messages(
 ) -> list[BaseMessage]:
     """The exact message list LangGraph is about to send/just sent to the
     model for one invocation -- shared by the llm_call start/end handlers
-    and the debug messages-log handler below (BAI-879)."""
+    and the debug messages-log handler below (BAI-882)."""
     data: EventData = event["data"] if "data" in event else {}
     input_messages_list: list[list[BaseMessage]] = cast(
         list[list[BaseMessage]],
@@ -89,7 +89,7 @@ def _serialize_messages_for_llm_call(
 ) -> list[Dict[str, Any]]:
     """Turn LangChain messages into plain dicts for the llm_call SSE event's
     ``request`` field -- a debugging UI's own JSON, not tied to any
-    LangChain/OpenAI wire format (BAI-879)."""
+    LangChain/OpenAI wire format (BAI-882)."""
     serialized: list[Dict[str, Any]] = []
     for message in messages:
         entry: Dict[str, Any] = {
@@ -371,7 +371,7 @@ class LangGraphStreamingManager(StreamContextMixin):
 
         # Emitted unconditionally (not gated by enable_debug_logging) so a
         # debugging UI can show every individual model invocation in a turn,
-        # not just the turn-level response.created/completed pair (BAI-879).
+        # not just the turn-level response.created/completed pair (BAI-882).
         input_messages = _extract_input_messages(event)
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
@@ -397,7 +397,7 @@ class LangGraphStreamingManager(StreamContextMixin):
 
         # Emitted unconditionally, pairing with the llm_call start event
         # above -- this single invocation's own response text, not the
-        # turn's accumulated output (BAI-879).
+        # turn's accumulated output (BAI-882).
         yield chat_request_wrapper.create_llm_call_end_sse_event(
             request_id=request_information.request_id,
             response_text=streamed_output,

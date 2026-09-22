@@ -87,7 +87,12 @@ def _extract_structured_output(artifact: Optional[Any]) -> Optional[Dict[str, An
     try:
         serialized = json.dumps(structured)
     except (TypeError, ValueError):
-        return structured
+        # Non-JSON-serializable structured content shouldn't happen for a
+        # spec-compliant MCP structuredContent payload, but falling back to
+        # returning it unchanged here would defeat the size cap below for
+        # exactly the payloads most likely to be unbounded (e.g. an object
+        # graph containing something non-serializable). Fail closed instead.
+        return {"_truncated": True, "_unserializable": True}
     if len(serialized) <= TOOL_END_OUTPUT_TRACE_MAX_CHARS:
         return structured
     return {
