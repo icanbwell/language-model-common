@@ -461,7 +461,7 @@ async def test_chat_model_start_yields_llm_call_start_with_request_messages(
     manager = streaming_manager_factory()
     request_information = RequestInformation(request_id="req-1")
     chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
-        enable_debug_logging=False
+        enable_debug_logging=True
     )
 
     event: StandardStreamEvent | CustomStreamEvent = cast(
@@ -513,12 +513,99 @@ async def test_chat_model_start_yields_llm_call_start_with_request_messages(
 
 
 @pytest.mark.asyncio
-async def test_chat_model_end_yields_llm_call_end_unconditionally(
+async def test_chat_model_end_yields_llm_call_end_when_debug_logging_enabled(
     streaming_manager_factory: Callable[[], LangGraphStreamingManager],
 ) -> None:
-    """The llm_call end event must fire even when debug logging is disabled --
-    unlike the pre-existing debug-only messages-log chunk emitted later in the
-    same handler."""
+    """The llm_call end event fires when debug logging is enabled, same as
+    the pre-existing debug-only messages-log chunk emitted later in the same
+    handler."""
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=True
+    )
+
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    async for _ in manager._handle_on_chat_model_start(
+        event=start_event,
+        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+        request_information=request_information,
+    ):
+        pass
+
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="Hi there!")},
+        },
+    )
+    async for _ in manager._handle_on_chat_model_stream(
+        event=stream_event,
+        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+        request_information=request_information,
+    ):
+        pass
+
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {"event": "on_chat_model_end", "data": {"input": {"messages": []}}},
+    )
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_end(
+            event=end_event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+        )
+    ]
+
+    assert chunks == [
+        "llm_call_end:1",
+        "\n\n<details>\n<summary>Messages log</summary>\n\n"
+        "```\n--- Streamed assistant output ---\nHi there!\n\n```\n\n"
+        "</details>\n\n",
+    ]
+    assert chat_request_wrapper.llm_call_end_calls == ["Hi there!"]
+
+
+@pytest.mark.asyncio
+async def test_chat_model_start_yields_nothing_when_debug_logging_disabled(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=False
+    )
+
+    event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_start",
+            "data": {"input": {"messages": [[HumanMessage(content="Hello")]]}},
+        },
+    )
+
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_start(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+        )
+    ]
+
+    assert chunks == []
+    assert chat_request_wrapper.llm_call_start_calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_model_end_does_not_yield_llm_call_end_when_debug_logging_disabled(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
     manager = streaming_manager_factory()
     request_information = RequestInformation(request_id="req-1")
     chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
@@ -562,5 +649,5 @@ async def test_chat_model_end_yields_llm_call_end_unconditionally(
         )
     ]
 
-    assert chunks == ["llm_call_end:1"]
-    assert chat_request_wrapper.llm_call_end_calls == ["Hi there!"]
+    assert chunks == []
+    assert chat_request_wrapper.llm_call_end_calls == []
