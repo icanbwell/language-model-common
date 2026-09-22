@@ -369,9 +369,12 @@ class LangGraphStreamingManager(StreamContextMixin):
         # StreamBufferManager.mark_new_invocation_boundary.
         self._stream_buffer_manager.mark_new_invocation_boundary()
 
-        # Emitted unconditionally (not gated by enable_debug_logging) so a
-        # debugging UI can show every individual model invocation in a turn,
-        # not just the turn-level response.created/completed pair (BAI-882).
+        if not chat_request_wrapper.enable_debug_logging:
+            return
+
+        # Gated by enable_debug_logging so a debugging UI can show every
+        # individual model invocation in a turn, not just the turn-level
+        # response.created/completed pair (BAI-882).
         input_messages = _extract_input_messages(event)
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
@@ -386,6 +389,10 @@ class LangGraphStreamingManager(StreamContextMixin):
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
         input_messages = _extract_input_messages(event)
+        # pop_streamed_output must run every turn regardless of debug mode --
+        # append_fragment in _handle_on_chat_model_stream runs unconditionally,
+        # so skipping this pop when debug is off would leak buffered
+        # fragments into the next invocation.
         streamed_output_record: StreamedOutput | None = (
             self._stream_debug_output_manager.pop_streamed_output()
         )
@@ -395,16 +402,16 @@ class LangGraphStreamingManager(StreamContextMixin):
             else None
         )
 
-        # Emitted unconditionally, pairing with the llm_call start event
+        if not chat_request_wrapper.enable_debug_logging:
+            return
+
+        # Gated by enable_debug_logging, pairing with the llm_call start event
         # above -- this single invocation's own response text, not the
         # turn's accumulated output (BAI-882).
         yield chat_request_wrapper.create_llm_call_end_sse_event(
             request_id=request_information.request_id,
             response_text=streamed_output,
         )
-
-        if not chat_request_wrapper.enable_debug_logging:
-            return
 
         content_text = ""
         for message_number, input_message in enumerate(input_messages):

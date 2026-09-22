@@ -334,7 +334,7 @@ async def test_tool_end_forwards_structured_output_from_artifact(
     )
     chat_request_wrapper = cast(
         ChatRequestWrapper,
-        _FakeChatRequestWrapper(enable_debug_logging=False),
+        _FakeChatRequestWrapper(enable_debug_logging=True),
     )
     request_information = RequestInformation(request_id="req-1")
     tool_start_times: dict[str, float] = {}
@@ -352,6 +352,47 @@ async def test_tool_end_forwards_structured_output_from_artifact(
         "count": 2,
         "connections": ["a", "b"],
     }
+
+
+@pytest.mark.asyncio
+async def test_tool_end_omits_structured_output_when_debug_logging_disabled(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """The structured_output SSE field is gated by enable_debug_logging, even
+    when the ToolMessage carries a real artifact."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "search_connections",
+            "data": {
+                "input": {"query": "labs"},
+                "output": ToolMessage(
+                    content="Found 2 connections.",
+                    tool_call_id="tc4",
+                    name="search_connections",
+                    artifact={"count": 2, "connections": ["a", "b"]},
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    async for _ in tool_event_handler.handle_tool_end(
+        event=event,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=request_information,
+        tool_start_times=tool_start_times,
+    ):
+        pass
+
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert fake_wrapper.last_tool_end_structured_output is None
 
 
 @pytest.mark.asyncio

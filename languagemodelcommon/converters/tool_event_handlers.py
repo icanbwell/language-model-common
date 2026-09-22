@@ -259,7 +259,9 @@ class ToolEventHandler(StreamContextMixin):
                 if tool_message_content
                 else None,
                 is_error=is_error,
-                structured_output=_extract_structured_output(artifact),
+                structured_output=_extract_structured_output(artifact)
+                if chat_request_wrapper.enable_debug_logging
+                else None,
             )
             if tool_end_event:
                 yield tool_end_event
