@@ -1,5 +1,6 @@
 """Tests for mcp_client — session management, interceptor chain, content conversion."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
@@ -423,6 +424,107 @@ class TestCallMcpToolRaw:
         assert captured["request_state"] == "opaque-state-123"
         assert captured["input_responses"]["confirm"].action == "accept"
         assert captured["allow_input_required"] is True
+
+
+class TestOneShotFallbackCmLifecycle:
+    """BAI-889: the one-shot fallback (no session_pool) now gets its
+    session from open_initialized_mcp_session and must exit that CM in a
+    finally block itself, unlike the old `async with create_mcp_session(...)`.
+    These pin that the CM is exited exactly once regardless of how the tool
+    call finishes, and that a tool-call exception is re-raised as-is (not
+    re-wrapped) after the CM is closed."""
+
+    @staticmethod
+    def _patch_open_initialized_mcp_session(
+        monkeypatch: pytest.MonkeyPatch, *, session: AsyncMock
+    ) -> AsyncMock:
+        mock_cm = AsyncMock()
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+        async def fake_open(*args: Any, **kwargs: Any) -> tuple[AsyncMock, AsyncMock]:
+            return mock_cm, session
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation.open_initialized_mcp_session",
+            fake_open,
+        )
+        return mock_cm
+
+    @pytest.mark.asyncio
+    async def test_exits_cm_once_on_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        session.get_server_capabilities = MagicMock(return_value=None)
+        mock_cm = self._patch_open_initialized_mcp_session(monkeypatch, session=session)
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation._execute_tool_call_with_heartbeat",
+            AsyncMock(
+                return_value=CallToolResult(
+                    content=[TextContent(type="text", text="ok")]
+                )
+            ),
+        )
+
+        result = await call_mcp_tool_raw(
+            config=MCPConnectionConfig(url="https://example.test/mcp"),
+            tool_name="save_fhir_resource",
+            arguments={},
+            server_name="mcp-fhir-agent",
+        )
+
+        assert isinstance(result, CallToolResult)
+        mock_cm.__aexit__.assert_awaited_once_with(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_exits_cm_and_reraises_unwrapped_on_tool_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        session.get_server_capabilities = MagicMock(return_value=None)
+        mock_cm = self._patch_open_initialized_mcp_session(monkeypatch, session=session)
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation._execute_tool_call_with_heartbeat",
+            AsyncMock(side_effect=RuntimeError("Server requires input")),
+        )
+
+        with pytest.raises(RuntimeError, match="Server requires input"):
+            await call_mcp_tool_raw(
+                config=MCPConnectionConfig(url="https://example.test/mcp"),
+                tool_name="save_fhir_resource",
+                arguments={},
+                server_name="mcp-fhir-agent",
+            )
+
+        mock_cm.__aexit__.assert_awaited_once_with(None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_exits_cm_on_cancellation_during_tool_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CancelledError is a BaseException, not an Exception, so it skips
+        the fallback's `except Exception as e:` -- the CM must still be
+        exited via the outer `finally`, and cancellation must propagate."""
+        session = AsyncMock()
+        session.get_server_capabilities = MagicMock(return_value=None)
+        mock_cm = self._patch_open_initialized_mcp_session(monkeypatch, session=session)
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.tool_invocation._execute_tool_call_with_heartbeat",
+            AsyncMock(side_effect=asyncio.CancelledError()),
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await call_mcp_tool_raw(
+                config=MCPConnectionConfig(url="https://example.test/mcp"),
+                tool_name="save_fhir_resource",
+                arguments={},
+                server_name="mcp-fhir-agent",
+            )
+
+        mock_cm.__aexit__.assert_awaited_once_with(None, None, None)
 
 
 class TestConvertMcpContentToLcBlock:
