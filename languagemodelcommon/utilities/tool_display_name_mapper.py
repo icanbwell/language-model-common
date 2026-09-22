@@ -11,6 +11,11 @@ from languagemodelcommon.utilities.text_humanizer import Humanizer
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.TOOLS)
 
+# Names of the tool-catalog MCP server's discovery meta-tools (BAI-903).
+# Shared here since both this module and ToolEventHandler branch on them.
+MCP_DISCOVERY_SEARCH_TOOLS_NAME = "search_tools"
+MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
+
 
 class ToolDisplayNameMapper:
     """Provide user-facing tool names for streaming progress updates."""
@@ -201,7 +206,7 @@ class ToolDisplayNameMapper:
             return ""
 
         inputs = tool_input or {}
-        if tool_name == "call_tool":
+        if tool_name == MCP_DISCOVERY_CALL_TOOL_NAME:
             return self._get_name_for_call_tool(inputs=inputs)
         return self.get_display_name(tool_name=tool_name, tool_input=inputs)
 

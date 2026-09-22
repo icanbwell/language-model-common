@@ -37,7 +37,11 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
-from languagemodelcommon.utilities.tool_display_name_mapper import ToolDisplayNameMapper
+from languagemodelcommon.utilities.tool_display_name_mapper import (
+    MCP_DISCOVERY_CALL_TOOL_NAME,
+    MCP_DISCOVERY_SEARCH_TOOLS_NAME,
+    ToolDisplayNameMapper,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -175,11 +179,11 @@ class ToolEventHandler(StreamContextMixin):
         # into every other concurrent request sharing the singleton.
         if mapper is None or mapper is self._tool_display_name_mapper:
             return
-        if tool_name == "search_tools":
+        if tool_name == MCP_DISCOVERY_SEARCH_TOOLS_NAME:
             self._learn_titles_from_search_tools_result(
                 mapper=mapper, tool_message_content=tool_message_content
             )
-        elif tool_name == "call_tool":
+        elif tool_name == MCP_DISCOVERY_CALL_TOOL_NAME:
             self._learn_title_from_call_tool_result(
                 mapper=mapper, tool_input=tool_input, artifact=artifact
             )
