@@ -83,6 +83,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # successive create_image_output_sse_event calls in one turn, which
         # would otherwise give them identical item ids.
         self._image_output_counter: int = 0
+        # Disambiguates multiple llm_call items emitted within the same
+        # response -- same reasoning as _image_output_counter above (BAI-879).
+        self._llm_call_counter: int = 0
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (
@@ -345,13 +348,17 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         runtime_seconds: float | None,
         output: str | None = None,
         is_error: bool = False,
+        structured_output: Dict[str, Any] | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with a ``function_call`` item.
 
         Includes ``runtime_seconds`` and the tool's own ``output``/``is_error``
         so consuming UIs (e.g. baileyai-skills-service's Stream events panel)
         can show how long a call took and surface failures, rather than only
-        ever seeing a "completed" status with no result.
+        ever seeing a "completed" status with no result. ``structured_output``
+        (the tool's own MCP ``structuredContent``, when it returned one) rides
+        alongside the text ``output`` so a debugging UI can render both
+        (BAI-879).
         """
         event: Dict[str, Any] = {
             "type": "response.output_item.done",
@@ -366,7 +373,63 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "status": "failed" if is_error else "completed",
                 "runtime_seconds": runtime_seconds,
                 "output": output or "",
+                "structured_output": structured_output,
                 "is_error": is_error,
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: List[Dict[str, Any]],
+    ) -> str | None:
+        """Emit a ``response.output_item.added`` event with an ``llm_call`` item.
+
+        A single turn can invoke the model more than once (initial call, a
+        tool call, a follow-up call with the tool result, ...) -- this fires
+        once per invocation so a debugging UI can show each distinctly
+        (BAI-879), the same "whole item, one event" shape
+        ``create_tool_start_sse_event`` already uses for tool calls.
+        """
+        self._llm_call_counter += 1
+        event: Dict[str, Any] = {
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "llm_call",
+                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
+                "status": "in_progress",
+                "request": request_messages,
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
+
+        Pairs with ``create_llm_call_start_sse_event``; reuses the same
+        ``id`` counter value so a client can match the pair up the same way
+        it already matches ``function_call`` start/end items.
+        """
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "llm_call",
+                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
+                "status": "completed",
+                "output": response_text or "",
             },
         }
         return f"data: {json.dumps(event)}\n\n"
