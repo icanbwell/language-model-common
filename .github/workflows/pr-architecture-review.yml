@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   call-review:
-    uses: icanbwell/.github/.github/workflows/pr-architecture-review-reusable.yml@main
+    uses: icanbwell/.github/.github/workflows/pr-architecture-review-reusable.yml@06e1efaab2c5167f50fe7749d1b01980339388f7 # main as of 2026-09-22
     with:
       pr_number: ${{ github.event.pull_request.number }}
       pr_author: ${{ github.event.pull_request.user.login }}
