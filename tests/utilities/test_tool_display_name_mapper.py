@@ -203,6 +203,68 @@ class TestRegisterFromTools:
         assert "Tool C" in mapper.get_display_name(tool_name="tool_c")
 
 
+class TestWithTools:
+    """with_tools() must merge live tool titles without mutating self.
+
+    Unlike register_from_tools(), this is the safe entry point for a
+    process-wide singleton mapper: callers holding one shared instance
+    across concurrent requests must not have one request's ad-hoc/
+    request-scoped tool titles leak into another request or accumulate
+    unboundedly in the singleton's dict over the process lifetime.
+    """
+
+    def test_returns_new_instance_with_merged_title(self) -> None:
+        mapper = ToolDisplayNameMapper()
+        tool = _make_tool_stub("get_weather", {"mcp_title": "Weather Info"})
+
+        merged = mapper.with_tools(tools=[tool])
+
+        assert merged is not mapper
+        assert merged.get_display_name(tool_name="get_weather") == "🛠️ Weather Info"
+
+    def test_does_not_mutate_singleton(self) -> None:
+        singleton = ToolDisplayNameMapper()
+        tool = _make_tool_stub("get_weather", {"mcp_title": "Weather Info"})
+
+        singleton.with_tools(tools=[tool])
+
+        # The singleton itself must be untouched -- a second, unrelated
+        # request sharing this instance must not see the first request's
+        # ad-hoc tool title.
+        assert "Get Weather" in singleton.get_display_name(tool_name="get_weather")
+
+    def test_preserves_static_config_precedence(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "names.json"
+        config_path.write_text('{"get_weather": "Custom Weather"}', encoding="utf-8")
+        static_mapper = ToolDisplayNameMapper.from_config_path(
+            config_path=str(config_path)
+        )
+        tool = _make_tool_stub("get_weather", {"mcp_title": "MCP Weather Title"})
+
+        merged = static_mapper.with_tools(tools=[tool])
+
+        assert merged.get_display_name(tool_name="get_weather") == "🛠️ Custom Weather"
+
+    def test_concurrent_requests_do_not_see_each_others_titles(self) -> None:
+        singleton = ToolDisplayNameMapper()
+        request_a_tool = _make_tool_stub(
+            "custom_search", {"mcp_title": "Client A Search"}
+        )
+        request_b_tool = _make_tool_stub(
+            "custom_search", {"mcp_title": "Client B Search"}
+        )
+
+        mapper_a = singleton.with_tools(tools=[request_a_tool])
+        mapper_b = singleton.with_tools(tools=[request_b_tool])
+
+        assert (
+            mapper_a.get_display_name(tool_name="custom_search") == "🛠️ Client A Search"
+        )
+        assert (
+            mapper_b.get_display_name(tool_name="custom_search") == "🛠️ Client B Search"
+        )
+
+
 class TestGetMessageForToolFormat:
     """Format invariants for streamed tool-progress messages.
 

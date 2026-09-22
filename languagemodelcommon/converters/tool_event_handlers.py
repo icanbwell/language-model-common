@@ -119,6 +119,18 @@ class ToolEventHandler(StreamContextMixin):
         self._static_stream_buffer_manager = stream_buffer_manager
         self._static_stream_debug_output_manager = stream_debug_output_manager
 
+    def _resolve_display_name_mapper(
+        self, *, request_information: RequestInformation
+    ) -> ToolDisplayNameMapper:
+        """Prefer this request's mapper (static config + live MCP tool titles
+        merged via ``ToolDisplayNameMapper.with_tools``) over the process-wide
+        singleton, which only ever carries the static config.
+        """
+        return (
+            request_information.tool_display_name_mapper
+            or self._tool_display_name_mapper
+        )
+
     async def handle_tool_start(
         self,
         *,
@@ -151,9 +163,9 @@ class ToolEventHandler(StreamContextMixin):
             )
             if tool_start_event:
                 yield tool_start_event
-            content_text: str = self._tool_display_name_mapper.get_message_for_tool(
-                tool_name=tool_name, tool_input=tool_input
-            )
+            content_text: str = self._resolve_display_name_mapper(
+                request_information=request_information
+            ).get_message_for_tool(tool_name=tool_name, tool_input=tool_input)
             buffered_chunk = await self._stream_buffer_manager.buffer_content(
                 content_text=content_text,
             )
@@ -325,11 +337,11 @@ class ToolEventHandler(StreamContextMixin):
                         text=f"\n--- Tool Output: {tool_name} ({runtime_str}) ---\n{tool_message_or_artifact_content}\n",
                     )
 
-                tool_display_name: str = (
-                    self._tool_display_name_mapper.get_name_for_tool(
-                        tool_name=tool_name,
-                        tool_input=tool_input,
-                    )
+                tool_display_name: str = self._resolve_display_name_mapper(
+                    request_information=request_information
+                ).get_name_for_tool(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
                 )
                 write_result: (
                     DebugFileWriteResult | None
@@ -461,7 +473,9 @@ class ToolEventHandler(StreamContextMixin):
             self._stream_debug_output_manager.append_fragment(
                 text=f"\n--- Tool Error: {tool_name} ({runtime_str}) ---\n{display_message}\n",
             )
-            tool_display_name: str = self._tool_display_name_mapper.get_name_for_tool(
+            tool_display_name: str = self._resolve_display_name_mapper(
+                request_information=request_information
+            ).get_name_for_tool(
                 tool_name=tool_name or "unknown",
                 tool_input=tool_input,
             )

@@ -623,6 +623,85 @@ async def test_tool_error_write_to_file_hides_raw_message_by_default(
     assert raw_message not in debug_text
 
 
+@pytest.mark.asyncio
+async def test_tool_start_prefers_request_scoped_display_name_mapper(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """A per-request mapper (e.g. built via ToolDisplayNameMapper.with_tools()
+    from that request's live MCP tools) must take precedence over the
+    singleton mapper the handler was constructed with, which only ever
+    carries the static config.
+    """
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_start",
+            "name": "search_tool",
+            "data": {"input": {"query": "test"}},
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_scoped_mapper = ToolDisplayNameMapper.from_mapping(
+        name_to_display_name={"search_tool": "🔍 Request-Scoped Search"}
+    )
+    request_information = RequestInformation(
+        request_id="req-1", tool_display_name_mapper=request_scoped_mapper
+    )
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_start(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    assert any("🔍 Request-Scoped Search" in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_tool_start_falls_back_to_singleton_mapper_when_request_has_none(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """When a request carries no per-request mapper, the handler must still
+    work using the singleton it was constructed with (backwards compatible).
+    """
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_start",
+            "name": "search_tool",
+            "data": {"input": {"query": "test"}},
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in tool_event_handler.handle_tool_start(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    assert any("Search Tool" in chunk for chunk in chunks)
+
+
 class TestExtractStructuredOutput:
     """Unit coverage for _extract_structured_output's two artifact shapes
     (BAI-882 review finding: previously only covered by interface stubs)."""
