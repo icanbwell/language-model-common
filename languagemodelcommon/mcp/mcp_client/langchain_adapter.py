@@ -177,7 +177,7 @@ def mcp_tool_to_langchain_tool(
         content = convert_call_tool_result(call_tool_result)
         # structured_content (MCP's structuredContent) never reaches the LLM --
         # LangChain only sends `content` back to the model, never `artifact` --
-        # so this is purely for the UI's debugging details panel (BAI-879).
+        # so this is purely for the UI's debugging details panel (BAI-882).
         # Previously discarded entirely: this call returned (content, None).
         return content, call_tool_result.structured_content
 

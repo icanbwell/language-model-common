@@ -84,7 +84,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # would otherwise give them identical item ids.
         self._image_output_counter: int = 0
         # Disambiguates multiple llm_call items emitted within the same
-        # response -- same reasoning as _image_output_counter above (BAI-879).
+        # response -- same reasoning as _image_output_counter above (BAI-882).
         self._llm_call_counter: int = 0
 
     def _apply_debug_prefix_toggle(self) -> None:
@@ -358,7 +358,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ever seeing a "completed" status with no result. ``structured_output``
         (the tool's own MCP ``structuredContent``, when it returned one) rides
         alongside the text ``output`` so a debugging UI can render both
-        (BAI-879).
+        (BAI-882).
         """
         event: Dict[str, Any] = {
             "type": "response.output_item.done",
@@ -391,7 +391,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         A single turn can invoke the model more than once (initial call, a
         tool call, a follow-up call with the tool result, ...) -- this fires
         once per invocation so a debugging UI can show each distinctly
-        (BAI-879), the same "whole item, one event" shape
+        (BAI-882), the same "whole item, one event" shape
         ``create_tool_start_sse_event`` already uses for tool calls.
         """
         self._llm_call_counter += 1

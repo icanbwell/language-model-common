@@ -3,9 +3,11 @@
 import pytest
 from langchain_core.tools import StructuredTool
 from mcp.types import (
+    CallToolResult,
     ElicitRequest,
     ElicitRequestFormParams,
     InputRequiredResult,
+    TextContent,
 )
 from mcp.types import Tool as MCPTool, ToolAnnotations
 
@@ -202,3 +204,83 @@ class TestMcpToolToLangchainToolInputRequired:
         assert err.server_name == "mcp-fhir-agent"
         assert err.request_state == "opaque-state-123"
         assert "confirm" in err.input_requests
+
+
+class TestCallToolReturnsStructuredContent:
+    """BAI-882: call_tool's coroutine must forward the MCP CallToolResult's
+    own structuredContent as the LangChain tool's artifact -- previously
+    this was hardcoded to None (content, None), silently discarding it."""
+
+    @pytest.mark.asyncio
+    async def test_returns_structured_content_as_artifact(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        call_tool_result = CallToolResult(
+            content=[TextContent(type="text", text="Found 2 connections.")],
+            is_error=False,
+            structured_content={"count": 2, "connections": ["a", "b"]},
+        )
+
+        async def fake_execute_tool(request: MCPToolCallRequest) -> CallToolResult:
+            return call_tool_result
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.langchain_adapter._make_execute_tool",
+            lambda **kwargs: fake_execute_tool,
+        )
+
+        mcp_tool = MCPTool(
+            name="search_connections",
+            description="Search connections",
+            input_schema={"type": "object", "properties": {}},
+        )
+        tool = mcp_tool_to_langchain_tool(
+            tool=mcp_tool,
+            connection=_make_connection_config(),
+            server_name="test-server",
+        )
+        assert isinstance(tool, StructuredTool)
+        assert tool.coroutine is not None
+
+        content, artifact = await tool.coroutine(query="labs")
+
+        assert artifact == {"count": 2, "connections": ["a", "b"]}
+        assert len(content) == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_none_artifact_when_no_structured_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A tool that never returns MCP structuredContent must still forward
+        None (not an empty dict or the text content), matching the pre-BAI-882
+        artifact-absent behavior for tools with no structured payload."""
+        call_tool_result = CallToolResult(
+            content=[TextContent(type="text", text="Done.")],
+            is_error=False,
+            structured_content=None,
+        )
+
+        async def fake_execute_tool(request: MCPToolCallRequest) -> CallToolResult:
+            return call_tool_result
+
+        monkeypatch.setattr(
+            "languagemodelcommon.mcp.mcp_client.langchain_adapter._make_execute_tool",
+            lambda **kwargs: fake_execute_tool,
+        )
+
+        mcp_tool = MCPTool(
+            name="do_thing",
+            description="Do a thing",
+            input_schema={"type": "object", "properties": {}},
+        )
+        tool = mcp_tool_to_langchain_tool(
+            tool=mcp_tool,
+            connection=_make_connection_config(),
+            server_name="test-server",
+        )
+        assert isinstance(tool, StructuredTool)
+        assert tool.coroutine is not None
+
+        _, artifact = await tool.coroutine()
+
+        assert artifact is None
