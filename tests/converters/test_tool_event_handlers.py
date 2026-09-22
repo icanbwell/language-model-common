@@ -10,7 +10,10 @@ from languagemodelcommon.converters.stream_buffer import StreamBufferManager
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
-from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
+from languagemodelcommon.converters.tool_event_handlers import (
+    ToolEventHandler,
+    _extract_structured_output,
+)
 from languagemodelcommon.file_managers.file_writer import (
     DebugFileWriteResult,
     FileWriter,
@@ -307,6 +310,115 @@ async def test_tool_end_surfaces_call_tool_artifact_error(
 
 
 @pytest.mark.asyncio
+async def test_tool_end_forwards_structured_output_from_artifact(
+    tool_event_handler: ToolEventHandler,
+) -> None:
+    """A regular MCP tool's artifact (its own structuredContent, set directly
+    by create_langchain_tool's call_tool coroutine per BAI-882) must reach
+    the tool_end SSE event's structured_output field."""
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "search_connections",
+            "data": {
+                "input": {"query": "labs"},
+                "output": ToolMessage(
+                    content="Found 2 connections.",
+                    tool_call_id="tc4",
+                    name="search_connections",
+                    artifact={"count": 2, "connections": ["a", "b"]},
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    async for _ in tool_event_handler.handle_tool_end(
+        event=event,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=request_information,
+        tool_start_times=tool_start_times,
+    ):
+        pass
+
+    fake_wrapper = cast(_FakeChatRequestWrapper, chat_request_wrapper)
+    assert fake_wrapper.last_tool_end_structured_output == {
+        "count": 2,
+        "connections": ["a", "b"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_end_does_not_leak_download_link_for_successful_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BAI-882 review finding: before this fix, WRITE_TOOL_OUTPUT_TO_FILE=true
+    plus any tool artifact (now populated for ordinary successful tools too,
+    not just call_tool's error envelope) injected an unrequested download-link
+    message into every non-debug user's normal chat output. Only enable_debug_
+    logging or a genuine error artifact should trigger the write/link."""
+    monkeypatch.setenv("WRITE_TOOL_OUTPUT_TO_FILE", "true")
+    environment_variables = LanguageModelCommonEnvironmentVariables()
+    mock_file_writer = AsyncMock(spec=FileWriter)
+    mock_file_writer.write_to_file_async = AsyncMock(
+        return_value=DebugFileWriteResult(
+            file_path="uploads/x", file_url="https://x/x", url_error_message=None
+        )
+    )
+    handler = ToolEventHandler(
+        debug_file_writer=mock_file_writer,
+        environment_variables=environment_variables,
+        tool_display_name_mapper=ToolDisplayNameMapper(),
+        stream_buffer_manager=StreamBufferManager(
+            flush_interval_seconds=10.0, enabled=False
+        ),
+        stream_debug_output_manager=StreamDebugOutputManager(),
+    )
+    event = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_tool_end",
+            "name": "search_connections",
+            "data": {
+                "input": {"query": "labs"},
+                "output": ToolMessage(
+                    content="Found 2 connections.",
+                    tool_call_id="tc5",
+                    name="search_connections",
+                    artifact={"count": 2},
+                ),
+            },
+        },
+    )
+    chat_request_wrapper = cast(
+        ChatRequestWrapper,
+        _FakeChatRequestWrapper(enable_debug_logging=False),
+    )
+    request_information = RequestInformation(request_id="req-1")
+    tool_start_times: dict[str, float] = {}
+
+    chunks = [
+        chunk
+        async for chunk in handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times=tool_start_times,
+        )
+        if chunk
+    ]
+
+    mock_file_writer.write_to_file_async.assert_not_awaited()
+    assert not any("Click to download" in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
 async def test_tool_error_yields_error_message(
     tool_event_handler: ToolEventHandler,
 ) -> None:
@@ -588,3 +700,55 @@ async def test_tool_start_falls_back_to_singleton_mapper_when_request_has_none(
     ]
 
     assert any("Search Tool" in chunk for chunk in chunks)
+
+
+class TestExtractStructuredOutput:
+    """Unit coverage for _extract_structured_output's two artifact shapes
+    (BAI-882 review finding: previously only covered by interface stubs)."""
+
+    def test_returns_none_for_non_dict_artifact(self) -> None:
+        assert _extract_structured_output(None) is None
+        assert _extract_structured_output("plain string") is None
+
+    def test_returns_plain_artifact_dict_unchanged(self) -> None:
+        """A regular MCP tool binding sets artifact directly to the tool's
+        own structuredContent -- no 'structured_content' envelope key."""
+        artifact = {"count": 3, "items": ["a", "b", "c"]}
+        assert _extract_structured_output(artifact) == artifact
+
+    def test_unwraps_call_tool_meta_tool_envelope(self) -> None:
+        """The call_tool meta-tool wraps its result in an envelope; only the
+        nested structured_content is the tool's genuine structured output."""
+        artifact = {
+            "is_error": False,
+            "result": "some text result",
+            "structured_content": {"skill": "propose_skill", "status": "ok"},
+        }
+        assert _extract_structured_output(artifact) == {
+            "skill": "propose_skill",
+            "status": "ok",
+        }
+
+    def test_returns_none_when_meta_tool_envelope_has_no_structured_content(
+        self,
+    ) -> None:
+        """A call_tool meta-tool call that succeeded without returning MCP
+        structuredContent must resolve to 'no structured output', not fall
+        through to the whole envelope (including its untruncated result) --
+        BAI-882 review finding."""
+        artifact = {
+            "is_error": False,
+            "result": "plain text",
+            "structured_content": None,
+        }
+        assert _extract_structured_output(artifact) is None
+
+    def test_truncates_oversized_structured_output(self) -> None:
+        """structured_output rides on every tool_end SSE event -- an
+        arbitrarily large tool payload must be capped like `output` is,
+        not streamed unbounded (BAI-882 review finding)."""
+        artifact = {"data": "x" * 5000}
+        result = _extract_structured_output(artifact)
+        assert result is not None
+        assert result.get("_truncated") is True
+        assert result["original_size_chars"] > 2000

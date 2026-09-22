@@ -534,6 +534,85 @@ class TestCreateToolEndSseEvent:
         assert item["output"] == ""
         assert item["is_error"] is False
 
+    def test_includes_structured_output_when_present(self) -> None:
+        """BAI-879/BAI-882: a tool's own MCP structuredContent rides alongside
+        the text output on the same event."""
+        wrapper = _make_wrapper()
+        raw = wrapper.create_tool_end_sse_event(
+            request_id="req-1",
+            tool_name="search_connections",
+            tool_input={"query": "labs"},
+            runtime_seconds=0.5,
+            output="Found 2 connections.",
+            is_error=False,
+            structured_output={"count": 2, "connections": ["a", "b"]},
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["item"]["structured_output"] == {
+            "count": 2,
+            "connections": ["a", "b"],
+        }
+
+    def test_defaults_structured_output_to_none(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_tool_end_sse_event(
+            request_id="req-1",
+            tool_name="load_skill",
+            tool_input=None,
+            runtime_seconds=None,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["item"]["structured_output"] is None
+
+
+class TestCreateLlmCallSseEvents:
+    """Tests for create_llm_call_start_sse_event/create_llm_call_end_sse_event
+    (BAI-882): one pair per individual model invocation within a turn."""
+
+    def test_start_event_carries_request_messages(self) -> None:
+        wrapper = _make_wrapper()
+        request_messages = [
+            {"role": "system", "content": "You are Bailey."},
+            {"role": "user", "content": "Hello"},
+        ]
+        raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1",
+            request_messages=request_messages,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["type"] == "response.output_item.added"
+        item = event["item"]
+        assert item["type"] == "llm_call"
+        assert item["status"] == "in_progress"
+        assert item["request"] == request_messages
+
+    def test_end_event_carries_response_text(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text="Hi there!",
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["type"] == "response.output_item.done"
+        item = event["item"]
+        assert item["type"] == "llm_call"
+        assert item["status"] == "completed"
+        assert item["output"] == "Hi there!"
+
+    def test_end_event_defaults_output_to_empty_string(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+        )
+        assert raw is not None
+        event = json.loads(raw[len("data: ") :])
+        assert event["item"]["output"] == ""
+
 
 class TestCreateImageOutputSseEvent:
     """Tests for create_image_output_sse_event (BAI-806)."""
