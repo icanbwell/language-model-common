@@ -18,7 +18,7 @@ from languagemodelcommon.mcp.interceptors.types import (
 )
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    create_mcp_session,
+    open_initialized_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import ToolListCache
@@ -378,12 +378,14 @@ def _make_execute_tool(
                     await tool_list_cache.invalidate_async(key=cache_key)
                 raise
 
-        # Fallback: create a one-shot session (original behavior)
+        # Fallback: create a one-shot session (original behavior). Session
+        # establishment (connect + initialize) retries transient failures
+        # internally (BAI-889); the tool call itself below is never retried.
         captured_exception = None
-        async with create_mcp_session(
+        cm, session = await open_initialized_mcp_session(
             effective_config, mcp_callbacks=mcp_callbacks
-        ) as session:
-            await session.initialize()
+        )
+        try:
             result: CallToolResult | InputRequiredResult
             try:
                 if await _tool_supports_tasks(
@@ -432,6 +434,14 @@ def _make_execute_tool(
                     )
             except Exception as e:
                 captured_exception = e
+        finally:
+            # Always exit clean (None, None, None): captured_exception is
+            # re-raised below, outside the session's lifecycle -- matching
+            # the prior `async with` behavior -- so create_mcp_session's own
+            # broad except clause never gets a chance to re-wrap a tool-call
+            # error (e.g. a guard-tool InputRequired RuntimeError) as an
+            # unrelated McpSessionError.
+            await cm.__aexit__(None, None, None)
 
         if captured_exception is not None:
             raise captured_exception

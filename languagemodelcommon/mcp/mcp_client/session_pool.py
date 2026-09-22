@@ -11,7 +11,7 @@ from mcp import ClientSession
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    create_mcp_session,
+    open_initialized_mcp_session,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -56,23 +56,14 @@ class _PooledSession:
         mcp_callbacks: _MCPCallbacks | None = None,
     ) -> None:
         """Enter the session CM, signal readiness, then wait for close."""
-        cm: AbstractAsyncContextManager[ClientSession] = create_mcp_session(
-            config, mcp_callbacks=mcp_callbacks
-        )
-
+        cm: AbstractAsyncContextManager[ClientSession]
         try:
-            session = await cm.__aenter__()
+            cm, session = await open_initialized_mcp_session(
+                config, mcp_callbacks=mcp_callbacks
+            )
         except BaseException as exc:
             self._error = exc
             self._ready_event.set()
-            return
-
-        try:
-            await session.initialize()
-        except BaseException as exc:
-            self._error = exc
-            self._ready_event.set()
-            await self._safe_exit(cm)
             return
 
         self.session = session

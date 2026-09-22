@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.types import Tool as MCPTool
 
-from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
+from languagemodelcommon.mcp.mcp_client.session import (
+    DEFAULT_SESSION_RETRY_MAX_ATTEMPTS,
+    MCPConnectionConfig,
+)
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_list_cache import (
     ToolListCache,
@@ -228,7 +231,7 @@ class TestMcpSessionPool:
         mock_create, mock_session = _mock_create_mcp_session()
 
         with patch(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             mock_create,
         ):
             async with McpSessionPool() as pool:
@@ -245,7 +248,7 @@ class TestMcpSessionPool:
         call_count = 0
 
         with patch(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session"
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session"
         ) as mock_create:
 
             def make_cm(*args: object, **kwargs: object) -> AsyncMock:
@@ -281,7 +284,7 @@ class TestMcpSessionPool:
         call_count = 0
 
         with patch(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session"
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session"
         ) as mock_create:
 
             def make_cm(*args: object, **kwargs: object) -> AsyncMock:
@@ -308,7 +311,7 @@ class TestMcpSessionPool:
         call_count = 0
 
         with patch(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session"
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session"
         ) as mock_create:
 
             def make_cm(*args: object, **kwargs: object) -> AsyncMock:
@@ -341,7 +344,10 @@ class TestMcpSessionPool:
 
     @pytest.mark.asyncio
     async def test_initialize_failure_does_not_leak_transport(self) -> None:
-        """If session.initialize() fails, the CM should still be cleaned up."""
+        """If session.initialize() fails, the CM should still be cleaned up
+        on every retry attempt (BAI-889: session establishment now retries
+        transient failures, so this happens `DEFAULT_SESSION_RETRY_MAX_ATTEMPTS`
+        times, not once)."""
         config: MCPConnectionConfig = {"url": "https://example.com"}
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock(side_effect=RuntimeError("init failed"))
@@ -350,13 +356,18 @@ class TestMcpSessionPool:
         mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cm.__aexit__ = AsyncMock(return_value=None)
 
-        with patch(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session",
-            return_value=mock_cm,
+        with (
+            patch(
+                "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
+                return_value=mock_cm,
+            ),
+            patch("languagemodelcommon.mcp.mcp_client.session.asyncio.sleep"),
         ):
             async with McpSessionPool() as pool:
                 with pytest.raises(RuntimeError, match="init failed"):
                     await pool.get_session(config)
 
-                # CM should have been cleaned up
-                mock_cm.__aexit__.assert_awaited_once()
+                # CM should have been cleaned up after every retry attempt
+                assert (
+                    mock_cm.__aexit__.await_count == DEFAULT_SESSION_RETRY_MAX_ATTEMPTS
+                )

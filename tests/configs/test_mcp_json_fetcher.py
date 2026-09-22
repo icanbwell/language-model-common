@@ -45,7 +45,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("all-employees")
@@ -64,7 +64,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("empty-plugin")
@@ -81,9 +81,14 @@ class TestFetchPluginAsync:
             raise ConnectionError("refused")
             yield  # pragma: no cover
 
-        with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
-            return_value=_failing_session(),
+        with (
+            patch(
+                "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
+                # side_effect (not return_value): each retry attempt needs a
+                # fresh single-use @asynccontextmanager instance.
+                side_effect=lambda *args, **kwargs: _failing_session(),
+            ),
+            patch("languagemodelcommon.mcp.mcp_client.session.asyncio.sleep"),
         ):
             result, error = await fetcher.fetch_plugin_async("broken")
 
@@ -104,7 +109,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("bad-json")
@@ -121,7 +126,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("no-content")
@@ -145,7 +150,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("failing-plugin")
@@ -164,7 +169,7 @@ class TestFetchPluginAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             return_value=_mock_session_ctx(session),
         ):
             result, error = await fetcher.fetch_plugin_async("all-employees")
@@ -197,8 +202,8 @@ class TestFetchPluginsAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
-            side_effect=lambda _: _mock_session_ctx(session),
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
+            side_effect=lambda *args, **kwargs: _mock_session_ctx(session),
         ):
             configs, errors = await fetcher.fetch_plugins_async(
                 ["plugin-a", "plugin-b"]
@@ -230,8 +235,8 @@ class TestFetchPluginsAsync:
         fetcher = McpJsonFetcher(plugins_mcp_server_url="http://localhost:5000/skills/")
 
         with patch(
-            "languagemodelcommon.configs.config_reader.mcp_json_fetcher.create_mcp_session",
-            side_effect=lambda _: _mock_session_ctx(session),
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
+            side_effect=lambda *args, **kwargs: _mock_session_ctx(session),
         ):
             configs, errors = await fetcher.fetch_plugins_async(["good", "bad"])
 

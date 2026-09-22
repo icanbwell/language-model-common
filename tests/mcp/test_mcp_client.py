@@ -245,7 +245,7 @@ class TestCallMcpToolRaw:
             fake_execute_tool_call_with_heartbeat,
         )
         monkeypatch.setattr(
-            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             lambda *args, **kwargs: _fake_session_cm(),
         )
 
@@ -294,7 +294,7 @@ class TestCallMcpToolRaw:
         session.call_tool = fake_call_tool
 
         monkeypatch.setattr(
-            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             lambda *args, **kwargs: _fake_session_cm_with(session),
         )
 
@@ -349,7 +349,7 @@ class TestCallMcpToolRaw:
         session.call_tool = fake_call_tool
 
         monkeypatch.setattr(
-            "languagemodelcommon.mcp.mcp_client.tool_invocation.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             lambda *args, **kwargs: _fake_session_cm_with(session),
         )
 
@@ -399,7 +399,7 @@ class TestCallMcpToolRaw:
         mock_cm.__aexit__ = AsyncMock(return_value=None)
 
         monkeypatch.setattr(
-            "languagemodelcommon.mcp.mcp_client.session_pool.create_mcp_session",
+            "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
             MagicMock(return_value=mock_cm),
         )
 
