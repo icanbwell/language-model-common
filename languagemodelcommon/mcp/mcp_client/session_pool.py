@@ -115,7 +115,7 @@ class McpSessionPool:
 
     def __init__(self) -> None:
         self._sessions: dict[str, _PooledSession] = {}
-        self._lock = asyncio.Lock()
+        self._locks: dict[str, asyncio.Lock] = {}
 
     @staticmethod
     def _cache_key(config: MCPConnectionConfig) -> str:
@@ -127,6 +127,20 @@ class McpSessionPool:
         # Sort for deterministic key regardless of dict insertion order
         sorted_items = sorted(headers.items())
         return f"{url}|{sorted_items}"
+
+    def _lock_for_key(self, key: str) -> asyncio.Lock:
+        """Get or create the per-key lock, scoping connect/evict serialization
+        to a single server URL. A pool-wide lock would make a slow or
+        unhealthy server's retrying connect (see
+        ``open_initialized_mcp_session``) block every other server's
+        ``get_session`` call in the same pool. This lookup is synchronous
+        (no ``await`` between the check and the insert), so it can't race
+        under asyncio's cooperative scheduling."""
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        return lock
 
     async def __aenter__(self) -> Self:
         return self
@@ -172,7 +186,7 @@ class McpSessionPool:
         if pooled is not None:
             return pooled.session
 
-        async with self._lock:
+        async with self._lock_for_key(key):
             pooled = self._sessions.get(key)
             if pooled is not None:
                 return pooled.session
@@ -191,7 +205,7 @@ class McpSessionPool:
         fresh connection instead of reusing the broken one.
         """
         key = self._cache_key(config)
-        async with self._lock:
+        async with self._lock_for_key(key):
             pooled = self._sessions.pop(key, None)
             if pooled is None:
                 return
