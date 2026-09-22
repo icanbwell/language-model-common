@@ -32,6 +32,9 @@ class _PooledSession:
 
     url: str
     session: ClientSession = field(init=False)
+    _cm: AbstractAsyncContextManager[ClientSession] | None = field(
+        default=None, init=False
+    )
     _task: asyncio.Task[None] = field(init=False)
     _close_event: asyncio.Event = field(default_factory=asyncio.Event)
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -55,10 +58,16 @@ class _PooledSession:
         *,
         mcp_callbacks: _MCPCallbacks | None = None,
     ) -> None:
-        """Enter the session CM, signal readiness, then wait for close."""
-        cm: AbstractAsyncContextManager[ClientSession]
+        """Enter the session CM, signal readiness, then wait for close.
+
+        ``self._cm`` is published as an instance field (rather than staying
+        a local variable) so ``close()``/eviction can be seen to own its
+        exit. It is still exited from *this* task, not from ``close()``'s
+        caller task: ``streamable_http_client``'s anyio task group requires
+        its cancel scope to be entered and exited by the same asyncio task.
+        """
         try:
-            cm, session = await open_initialized_mcp_session(
+            self._cm, session = await open_initialized_mcp_session(
                 config, mcp_callbacks=mcp_callbacks
             )
         except BaseException as exc:
@@ -71,16 +80,18 @@ class _PooledSession:
         try:
             await self._close_event.wait()
         finally:
-            await self._safe_exit(cm)
+            await self._safe_exit()
 
-    async def _safe_exit(self, cm: AbstractAsyncContextManager[ClientSession]) -> None:
+    async def _safe_exit(self) -> None:
+        if self._cm is None:
+            return
         try:
-            await cm.__aexit__(None, None, None)
+            await self._cm.__aexit__(None, None, None)
         except Exception as e:
             logger.warning("Error closing MCP session for %s: %s", self.url, e)
 
     async def close(self) -> None:
-        """Signal the background task to exit and wait for it."""
+        """Signal the background task to exit ``self._cm`` and wait for it."""
         self._close_event.set()
         try:
             await self._task
