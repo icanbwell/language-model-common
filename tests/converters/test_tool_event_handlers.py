@@ -752,3 +752,11 @@ class TestExtractStructuredOutput:
         assert result is not None
         assert result.get("_truncated") is True
         assert result["original_size_chars"] > 2000
+
+    def test_fails_closed_for_non_json_serializable_structured_content(self) -> None:
+        """A non-JSON-serializable artifact must not bypass the size cap by
+        falling through to the raw (potentially unbounded) object -- fail
+        closed instead of trusting an unserializable payload is small."""
+        artifact = {"data": object()}
+        result = _extract_structured_output(artifact)
+        assert result == {"_truncated": True, "_unserializable": True}

@@ -3,7 +3,7 @@ from typing import Any, Optional, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.runnables.schema import CustomStreamEvent, StandardStreamEvent
 
 from languagemodelcommon.converters.stream_buffer import StreamBufferManager
@@ -421,3 +421,146 @@ async def test_chat_model_stream_text_only_emits_no_image_event(
         )
     ]
     assert not any(c and c.startswith("image:") for c in chunks)
+
+
+class _RecordingLlmCallChatRequestWrapper(_FakeChatRequestWrapper):
+    """Records create_llm_call_start/end_sse_event calls and returns a
+    distinguishable sentinel, so a test can assert the streaming manager's
+    on_chat_model_start/end handlers actually invoke and yield them -- BAI-882
+    review finding: the shared _FakeChatRequestWrapper returns None for both,
+    so no existing test could tell whether this wiring worked at all."""
+
+    def __init__(self, *, enable_debug_logging: bool) -> None:
+        super().__init__(enable_debug_logging=enable_debug_logging)
+        self.llm_call_start_calls: list[list[dict[str, Any]]] = []
+        self.llm_call_end_calls: list[str | None] = []
+
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]],
+    ) -> str | None:
+        self.llm_call_start_calls.append(request_messages)
+        return f"llm_call_start:{len(self.llm_call_start_calls)}"
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+    ) -> str | None:
+        self.llm_call_end_calls.append(response_text)
+        return f"llm_call_end:{len(self.llm_call_end_calls)}"
+
+
+@pytest.mark.asyncio
+async def test_chat_model_start_yields_llm_call_start_with_request_messages(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=False
+    )
+
+    event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_start",
+            "data": {
+                "input": {
+                    "messages": [
+                        [
+                            HumanMessage(content="Hello"),
+                            AIMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "name": "search",
+                                        "args": {"query": "labs"},
+                                        "id": "tc1",
+                                    }
+                                ],
+                            ),
+                        ]
+                    ]
+                }
+            },
+        },
+    )
+
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_start(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+        )
+    ]
+
+    assert chunks == ["llm_call_start:1"]
+    assert chat_request_wrapper.llm_call_start_calls == [
+        [
+            {"role": "human", "content": "Hello"},
+            {
+                "role": "ai",
+                "content": "",
+                "tool_calls": [{"name": "search", "args": {"query": "labs"}}],
+            },
+        ]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_model_end_yields_llm_call_end_unconditionally(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """The llm_call end event must fire even when debug logging is disabled --
+    unlike the pre-existing debug-only messages-log chunk emitted later in the
+    same handler."""
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=False
+    )
+
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    async for _ in manager._handle_on_chat_model_start(
+        event=start_event,
+        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+        request_information=request_information,
+    ):
+        pass
+
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="Hi there!")},
+        },
+    )
+    async for _ in manager._handle_on_chat_model_stream(
+        event=stream_event,
+        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+        request_information=request_information,
+    ):
+        pass
+
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {"event": "on_chat_model_end", "data": {"input": {"messages": []}}},
+    )
+    chunks = [
+        chunk
+        async for chunk in manager._handle_on_chat_model_end(
+            event=end_event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+        )
+    ]
+
+    assert chunks == ["llm_call_end:1"]
+    assert chat_request_wrapper.llm_call_end_calls == ["Hi there!"]
