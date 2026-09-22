@@ -70,6 +70,43 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
+def _extract_input_messages(
+    event: StandardStreamEvent | CustomStreamEvent,
+) -> list[BaseMessage]:
+    """The exact message list LangGraph is about to send/just sent to the
+    model for one invocation -- shared by the llm_call start/end handlers
+    and the debug messages-log handler below (BAI-882)."""
+    data: EventData = event["data"] if "data" in event else {}
+    input_messages_list: list[list[BaseMessage]] = cast(
+        list[list[BaseMessage]],
+        cast(dict[str, Any], data.get("input", {})).get("messages", []),
+    )
+    return input_messages_list[0] if input_messages_list else []
+
+
+def _serialize_messages_for_llm_call(
+    messages: list[BaseMessage],
+) -> list[Dict[str, Any]]:
+    """Turn LangChain messages into plain dicts for the llm_call SSE event's
+    ``request`` field -- a debugging UI's own JSON, not tied to any
+    LangChain/OpenAI wire format (BAI-882)."""
+    serialized: list[Dict[str, Any]] = []
+    for message in messages:
+        entry: Dict[str, Any] = {
+            "role": message.type,
+            "content": format_message_content(message.content),
+        }
+        if message.name:
+            entry["name"] = message.name
+        if isinstance(message, AIMessage) and message.tool_calls:
+            entry["tool_calls"] = [
+                {"name": tc.get("name", "unknown"), "args": tc.get("args", {})}
+                for tc in message.tool_calls
+            ]
+        serialized.append(entry)
+    return serialized
+
+
 class LangGraphStreamingManager(StreamContextMixin):
     """
     Dispatches LangGraph streaming events into OpenAI-compatible SSE chunks.
@@ -331,7 +368,15 @@ class LangGraphStreamingManager(StreamContextMixin):
         # no guaranteed whitespace against what was already streamed -- see
         # StreamBufferManager.mark_new_invocation_boundary.
         self._stream_buffer_manager.mark_new_invocation_boundary()
-        yield None
+
+        # Emitted unconditionally (not gated by enable_debug_logging) so a
+        # debugging UI can show every individual model invocation in a turn,
+        # not just the turn-level response.created/completed pair (BAI-882).
+        input_messages = _extract_input_messages(event)
+        yield chat_request_wrapper.create_llm_call_start_sse_event(
+            request_id=request_information.request_id,
+            request_messages=_serialize_messages_for_llm_call(input_messages),
+        )
 
     async def _handle_on_chat_model_end(
         self,
@@ -340,17 +385,7 @@ class LangGraphStreamingManager(StreamContextMixin):
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        if not chat_request_wrapper.enable_debug_logging:
-            return
-
-        data: EventData = event["data"] if "data" in event else {}
-        input_messages_list: list[list[BaseMessage]] = cast(
-            list[list[BaseMessage]],
-            cast(dict[str, Any], data.get("input", {})).get("messages", []),
-        )
-        input_messages: list[BaseMessage] = (
-            input_messages_list[0] if input_messages_list else []
-        )
+        input_messages = _extract_input_messages(event)
         streamed_output_record: StreamedOutput | None = (
             self._stream_debug_output_manager.pop_streamed_output()
         )
@@ -359,6 +394,18 @@ class LangGraphStreamingManager(StreamContextMixin):
             if streamed_output_record and streamed_output_record.text_fragments
             else None
         )
+
+        # Emitted unconditionally, pairing with the llm_call start event
+        # above -- this single invocation's own response text, not the
+        # turn's accumulated output (BAI-882).
+        yield chat_request_wrapper.create_llm_call_end_sse_event(
+            request_id=request_information.request_id,
+            response_text=streamed_output,
+        )
+
+        if not chat_request_wrapper.enable_debug_logging:
+            return
+
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""

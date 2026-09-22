@@ -56,6 +56,51 @@ def _truncate_for_trace(
     return text[:max_chars] + f"...[truncated {len(text) - max_chars} chars]"
 
 
+def _extract_structured_output(artifact: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """Pull the tool's own MCP ``structuredContent`` out of a ToolMessage's
+    ``artifact``, for the ``structured_output`` SSE field (BAI-879/BAI-882).
+
+    ``artifact`` has one of two shapes depending on which tool produced it:
+    a regular MCP tool binding (``create_langchain_tool``) sets it directly
+    to ``call_tool_result.structured_content``, while the ``call_tool``
+    meta-tool wraps its own result in ``{"is_error": ..., "result": ...,
+    "structured_content": {...}}``. Detect the meta-tool shape by the
+    envelope key's presence (not by whether the nested value happens to be a
+    dict) -- a meta-tool call that succeeded without returning MCP
+    structuredContent has ``structured_content: None``, and must resolve to
+    "no structured output" rather than falling through to the whole
+    envelope (including its untruncated ``result``).
+
+    The result is size-capped the same way ``output`` is via
+    ``_truncate_for_trace``, since a tool's structured payload can be
+    arbitrarily large and this rides on every tool_end SSE event.
+    """
+    if not isinstance(artifact, dict):
+        return None
+    if "structured_content" in artifact:
+        nested = artifact.get("structured_content")
+        structured = nested if isinstance(nested, dict) else None
+    else:
+        structured = artifact
+    if structured is None:
+        return None
+    try:
+        serialized = json.dumps(structured)
+    except (TypeError, ValueError):
+        # Non-JSON-serializable structured content shouldn't happen for a
+        # spec-compliant MCP structuredContent payload, but falling back to
+        # returning it unchanged here would defeat the size cap below for
+        # exactly the payloads most likely to be unbounded (e.g. an object
+        # graph containing something non-serializable). Fail closed instead.
+        return {"_truncated": True, "_unserializable": True}
+    if len(serialized) <= TOOL_END_OUTPUT_TRACE_MAX_CHARS:
+        return structured
+    return {
+        "_truncated": True,
+        "original_size_chars": len(serialized),
+    }
+
+
 class ToolEventHandler(StreamContextMixin):
     def __init__(
         self,
@@ -214,6 +259,7 @@ class ToolEventHandler(StreamContextMixin):
                 if tool_message_content
                 else None,
                 is_error=is_error,
+                structured_output=_extract_structured_output(artifact),
             )
             if tool_end_event:
                 yield tool_end_event
@@ -271,8 +317,18 @@ class ToolEventHandler(StreamContextMixin):
                     if mcp_app_event:
                         yield mcp_app_event
 
+            # `is_error` (not `artifact is not None`): before BAI-882, `artifact`
+            # was always None for an ordinary MCP tool (langchain_adapter.py's
+            # call_tool returned (content, None)), so this branch only ever
+            # fired outside debug mode for the call_tool meta-tool's own error
+            # artifact. Now that ordinary tools carry their MCP
+            # structuredContent as `artifact` too, `artifact is not None` would
+            # write-to-file and inject an unrequested download-link message
+            # into every non-debug user's normal chat output whenever a tool
+            # simply succeeds with structured content -- `is_error` preserves
+            # the original error-reporting intent without that false positive.
             if self._environment_variables.write_tool_output_to_file and (
-                chat_request_wrapper.enable_debug_logging or artifact is not None
+                chat_request_wrapper.enable_debug_logging or is_error
             ):
                 if self._environment_variables.log_input_and_output:
                     logger.debug(

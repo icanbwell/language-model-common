@@ -311,6 +311,7 @@ class ChatRequestWrapper(abc.ABC):
         runtime_seconds: float | None,
         output: str | None = None,
         is_error: bool = False,
+        structured_output: dict[str, Any] | None = None,
     ) -> str | None:
         """Emit an SSE event when a tool finishes execution.
 
@@ -318,11 +319,51 @@ class ChatRequestWrapper(abc.ABC):
         plain string and truncated by the caller) and ``is_error`` reflects the
         underlying ToolMessage's status, so consumers can distinguish a tool
         that ran to completion from one that failed without having to parse
-        free-text content.
+        free-text content. ``structured_output`` is the tool's own structured
+        result (an MCP ``structuredContent``/artifact dict), included whenever
+        the tool returned one, independent of debug-logging settings.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured tool events (e.g. Responses API) override this
         to emit a typed SSE frame the client can use for status updates.
+        """
+        return None
+
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]],
+    ) -> str | None:
+        """Emit an SSE event when the model begins one individual invocation.
+
+        A single turn can invoke the model more than once (e.g. an initial
+        call, a tool call, then a follow-up call with the tool result) --
+        this fires once per invocation, not once per turn, so a debugging UI
+        can show each call distinctly. ``request_messages`` is the exact
+        message list sent to the model for this invocation.
+
+        The default implementation returns None (no-op).  Subclasses that
+        support structured events (e.g. Responses API) override this to emit
+        a typed SSE frame the client can use for debugging.
+        """
+        return None
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+    ) -> str | None:
+        """Emit an SSE event when one individual model invocation finishes.
+
+        Pairs with ``create_llm_call_start_sse_event``. ``response_text`` is
+        the model's own streamed output text for that single invocation, not
+        the accumulated text across the whole turn.
+
+        The default implementation returns None (no-op).  Subclasses that
+        support structured events (e.g. Responses API) override this to emit
+        a typed SSE frame the client can use for debugging.
         """
         return None
 
