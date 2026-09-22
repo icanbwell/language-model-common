@@ -1232,6 +1232,7 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         store: BaseStore | None,
         checkpointer: BaseCheckpointSaver[str] | None,
         system_prompts: List[PromptConfig] | None = None,
+        additional_middleware: Sequence[AgentMiddleware] | None = None,
     ) -> CompiledStateGraph[MyMessagesState]:
         """
         Create a graph for the language model asynchronously.
@@ -1247,6 +1248,11 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             system_prompts: Optional list of PromptConfig objects. Each becomes a
                 separate content block in the system message. Blocks with cache=True
                 are marked for prompt caching (cache_control: ephemeral).
+            additional_middleware: Caller-supplied `AgentMiddleware` instances
+                (e.g. a message-shrinking hook) appended after this converter's
+                own middleware (`HistoryCacheMiddleware`). Order matters:
+                middleware compose with the first entry as the outermost layer,
+                so caller-supplied middleware runs inside this converter's own.
         """
         prompt: SystemMessage | None = None
         if system_prompts:
@@ -1284,6 +1290,8 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         middleware: list[AgentMiddleware] = []
         if self.environment_variables.enable_history_prompt_caching:
             middleware.append(HistoryCacheMiddleware())
+        if additional_middleware:
+            middleware.extend(additional_middleware)
 
         react_agent_runnable = create_agent(
             model=llm,
