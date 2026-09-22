@@ -480,6 +480,24 @@ class LangGraphStreamingManager(StreamContextMixin):
             )
             if chunk:
                 yield chunk
+        elif name == "tool_result_compacted":
+            # BAI-904: baileyai's OldToolResultTruncator dispatches this when
+            # it truncates an old tool result before resending it to the
+            # model. No dedicated SSE event type -- render it as inline chat
+            # text via the same buffer/create_sse_message path
+            # handle_tool_start uses for tool-run messages, so it appears as
+            # an ordinary progress bubble with zero frontend changes.
+            content_text = "\n\n🗜️ Compressing conversation history...\n\n"
+            buffered_chunk = await self._stream_buffer_manager.buffer_content(
+                content_text=content_text,
+            )
+            if buffered_chunk:
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_information.request_id,
+                    content=buffered_chunk,
+                    usage_metadata=None,
+                    source="on_custom_event",
+                )
         else:
             logger.debug("Skipped custom event: %s", name)
 

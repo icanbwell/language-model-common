@@ -252,6 +252,43 @@ async def test_custom_event_mcp_tool_heartbeat_forwards_to_wrapper(
 
 
 @pytest.mark.asyncio
+async def test_custom_event_tool_result_compacted_yields_inline_chat_text(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """BAI-904: baileyai's OldToolResultTruncator dispatches this custom event
+    when it truncates an old tool result before resending it to the model.
+    There's no dedicated SSE event type for it -- it must render as an inline
+    chat-text bubble via create_sse_message, the same path tool-run messages
+    use, so it needs zero frontend changes.
+    """
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=False)
+
+    event = cast(
+        CustomStreamEvent,
+        {
+            "event": "on_custom_event",
+            "name": "tool_result_compacted",
+            "data": {"tool_name": "search_records", "estimated_tokens": 4096},
+        },
+    )
+
+    chunks = [
+        chunk
+        async for chunk in manager.handle_langchain_event(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+            tool_start_times={},
+        )
+    ]
+
+    assert len(chunks) == 1
+    assert "Compressing conversation history" in chunks[0]
+
+
+@pytest.mark.asyncio
 async def test_resuming_after_tool_call_inserts_missing_separator(
     streaming_manager_factory: Callable[[], LangGraphStreamingManager],
 ) -> None:

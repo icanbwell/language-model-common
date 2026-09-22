@@ -801,3 +801,421 @@ class TestExtractStructuredOutput:
         artifact = {"data": object()}
         result = _extract_structured_output(artifact)
         assert result == {"_truncated": True, "_unserializable": True}
+
+
+class TestLearnRuntimeToolTitles:
+    """BAI-903: search_tools/call_tool results carry titles for MCP tools
+    dispatched via the discovery call_tool meta-tool, which are never bound
+    as tool objects on this side. handle_tool_end must learn them into the
+    active per-request ToolDisplayNameMapper.
+    """
+
+    @pytest.mark.asyncio
+    async def test_learns_titles_from_search_tools_result(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        # search_tools is a remote MCP meta-tool bound via
+                        # create_langchain_tool, so its content is a list of
+                        # LangChain content blocks (never a plain str) -- see
+                        # ToolMessage docs and how convert_call_tool_result
+                        # populates .content elsewhere in this codebase.
+                        content=[
+                            {
+                                "type": "text",
+                                "text": (
+                                    '[{"name": "start_onboarding", '
+                                    '"title": "🚀 Start Onboarding", '
+                                    '"description": "..."}]'
+                                ),
+                            }
+                        ],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            == "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_learns_title_from_call_tool_result(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "call_tool",
+                "data": {
+                    "input": {"name": "start_onboarding", "arguments": {}},
+                    "output": ToolMessage(
+                        content="Onboarding started.",
+                        tool_call_id="tc2",
+                        name="call_tool",
+                        artifact={
+                            "is_error": False,
+                            "result": "Onboarding started.",
+                            "structured_content": {
+                                "result": "Onboarding started.",
+                                "tool_title": "🚀 Start Onboarding",
+                            },
+                        },
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            == "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_mutate_process_wide_singleton_when_no_request_mapper(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        """No per-request mapper on RequestInformation (falls back to the
+        singleton in _resolve_display_name_mapper) must not learn titles
+        onto that shared instance -- would leak across concurrent requests.
+        """
+        request_information = RequestInformation(request_id="req-1")
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        content=[
+                            {
+                                "type": "text",
+                                "text": '[{"name": "start_onboarding", "title": "🚀 Start Onboarding"}]',
+                            }
+                        ],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        assert request_information.tool_display_name_mapper is None
+        assert (
+            tool_event_handler._tool_display_name_mapper.get_display_name(
+                tool_name="start_onboarding"
+            )
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_does_not_mutate_singleton_when_request_mapper_is_the_singleton(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        """A caller may mistakenly assign the process-wide singleton mapper
+        directly onto RequestInformation instead of using
+        ToolDisplayNameMapper.with_tools(). Even then, this must not learn
+        titles onto it -- that shared instance is reused across concurrent
+        requests.
+        """
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=tool_event_handler._tool_display_name_mapper,
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        content=[
+                            {
+                                "type": "text",
+                                "text": '[{"name": "start_onboarding", "title": "🚀 Start Onboarding"}]',
+                            }
+                        ],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        assert (
+            tool_event_handler._tool_display_name_mapper.get_display_name(
+                tool_name="start_onboarding"
+            )
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_learning_on_error(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "call_tool",
+                "data": {
+                    "input": {"name": "start_onboarding", "arguments": {}},
+                    "output": ToolMessage(
+                        content="Tool 'start_onboarding' not found.",
+                        tool_call_id="tc2",
+                        name="call_tool",
+                        artifact={
+                            "is_error": True,
+                            "result": "Tool 'start_onboarding' not found.",
+                            "structured_content": {
+                                "tool_title": "🚀 Start Onboarding",
+                            },
+                        },
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert "Start Onboarding" in mapper.get_display_name(
+            tool_name="start_onboarding"
+        )
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_tools_result_that_is_not_json_does_not_raise(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        """A tool-catalog server response that isn't valid JSON (e.g. a
+        plain-text error page, or the display-oriented Python repr this PR
+        previously fed json.loads() by mistake) must be skipped, not raise."""
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        content=[{"type": "text", "text": "not json"}],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_tools_result_that_is_a_json_object_not_a_list_is_ignored(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "search_tools",
+                "data": {
+                    "input": {"query": "onboarding"},
+                    "output": ToolMessage(
+                        content=[
+                            {
+                                "type": "text",
+                                "text": '{"name": "start_onboarding", "title": "🚀 Start Onboarding"}',
+                            }
+                        ],
+                        tool_call_id="tc1",
+                        name="search_tools",
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            != "🚀 Start Onboarding"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_result_missing_structured_content_is_ignored(
+        self, tool_event_handler: ToolEventHandler
+    ) -> None:
+        """The call_tool meta-tool can succeed without any MCP
+        structuredContent (structured_content: None) -- title learning must
+        no-op, not raise, for that shape."""
+        request_information = RequestInformation(
+            request_id="req-1",
+            tool_display_name_mapper=ToolDisplayNameMapper(),
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "call_tool",
+                "data": {
+                    "input": {"name": "start_onboarding", "arguments": {}},
+                    "output": ToolMessage(
+                        content="Onboarding started.",
+                        tool_call_id="tc2",
+                        name="call_tool",
+                        artifact={
+                            "is_error": False,
+                            "result": "Onboarding started.",
+                            "structured_content": None,
+                        },
+                    ),
+                },
+            },
+        )
+        chat_request_wrapper = cast(
+            ChatRequestWrapper,
+            _FakeChatRequestWrapper(enable_debug_logging=False),
+        )
+
+        async for _ in tool_event_handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+            tool_start_times={},
+        ):
+            pass
+
+        mapper = request_information.tool_display_name_mapper
+        assert mapper is not None
+        assert (
+            mapper.get_display_name(tool_name="start_onboarding")
+            != "🚀 Start Onboarding"
+        )
