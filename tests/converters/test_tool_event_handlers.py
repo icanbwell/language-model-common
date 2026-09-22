@@ -30,6 +30,7 @@ class _FakeChatRequestWrapper:
         self.enable_debug_logging = enable_debug_logging
         self.last_tool_end_output: str | None = None
         self.last_tool_end_is_error: bool = False
+        self.last_tool_end_structured_output: dict[str, Any] | None = None
         self.image_output_events: list[dict[str, Any]] = []
 
     def create_sse_message(
@@ -56,9 +57,11 @@ class _FakeChatRequestWrapper:
         runtime_seconds: Any,
         output: str | None = None,
         is_error: bool = False,
+        structured_output: dict[str, Any] | None = None,
     ) -> str | None:
         self.last_tool_end_output = output
         self.last_tool_end_is_error = is_error
+        self.last_tool_end_structured_output = structured_output
         return None
 
     def create_mcp_app_sse_event(self, **kwargs: Any) -> str | None:
