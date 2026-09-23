@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -42,6 +43,9 @@ class PromptLibraryManager:
         self._prompt_store = prompt_store
         self._resolved_path: str | None = None
         self._github_resolved: bool = False
+        # Guards _ensure_local_path's check-then-fetch against itself --
+        # see that method's docstring.
+        self._resolve_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def resolved_path(self) -> str | None:
@@ -54,28 +58,46 @@ class PromptLibraryManager:
         self._github_resolved = False
 
     async def _ensure_local_path(self) -> Path:
-        """Return a local filesystem Path, downloading from GitHub if needed."""
+        """Return a local filesystem Path, downloading from GitHub if needed.
+
+        Double-checked locking, mirroring `ConfigReader._read_base_models_async`'s
+        pattern: the cheap `_github_resolved` check happens outside the lock
+        so the common already-resolved path never contends on it; the lock
+        only serializes the rare first-time-resolution path so concurrent
+        calls before any resolution has happened (e.g. several prompt
+        lookups fired at once during startup) resolve exactly once instead
+        of each independently racing `resolve_github_path`'s advisory
+        download lock (BAI-933 -- the same race shape as BAI-932 in
+        mcp-fhir-agent's ClientScopedConfigReader)."""
         effective_path = self.resolved_path
         if effective_path is None or not str(effective_path).strip():
             raise ValueError("Prompt library path is not configured")
 
         if not self._github_resolved:
-            if GitHubDirectoryHelper.is_github_path(effective_path):
-                if self._github_directory_helper is None:
-                    raise RuntimeError(
-                        "GitHubDirectoryHelper is required to resolve GitHub paths"
-                    )
-                local_path = await self._github_directory_helper.resolve_github_path(
-                    effective_path
-                )
-                if local_path is None:
-                    raise FileNotFoundError(
-                        f"Download lock held — cannot resolve prompt path: "
-                        f"{effective_path}"
-                    )
-                self._resolved_path = str(local_path)
-                effective_path = self._resolved_path
-            self._github_resolved = True
+            async with self._resolve_lock:
+                effective_path = self.resolved_path
+                if effective_path is None or not str(effective_path).strip():
+                    raise ValueError("Prompt library path is not configured")
+                if not self._github_resolved:
+                    if GitHubDirectoryHelper.is_github_path(effective_path):
+                        if self._github_directory_helper is None:
+                            raise RuntimeError(
+                                "GitHubDirectoryHelper is required to resolve "
+                                "GitHub paths"
+                            )
+                        local_path = (
+                            await self._github_directory_helper.resolve_github_path(
+                                effective_path
+                            )
+                        )
+                        if local_path is None:
+                            raise FileNotFoundError(
+                                f"Download lock held — cannot resolve prompt path: "
+                                f"{effective_path}"
+                            )
+                        self._resolved_path = str(local_path)
+                        effective_path = self._resolved_path
+                    self._github_resolved = True
 
         return Path(str(effective_path)).expanduser()
 

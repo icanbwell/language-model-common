@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from pathlib import Path
 
@@ -121,3 +123,68 @@ async def test_seed_store_returns_zero_when_no_store(tmp_path: Path) -> None:
     )
     count = await manager.seed_store_from_filesystem()
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_two_source_refs_do_not_collide_on_same_prompt_name(
+    memory_store: MemoryStore,
+) -> None:
+    """BAI-933: without ref-hash scoping, two PromptStore instances pointed
+    at different source paths (e.g. two different `?ref=` versions, or two
+    unrelated prompt libraries) but sharing the same underlying store and
+    collection would silently read/overwrite each other's content for the
+    same prompt name."""
+    store_a = PromptStore(
+        store=memory_store, collection="prompts", source_ref="github://org/repo-a"
+    )
+    store_b = PromptStore(
+        store=memory_store, collection="prompts", source_ref="github://org/repo-b"
+    )
+
+    await store_a.put_prompt(name="greeting", content="from repo-a")
+    await store_b.put_prompt(name="greeting", content="from repo-b")
+
+    assert await store_a.get_prompt(name="greeting") == "from repo-a"
+    assert await store_b.get_prompt(name="greeting") == "from repo-b"
+
+
+@pytest.mark.asyncio
+async def test_no_source_ref_preserves_bare_name_key_backward_compat(
+    memory_store: MemoryStore,
+) -> None:
+    """Without a source_ref (existing callers), keys stay exactly the bare
+    prompt name -- unchanged from before this fix, so existing deployments
+    that haven't been updated to pass source_ref keep reading their
+    already-cached content under the same key."""
+    store = PromptStore(store=memory_store, collection="prompts")
+    await store.put_prompt(name="greeting", content="hello")
+
+    raw = await memory_store.get("greeting", collection="prompts")
+    assert raw is not None
+    assert raw["content"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_put_prompt_passes_ttl_to_underlying_store() -> None:
+    """BAI-933: prompt entries must carry a TTL so a new version of a
+    prompt pushed upstream is eventually picked up automatically, instead
+    of being cached forever until a manual clear()."""
+    fake_store = MagicMock()
+    fake_store.put = AsyncMock()
+    prompt_store = PromptStore(store=fake_store, collection="prompts", ttl_seconds=3600)
+
+    await prompt_store.put_prompt(name="greeting", content="hello")
+
+    fake_store.put.assert_awaited_once()
+    _, kwargs = fake_store.put.call_args
+    assert kwargs["ttl"] == 3600
+
+
+@pytest.mark.asyncio
+async def test_default_ttl_is_not_none(memory_store: MemoryStore) -> None:
+    """A PromptStore constructed with no explicit ttl_seconds must still
+    default to a real TTL, not cache forever -- permanent caching was the
+    root problem this fix addresses."""
+    store = PromptStore(store=memory_store, collection="prompts")
+    assert store._ttl_seconds is not None
+    assert store._ttl_seconds > 0

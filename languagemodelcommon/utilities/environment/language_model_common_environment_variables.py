@@ -202,6 +202,19 @@ class LanguageModelCommonEnvironmentVariables(
         return os.environ.get("PROMPT_STORE_COLLECTION", "prompts")
 
     @property
+    def prompt_store_ttl_seconds(self) -> int:
+        """TTL in seconds for prompt store entries.
+
+        Defaults to 3600 (1 hour). Before this existed, prompt entries were
+        cached forever (no TTL at all) -- a new prompt version pushed
+        upstream was never picked up without a manual store clear (BAI-933).
+        """
+        try:
+            return int(os.environ.get("PROMPT_STORE_TTL_SECONDS", "3600"))
+        except ValueError:
+            return 3600
+
+    @property
     def token_cache_schema_version(self) -> str:
         """Schema version for token cache entries.
 
