@@ -54,6 +54,7 @@ class GithubDirectoryDownloader:
         cache_path: Path,
         store: AsyncKeyValueProtocol | None = None,
         lock_ttl_seconds: int = 300,
+        log_diagnostics_on_not_found: bool = True,
     ) -> Path | None:
         """Download a github:// URI to a local directory.
 
@@ -65,6 +66,14 @@ class GithubDirectoryDownloader:
                 When provided, acquires a distributed lock before
                 downloading. Returns None if lock is held by another worker.
             lock_ttl_seconds: TTL for the advisory lock.
+            log_diagnostics_on_not_found: Whether a ``FileNotFoundError`` should
+                trigger the diagnostic re-probe (BAI-941). Set to ``False`` when
+                the caller already treats a missing path as an expected,
+                benign outcome (e.g. an optional per-client override directory
+                or an optional prompts folder that most repos simply don't
+                have) — otherwise every such lookup logs an ERROR and makes an
+                extra blocking GitHub API call for something that isn't a
+                failure at all.
 
         Returns:
             Resolved path to the downloaded content directory,
@@ -108,6 +117,7 @@ class GithubDirectoryDownloader:
                     source_path=source_path,
                     github_token=github_token,
                     target_dir=target_dir,
+                    log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
         else:
             self._do_download(
@@ -115,6 +125,7 @@ class GithubDirectoryDownloader:
                 source_path=source_path,
                 github_token=github_token,
                 target_dir=target_dir,
+                log_diagnostics_on_not_found=log_diagnostics_on_not_found,
             )
 
         return self._resolve_content_dir(target_dir=target_dir, source_path=source_path)
@@ -126,12 +137,14 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         self._download_with_retry(
             git_location=git_location,
             source_path=source_path,
             github_token=github_token,
             target_dir=target_dir,
+            log_diagnostics_on_not_found=log_diagnostics_on_not_found,
         )
 
     @staticmethod
@@ -155,6 +168,7 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         """Try the download up to ``_MAX_RETRIES`` times with exponential backoff.
 
@@ -169,6 +183,7 @@ class GithubDirectoryDownloader:
                     source_path=source_path,
                     github_token=github_token,
                     target_dir=target_dir,
+                    log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
                 return
             except FileNotFoundError:
@@ -289,6 +304,7 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         """Download remote content into *target_dir* using atomic swap."""
         pid = os.getpid()
@@ -323,7 +339,7 @@ class GithubDirectoryDownloader:
                     destination = staging_dir / Path(item_path).name
                     filesystem.get(item_path, str(destination), recursive=True)
         except (ValueError, FileNotFoundError) as exc:
-            if isinstance(exc, FileNotFoundError):
+            if isinstance(exc, FileNotFoundError) and log_diagnostics_on_not_found:
                 self._log_fetch_failure_diagnostics(
                     git_location=git_location,
                     source_path=source_path,

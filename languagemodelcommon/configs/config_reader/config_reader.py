@@ -317,7 +317,9 @@ class ConfigReader:
         if override_path is None:
             return []
         try:
-            return await self.read_models_from_path_async(config_path=override_path)
+            return await self.read_models_from_path_async(
+                config_path=override_path, log_diagnostics_on_not_found=False
+            )
         except (FileNotFoundError, ValueError) as e:
             if "FileNotFoundError" in str(e) or isinstance(e, FileNotFoundError):
                 logger.debug(
@@ -336,8 +338,18 @@ class ConfigReader:
             return []
 
     async def read_models_from_path_async(
-        self, *, config_path: str, exclude_dirs: set[str] | None = None
+        self,
+        *,
+        config_path: str,
+        exclude_dirs: set[str] | None = None,
+        log_diagnostics_on_not_found: bool = True,
     ) -> List[ChatModelConfig]:
+        """
+        log_diagnostics_on_not_found (BAI-941): pass ``False`` when a missing
+        ``config_path`` is an expected, benign outcome for this caller (e.g.
+        an optional per-client override) rather than a genuine failure worth
+        the diagnostic re-probe/ERROR log.
+        """
         models: List[ChatModelConfig]
         local_config_path: str = config_path
         if config_path.startswith("s3"):
@@ -349,7 +361,8 @@ class ConfigReader:
             )
         elif GitHubDirectoryHelper.is_github_path(config_path):
             resolved = await self._github_directory_helper.resolve_github_path(
-                config_path
+                config_path,
+                log_diagnostics_on_not_found=log_diagnostics_on_not_found,
             )
             if resolved is None:
                 logger.info(
@@ -695,7 +708,7 @@ class ConfigReader:
             )
             try:
                 local_path = await self._github_directory_helper.resolve_github_path(
-                    prompts_uri
+                    prompts_uri, log_diagnostics_on_not_found=False
                 )
                 if local_path is None:
                     return None
