@@ -42,8 +42,8 @@ class PromptStore:
         self._ref_hash = self._compute_ref_hash(source_ref) if source_ref else None
         self._ttl_seconds = ttl_seconds
 
-    @classmethod
-    def _compute_ref_hash(cls, source_ref: str) -> str:
+    @staticmethod
+    def _compute_ref_hash(source_ref: str) -> str:
         return hashlib.sha256(source_ref.encode("utf-8")).hexdigest()[:12]
 
     def _key(self, name: str) -> str:
