@@ -65,3 +65,16 @@ class RequestInformation(BaseModel):
         default=None,
         description="Optional mapper for friendly tool display names in streaming output.",
     )
+
+    compaction_notice_shown: bool = Field(
+        default=False,
+        description=(
+            "Whether the tool_result_compacted UI notice has already been "
+            "surfaced for this request. OldToolResultTruncator re-truncates "
+            "and re-dispatches tool_result_compacted on every model call for "
+            "as long as a message stays outside its keep-recent window, so "
+            "this flag (scoped to this per-request RequestInformation "
+            "instance, not the singleton LangGraphStreamingManager) limits "
+            "the user-visible notice to once per request (BAI-920)."
+        ),
+    )
