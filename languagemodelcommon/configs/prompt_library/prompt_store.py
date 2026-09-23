@@ -1,9 +1,9 @@
-import hashlib
 import logging
 from typing import Any
 
 from key_value.aio.stores.base import BaseDestroyCollectionStore, BaseStore
 
+from languagemodelcommon.utilities.ref_hash import compute_short_ref_hash
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class PromptStore:
     ) -> None:
         self._store = store
         self._collection = collection
-        self._ref_hash = self._compute_ref_hash(source_ref) if source_ref else None
+        self._ref_hash = compute_short_ref_hash(source_ref) if source_ref else None
         # A non-positive value (e.g. an operator setting PROMPT_STORE_TTL_SECONDS=0,
         # a natural way to try to disable caching) would otherwise crash every
         # put_prompt call: py-key-value-aio's BaseStore.put raises InvalidTTLError
@@ -47,10 +47,6 @@ class PromptStore:
         # McpToolListStore already applies to the identical put(..., ttl=...) call
         # shape.
         self._ttl_seconds = ttl_seconds if ttl_seconds and ttl_seconds > 0 else None
-
-    @staticmethod
-    def _compute_ref_hash(source_ref: str) -> str:
-        return hashlib.sha256(source_ref.encode("utf-8")).hexdigest()[:12]
 
     def _key(self, name: str) -> str:
         if self._ref_hash is None:

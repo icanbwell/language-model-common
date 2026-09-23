@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 
 from pathlib import Path
@@ -26,6 +25,7 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
+from languagemodelcommon.utilities.ref_hash import compute_short_ref_hash
 from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
 from languagemodelcommon.configs.config_reader.mcp_json_reader import (
     resolve_mcp_servers_from_plugins,
@@ -151,19 +151,8 @@ class ConfigReader:
             )
             return models
 
-    @staticmethod
-    def _config_ref_hash(*, config_path: str) -> str:
-        """Short hash identifying the config source (including its ref/tag).
-
-        Scopes cache keys by source so that pods on different config refs
-        (e.g. mid-rollout, where an old pod's MODELS_OFFICIAL_PATH still
-        points at a stale ref) never read or write each other's cached
-        content under the same key -- see BAI-720.
-        """
-        return hashlib.sha256(config_path.encode("utf-8")).hexdigest()[:12]
-
     def _model_config_cache_key(self, *, config_path: str, model_name: str) -> str:
-        ref_hash = self._config_ref_hash(config_path=config_path)
+        ref_hash = compute_short_ref_hash(config_path)
         return f"v{self.SCHEMA_VERSION}:{ref_hash}:{model_name}"
 
     async def _read_from_model_config_cache(
@@ -180,7 +169,7 @@ class ConfigReader:
         """
         if not self._model_config_cache_store:
             return None
-        ref_hash = self._config_ref_hash(config_path=config_path)
+        ref_hash = compute_short_ref_hash(config_path)
         prefix = f"v{self.SCHEMA_VERSION}:{ref_hash}:"
         model_keys = await self._get_cache_keys_by_prefix(prefix=prefix)
         if not model_keys:
