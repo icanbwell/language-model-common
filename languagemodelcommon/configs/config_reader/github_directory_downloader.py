@@ -8,11 +8,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import fsspec  # type: ignore[import-untyped]
+import httpx
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
 from languagemodelcommon.utilities.cache.advisory_lock import AdvisoryLock
 
 logger = logging.getLogger(__name__)
+
+_GITHUB_API_BASE = "https://api.github.com"
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +194,57 @@ class GithubDirectoryDownloader:
             f"({token_status}): [{exc_type}] {last_exc}"
         ) from last_exc
 
+    def _log_fetch_failure_diagnostics(
+        self, *, git_location: GitLocation, github_token: str | None
+    ) -> None:
+        """Best-effort re-probe of the request fsspec just made.
+
+        fsspec's ``GithubFileSystem`` collapses any non-2xx response from the
+        ``git/trees/{sha}`` endpoint that returns HTTP 404 into a bare
+        ``FileNotFoundError`` -- with no status code, rate-limit headers, or
+        response body attached (BAI-941). GitHub returns that same 404 both
+        for a genuinely missing ref/path AND for a private repo the caller's
+        credentials can't see, so the bare exception is ambiguous. This redoes
+        the same request outside fsspec purely to log what GitHub actually
+        said, since fsspec has already discarded it by the time we get here.
+        """
+        sha = git_location.branch or "HEAD"
+        url = (
+            f"{_GITHUB_API_BASE}/repos/{git_location.owner}/{git_location.repository}"
+            f"/git/trees/{sha}"
+        )
+        # Mirrors fsspec.implementations.github.GithubFileSystem.kw: HTTP Basic
+        # Auth with the token as the password, not a Bearer header — must match
+        # exactly what fsspec just sent, or the probe answers a different question.
+        auth = (self._github_token_username, github_token) if github_token else None
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(url, auth=auth)
+        except Exception as probe_exc:
+            logger.error(
+                "GitHub download diagnostic probe failed for %s: [%s] %s",
+                url,
+                type(probe_exc).__name__,
+                probe_exc,
+            )
+            return
+        try:
+            body_message = response.json().get("message")
+        except Exception:
+            body_message = response.text[:200]
+        logger.error(
+            "GitHub download hit FileNotFoundError for %s (token_set=%s, "
+            "token_len=%s) — probe response: status=%s "
+            "rate_limit_remaining=%s rate_limit_reset=%s body_message=%r",
+            url,
+            bool(github_token),
+            len(github_token) if github_token else 0,
+            response.status_code,
+            response.headers.get("X-RateLimit-Remaining"),
+            response.headers.get("X-RateLimit-Reset"),
+            body_message,
+        )
+
     def _fetch_to_directory(
         self,
         *,
@@ -231,7 +285,11 @@ class GithubDirectoryDownloader:
                         continue
                     destination = staging_dir / Path(item_path).name
                     filesystem.get(item_path, str(destination), recursive=True)
-        except (ValueError, FileNotFoundError):
+        except (ValueError, FileNotFoundError) as exc:
+            if isinstance(exc, FileNotFoundError):
+                self._log_fetch_failure_diagnostics(
+                    git_location=git_location, github_token=github_token
+                )
             shutil.rmtree(staging_dir, ignore_errors=True)
             raise
         except Exception as exc:

@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -574,3 +575,149 @@ async def test_fetch_passes_skip_instance_cache_for_pinned_ref(
         "token": "token-value",
         "skip_instance_cache": True,
     }
+
+
+class _FakeGithubTreesResponse:
+    """Mimics an httpx.Response for the git/trees probe (BAI-941)."""
+
+    def __init__(
+        self, *, status_code: int, headers: dict[str, str], body: dict[str, str]
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers
+        self._body = body
+        self.text = json.dumps(body)
+
+    def json(self) -> dict[str, str]:
+        return self._body
+
+
+class _FakeHttpxClient:
+    """Records the probe request and returns a canned 404 response."""
+
+    captured_url: str | None = None
+    captured_auth: Any = None
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def __enter__(self) -> "_FakeHttpxClient":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+    def get(self, url: str, auth: Any = None) -> _FakeGithubTreesResponse:
+        type(self).captured_url = url
+        type(self).captured_auth = auth
+        return _FakeGithubTreesResponse(
+            status_code=404,
+            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1790000000"},
+            body={"message": "Not Found"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_file_not_found_logs_diagnostic_probe(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """BAI-941: a bare FileNotFoundError from fsspec is ambiguous -- GitHub
+    returns the same 404 for a missing ref/path and for a private repo the
+    caller's credentials can't see. On that failure we must re-probe the same
+    git/trees endpoint outside fsspec and log what GitHub actually said,
+    since fsspec discards the real response before raising."""
+    cache_path = tmp_path / "cache"
+
+    class _FakeGithubFilesystem:
+        def get(
+            self, remote_path: str, local_path: str, recursive: bool = False
+        ) -> None:
+            raise FileNotFoundError(remote_path)
+
+        def ls(self, path: str, detail: bool = False) -> list[str]:
+            raise FileNotFoundError(path)
+
+    def _fake_filesystem(protocol: str, **storage_options: object) -> Any:
+        assert protocol == "github"
+        return _FakeGithubFilesystem()
+
+    downloader = GithubDirectoryDownloader()
+
+    with (
+        patch(
+            "languagemodelcommon.configs.config_reader.github_directory_downloader.fsspec.filesystem",
+            side_effect=_fake_filesystem,
+        ),
+        patch(
+            "languagemodelcommon.configs.config_reader.github_directory_downloader.httpx.Client",
+            _FakeHttpxClient,
+        ),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(FileNotFoundError),
+    ):
+        await downloader.download(
+            source_uri="github://icanbwell/baileyai-configuration/mcp-fhir-agent/configs/official?ref=prod",
+            github_token="minted-installation-token",
+            cache_path=cache_path,
+        )
+
+    assert (
+        _FakeHttpxClient.captured_url
+        == "https://api.github.com/repos/icanbwell/baileyai-configuration/git/trees/prod"
+    )
+    assert _FakeHttpxClient.captured_auth == (
+        "x-access-token",
+        "minted-installation-token",
+    )
+    assert "status=404" in caplog.text
+    assert "token_set=True" in caplog.text
+    assert "rate_limit_remaining=0" in caplog.text
+    assert "Not Found" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_file_not_found_diagnostic_probe_survives_its_own_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The diagnostic probe is best-effort: if the re-probe request itself
+    fails (e.g. network blip), the original FileNotFoundError must still
+    propagate rather than being masked by the probe's own exception."""
+    cache_path = tmp_path / "cache"
+
+    class _FakeGithubFilesystem:
+        def get(
+            self, remote_path: str, local_path: str, recursive: bool = False
+        ) -> None:
+            raise FileNotFoundError(remote_path)
+
+        def ls(self, path: str, detail: bool = False) -> list[str]:
+            raise FileNotFoundError(path)
+
+    def _fake_filesystem(protocol: str, **storage_options: object) -> Any:
+        assert protocol == "github"
+        return _FakeGithubFilesystem()
+
+    def _raise_probe_error(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("probe network blip")
+
+    downloader = GithubDirectoryDownloader()
+
+    with (
+        patch(
+            "languagemodelcommon.configs.config_reader.github_directory_downloader.fsspec.filesystem",
+            side_effect=_fake_filesystem,
+        ),
+        patch(
+            "languagemodelcommon.configs.config_reader.github_directory_downloader.httpx.Client",
+            side_effect=_raise_probe_error,
+        ),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(FileNotFoundError),
+    ):
+        await downloader.download(
+            source_uri="github://icanbwell/baileyai-configuration/mcp-fhir-agent/configs/official?ref=prod",
+            github_token="minted-installation-token",
+            cache_path=cache_path,
+        )
+
+    assert "diagnostic probe failed" in caplog.text
