@@ -496,19 +496,21 @@ class LangGraphStreamingManager(StreamContextMixin):
             # singleton shared across concurrent requests, so dedup state
             # can't live on self; request_information is constructed fresh
             # per request, so that's where the "already shown" flag lives.
-            if not request_information.compaction_notice_shown:
-                request_information.compaction_notice_shown = True
-                content_text = "\n\n🗜️ Compacting conversation history...\n\n"
-                buffered_chunk = await self._stream_buffer_manager.buffer_content(
-                    content_text=content_text,
+            if request_information.compaction_notice_shown:
+                return
+
+            request_information.compaction_notice_shown = True
+            content_text = "\n\n🗜️ Compacting conversation history...\n\n"
+            buffered_chunk = await self._stream_buffer_manager.buffer_content(
+                content_text=content_text,
+            )
+            if buffered_chunk:
+                yield chat_request_wrapper.create_sse_message(
+                    request_id=request_information.request_id,
+                    content=buffered_chunk,
+                    usage_metadata=None,
+                    source="on_custom_event",
                 )
-                if buffered_chunk:
-                    yield chat_request_wrapper.create_sse_message(
-                        request_id=request_information.request_id,
-                        content=buffered_chunk,
-                        usage_metadata=None,
-                        source="on_custom_event",
-                    )
         else:
             logger.debug("Skipped custom event: %s", name)
 
