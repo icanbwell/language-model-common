@@ -188,3 +188,29 @@ async def test_default_ttl_is_not_none(memory_store: MemoryStore) -> None:
     store = PromptStore(store=memory_store, collection="prompts")
     assert store._ttl_seconds is not None
     assert store._ttl_seconds > 0
+
+
+@pytest.mark.parametrize("non_positive_ttl", [0, -1, -3600])
+@pytest.mark.asyncio
+async def test_non_positive_ttl_is_sanitized_to_no_expiry(
+    non_positive_ttl: int,
+) -> None:
+    """PR #108 review finding: PROMPT_STORE_TTL_SECONDS=0 or negative (a
+    natural way for an operator to try to disable caching) must not crash
+    every prompt write. py-key-value-aio's BaseStore.put raises
+    InvalidTTLError for ttl <= 0 -- the sibling McpToolListStore already
+    guards the identical put(..., ttl=...) call shape
+    (ttl_seconds if ttl_seconds and ttl_seconds > 0 else None); PromptStore
+    must apply the same sanitization rather than forwarding a non-positive
+    value straight through."""
+    fake_store = MagicMock()
+    fake_store.put = AsyncMock()
+    prompt_store = PromptStore(
+        store=fake_store, collection="prompts", ttl_seconds=non_positive_ttl
+    )
+
+    await prompt_store.put_prompt(name="greeting", content="hello")
+
+    fake_store.put.assert_awaited_once()
+    _, kwargs = fake_store.put.call_args
+    assert kwargs["ttl"] is None

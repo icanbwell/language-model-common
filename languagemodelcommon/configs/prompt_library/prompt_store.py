@@ -40,7 +40,13 @@ class PromptStore:
         self._store = store
         self._collection = collection
         self._ref_hash = self._compute_ref_hash(source_ref) if source_ref else None
-        self._ttl_seconds = ttl_seconds
+        # A non-positive value (e.g. an operator setting PROMPT_STORE_TTL_SECONDS=0,
+        # a natural way to try to disable caching) would otherwise crash every
+        # put_prompt call: py-key-value-aio's BaseStore.put raises InvalidTTLError
+        # for ttl <= 0. Treat it as "no expiry" instead -- same guard the sibling
+        # McpToolListStore already applies to the identical put(..., ttl=...) call
+        # shape.
+        self._ttl_seconds = ttl_seconds if ttl_seconds and ttl_seconds > 0 else None
 
     @staticmethod
     def _compute_ref_hash(source_ref: str) -> str:
