@@ -36,6 +36,12 @@ class GithubDirectoryDownloader:
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 2.0
     _PROBE_THROTTLE_SECONDS = 60.0
+    # _fetch_to_directory already runs synchronously on the caller's thread
+    # (called un-awaited from the async download()), so this probe blocks
+    # whatever event loop is running it too. Kept short deliberately -- this
+    # already-blocking chain must not also tie up the loop for a full 60s
+    # timeout on top of it.
+    _PROBE_TIMEOUT_SECONDS = 5.0
 
     def __init__(self) -> None:
         self._last_probed_at: dict[str, float] = {}
@@ -248,7 +254,7 @@ class GithubDirectoryDownloader:
         # exactly what fsspec just sent, or the probe answers a different question.
         auth = (self._github_token_username, github_token) if github_token else None
         try:
-            with httpx.Client(timeout=10) as client:
+            with httpx.Client(timeout=self._PROBE_TIMEOUT_SECONDS) as client:
                 response = client.get(url, params=params, auth=auth)
         except Exception as probe_exc:
             logger.error(
