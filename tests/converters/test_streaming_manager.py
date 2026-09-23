@@ -285,7 +285,57 @@ async def test_custom_event_tool_result_compacted_yields_inline_chat_text(
     ]
 
     assert len(chunks) == 1
-    assert "Compressing conversation history" in chunks[0]
+    assert "Compacting conversation history" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_custom_event_tool_result_compacted_notice_shown_once_per_request(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """BAI-920: OldToolResultTruncator has no cross-call memory and re-dispatches
+    tool_result_compacted on every subsequent model call for as long as a message
+    stays outside its keep-recent window, so a single request can see this event
+    multiple times. The UI notice must surface at most once per request -- later
+    dispatches within the same request (same RequestInformation instance) should
+    be swallowed.
+    """
+    manager = streaming_manager_factory()
+    request_information = RequestInformation(request_id="req-1")
+    chat_request_wrapper = _FakeChatRequestWrapper(enable_debug_logging=False)
+
+    def _make_event(tool_name: str) -> CustomStreamEvent:
+        return cast(
+            CustomStreamEvent,
+            {
+                "event": "on_custom_event",
+                "name": "tool_result_compacted",
+                "data": {"tool_name": tool_name, "estimated_tokens": 4096},
+            },
+        )
+
+    first_chunks = [
+        chunk
+        async for chunk in manager.handle_langchain_event(
+            event=_make_event("search_records"),
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+            tool_start_times={},
+        )
+    ]
+    second_chunks = [
+        chunk
+        async for chunk in manager.handle_langchain_event(
+            event=_make_event("list_skills"),
+            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            request_information=request_information,
+            tool_start_times={},
+        )
+    ]
+
+    assert len(first_chunks) == 1
+    assert "Compacting conversation history" in first_chunks[0]
+    assert second_chunks == []
+    assert request_information.compaction_notice_shown is True
 
 
 @pytest.mark.asyncio

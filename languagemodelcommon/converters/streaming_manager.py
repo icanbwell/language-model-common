@@ -487,7 +487,20 @@ class LangGraphStreamingManager(StreamContextMixin):
             # text via the same buffer/create_sse_message path
             # handle_tool_start uses for tool-run messages, so it appears as
             # an ordinary progress bubble with zero frontend changes.
-            content_text = "\n\n🗜️ Compressing conversation history...\n\n"
+            #
+            # BAI-920: OldToolResultTruncator has no cross-call memory -- it
+            # re-truncates and re-dispatches this event on every subsequent
+            # model call for as long as a message stays outside its
+            # keep-recent window, which surfaced this notice 2-3x in a
+            # single turn. LangGraphStreamingManager is a container-registered
+            # singleton shared across concurrent requests, so dedup state
+            # can't live on self; request_information is constructed fresh
+            # per request, so that's where the "already shown" flag lives.
+            if request_information.compaction_notice_shown:
+                return
+
+            request_information.compaction_notice_shown = True
+            content_text = "\n\n🗜️ Compacting conversation history...\n\n"
             buffered_chunk = await self._stream_buffer_manager.buffer_content(
                 content_text=content_text,
             )
