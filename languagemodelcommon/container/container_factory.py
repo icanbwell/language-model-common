@@ -141,7 +141,12 @@ class LanguageModelCommonContainerFactory:
                 mongo_password=env.mongo_llm_storage_db_password,
                 collection=env.prompt_store_collection,
             )
-            return PromptStore(store=store, collection=env.prompt_store_collection)
+            return PromptStore(
+                store=store,
+                collection=env.prompt_store_collection,
+                source_ref=env.prompt_library_path,
+                ttl_seconds=env.prompt_store_ttl_seconds,
+            )
 
         container.singleton(service_type=PromptStore, factory=_create_prompt_store)
         container.singleton(

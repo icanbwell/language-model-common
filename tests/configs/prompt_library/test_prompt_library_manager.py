@@ -1,5 +1,8 @@
+import asyncio
+
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
@@ -128,3 +131,42 @@ async def test_setting_resolved_path_resets_github_resolution(tmp_path: Path) ->
     # After setting resolved_path, _github_resolved should be reset
     manager.resolved_path = str(dir_b)
     assert await manager.get_prompt("greeting") == "hello from b"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_resolution_calls_github_helper_once(
+    tmp_path: Path,
+) -> None:
+    """BAI-933 regression: concurrent first-time calls to a never-resolved
+    github:// prompt library path must resolve exactly once, not race N
+    separate GithubDirectoryDownloader fetches against the same advisory
+    download lock (the same race shape as BAI-932 in mcp-fhir-agent's
+    ClientScopedConfigReader). Without a lock around the check-then-fetch
+    in `_ensure_local_path`, every concurrent caller sees
+    `_github_resolved is False` and independently calls
+    `resolve_github_path`."""
+    local_dir = tmp_path / "resolved"
+    local_dir.mkdir()
+    (local_dir / "greeting.txt").write_text("hi", encoding="utf-8")
+
+    helper = MagicMock()
+
+    async def resolve(path: str) -> Path:
+        # Yield control before returning, widening the race window a
+        # correct implementation must still close via locking.
+        await asyncio.sleep(0)
+        return local_dir
+
+    helper.resolve_github_path = AsyncMock(side_effect=resolve)
+
+    manager = PromptLibraryManager(
+        environment_variables=_StubPromptLibraryEnv(
+            "github://org/repo/prompts?ref=main"
+        ),
+        github_directory_helper=helper,
+    )
+    results = await asyncio.gather(
+        *(manager.get_prompt_async("greeting") for _ in range(5))
+    )
+    assert results == ["hi"] * 5
+    helper.resolve_github_path.assert_awaited_once()
