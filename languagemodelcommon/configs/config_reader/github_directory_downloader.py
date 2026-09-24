@@ -8,11 +8,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import fsspec  # type: ignore[import-untyped]
+import httpx
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
 from languagemodelcommon.utilities.cache.advisory_lock import AdvisoryLock
 
 logger = logging.getLogger(__name__)
+
+_GITHUB_API_BASE = "https://api.github.com"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,16 @@ class GithubDirectoryDownloader:
 
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 2.0
+    _PROBE_THROTTLE_SECONDS = 60.0
+    # _fetch_to_directory already runs synchronously on the caller's thread
+    # (called un-awaited from the async download()), so this probe blocks
+    # whatever event loop is running it too. Kept short deliberately -- this
+    # already-blocking chain must not also tie up the loop for a full 60s
+    # timeout on top of it.
+    _PROBE_TIMEOUT_SECONDS = 5.0
+
+    def __init__(self) -> None:
+        self._last_probed_at: dict[str, float] = {}
 
     async def download(
         self,
@@ -41,6 +54,7 @@ class GithubDirectoryDownloader:
         cache_path: Path,
         store: AsyncKeyValueProtocol | None = None,
         lock_ttl_seconds: int = 300,
+        log_diagnostics_on_not_found: bool = True,
     ) -> Path | None:
         """Download a github:// URI to a local directory.
 
@@ -52,6 +66,14 @@ class GithubDirectoryDownloader:
                 When provided, acquires a distributed lock before
                 downloading. Returns None if lock is held by another worker.
             lock_ttl_seconds: TTL for the advisory lock.
+            log_diagnostics_on_not_found: Whether a ``FileNotFoundError`` should
+                trigger the diagnostic re-probe (BAI-941). Set to ``False`` when
+                the caller already treats a missing path as an expected,
+                benign outcome (e.g. an optional per-client override directory
+                or an optional prompts folder that most repos simply don't
+                have) — otherwise every such lookup logs an ERROR and makes an
+                extra blocking GitHub API call for something that isn't a
+                failure at all.
 
         Returns:
             Resolved path to the downloaded content directory,
@@ -95,6 +117,7 @@ class GithubDirectoryDownloader:
                     source_path=source_path,
                     github_token=github_token,
                     target_dir=target_dir,
+                    log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
         else:
             self._do_download(
@@ -102,6 +125,7 @@ class GithubDirectoryDownloader:
                 source_path=source_path,
                 github_token=github_token,
                 target_dir=target_dir,
+                log_diagnostics_on_not_found=log_diagnostics_on_not_found,
             )
 
         return self._resolve_content_dir(target_dir=target_dir, source_path=source_path)
@@ -113,12 +137,14 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         self._download_with_retry(
             git_location=git_location,
             source_path=source_path,
             github_token=github_token,
             target_dir=target_dir,
+            log_diagnostics_on_not_found=log_diagnostics_on_not_found,
         )
 
     @staticmethod
@@ -142,6 +168,7 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         """Try the download up to ``_MAX_RETRIES`` times with exponential backoff.
 
@@ -156,6 +183,7 @@ class GithubDirectoryDownloader:
                     source_path=source_path,
                     github_token=github_token,
                     target_dir=target_dir,
+                    log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
                 return
             except FileNotFoundError:
@@ -191,6 +219,84 @@ class GithubDirectoryDownloader:
             f"({token_status}): [{exc_type}] {last_exc}"
         ) from last_exc
 
+    def _log_fetch_failure_diagnostics(
+        self,
+        *,
+        git_location: GitLocation,
+        source_path: str,
+        github_token: str | None,
+    ) -> None:
+        """Best-effort re-probe of the request fsspec just made.
+
+        fsspec's ``GithubFileSystem`` collapses any non-2xx response from
+        GitHub into a bare ``FileNotFoundError`` -- with no status code,
+        rate-limit headers, or response body attached (BAI-941). GitHub
+        returns that same 404 both for a genuinely missing ref/subpath AND
+        for a private repo the caller's credentials can't see, so the bare
+        exception is ambiguous. This redoes the request outside fsspec purely
+        to log what GitHub actually said, since fsspec has already discarded
+        it by the time we get here.
+
+        Uses the Contents API against ``source_path`` specifically (not just
+        the repo root) -- fsspec's own root-only ``ls("")`` check during
+        filesystem construction would report success even when the actual
+        failure is a missing subpath deeper in the tree (e.g. a missing
+        client-override directory, which ``_download_with_retry`` explicitly
+        expects `FileNotFoundError` to also cover).
+
+        Throttled per (owner, repo, sha, path) to avoid doubling GitHub API
+        traffic on every retry during a sustained outage.
+        """
+        sha = git_location.branch
+        probe_key = (
+            f"{git_location.owner}/{git_location.repository}:{sha}:{source_path}"
+        )
+        now = time.monotonic()
+        last_probed_at = self._last_probed_at.get(probe_key)
+        if last_probed_at is not None and (
+            now - last_probed_at < self._PROBE_THROTTLE_SECONDS
+        ):
+            return
+        self._last_probed_at[probe_key] = now
+
+        url = (
+            f"{_GITHUB_API_BASE}/repos/{git_location.owner}/{git_location.repository}"
+            f"/contents/{source_path}"
+        )
+        params = {"ref": sha} if sha else None
+        # Mirrors fsspec.implementations.github.GithubFileSystem.kw: HTTP Basic
+        # Auth with the token as the password, not a Bearer header — must match
+        # exactly what fsspec just sent, or the probe answers a different question.
+        auth = (self._github_token_username, github_token) if github_token else None
+        try:
+            with httpx.Client(timeout=self._PROBE_TIMEOUT_SECONDS) as client:
+                response = client.get(url, params=params, auth=auth)
+        except Exception as probe_exc:
+            logger.error(
+                "GitHub download diagnostic probe failed for %s: [%s] %s",
+                url,
+                type(probe_exc).__name__,
+                probe_exc,
+            )
+            return
+        try:
+            body_message = response.json().get("message")
+        except Exception:
+            body_message = response.text[:200]
+        logger.error(
+            "GitHub download hit FileNotFoundError for %s (ref=%s, token_set=%s, "
+            "token_len=%s) — probe response: status=%s "
+            "rate_limit_remaining=%s rate_limit_reset=%s body_message=%r",
+            url,
+            sha or "(default branch)",
+            bool(github_token),
+            len(github_token) if github_token else 0,
+            response.status_code,
+            response.headers.get("X-RateLimit-Remaining"),
+            response.headers.get("X-RateLimit-Reset"),
+            body_message,
+        )
+
     def _fetch_to_directory(
         self,
         *,
@@ -198,6 +304,7 @@ class GithubDirectoryDownloader:
         source_path: str,
         github_token: str | None,
         target_dir: Path,
+        log_diagnostics_on_not_found: bool = True,
     ) -> None:
         """Download remote content into *target_dir* using atomic swap."""
         pid = os.getpid()
@@ -231,7 +338,13 @@ class GithubDirectoryDownloader:
                         continue
                     destination = staging_dir / Path(item_path).name
                     filesystem.get(item_path, str(destination), recursive=True)
-        except (ValueError, FileNotFoundError):
+        except (ValueError, FileNotFoundError) as exc:
+            if isinstance(exc, FileNotFoundError) and log_diagnostics_on_not_found:
+                self._log_fetch_failure_diagnostics(
+                    git_location=git_location,
+                    source_path=source_path,
+                    github_token=github_token,
+                )
             shutil.rmtree(staging_dir, ignore_errors=True)
             raise
         except Exception as exc:

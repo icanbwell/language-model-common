@@ -131,19 +131,32 @@ class GitHubDirectoryHelper:
     # Instance methods — use environment variables and instance cache
     # ------------------------------------------------------------------
 
-    async def resolve_github_path(self, path: str) -> Path | None:
+    async def resolve_github_path(
+        self, path: str, *, log_diagnostics_on_not_found: bool = True
+    ) -> Path | None:
         """Resolve a GitHub path to a local directory.
 
         Accepts ``github://`` URIs, ``https://github.com/`` URLs, or local paths.
         GitHub paths are downloaded via fsspec; local paths are returned as-is.
 
+        ``log_diagnostics_on_not_found`` (BAI-941): pass ``False`` when the
+        caller already treats a missing path as expected/benign (e.g. an
+        optional override directory or prompts folder), so a routine
+        FileNotFoundError doesn't trigger the diagnostic re-probe/ERROR log
+        meant for genuine failures.
+
         Returns None if another worker holds the download lock.
         """
         if self.is_github_path(path):
-            return await self.download_github_directory(self.to_github_uri(path))
+            return await self.download_github_directory(
+                self.to_github_uri(path),
+                log_diagnostics_on_not_found=log_diagnostics_on_not_found,
+            )
         return Path(path)
 
-    async def download_github_directory(self, github_uri: str) -> Path | None:
+    async def download_github_directory(
+        self, github_uri: str, *, log_diagnostics_on_not_found: bool = True
+    ) -> Path | None:
         """Download a ``github://`` URI to a local cache directory using fsspec.
 
         The cache directory defaults to ``{tempdir}/github_config_cache`` and can
@@ -181,5 +194,6 @@ class GitHubDirectoryHelper:
             github_token=github_token,
             cache_path=cache_dir,
             store=self._store,
+            log_diagnostics_on_not_found=log_diagnostics_on_not_found,
         )
         return result
