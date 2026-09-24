@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -36,11 +37,11 @@ class GithubDirectoryDownloader:
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 2.0
     _PROBE_THROTTLE_SECONDS = 60.0
-    # _fetch_to_directory already runs synchronously on the caller's thread
-    # (called un-awaited from the async download()), so this probe blocks
-    # whatever event loop is running it too. Kept short deliberately -- this
-    # already-blocking chain must not also tie up the loop for a full 60s
-    # timeout on top of it.
+    # _fetch_to_directory (including this probe) now runs off the event loop
+    # via asyncio.to_thread (see download()), so a slow probe no longer stalls
+    # the loop itself -- but it still occupies a thread-pool worker for its
+    # duration. Kept short regardless, so a sustained outage doesn't tie up
+    # worker threads for a full 60s each.
     _PROBE_TIMEOUT_SECONDS = 5.0
 
     def __init__(self) -> None:
@@ -112,7 +113,8 @@ class GithubDirectoryDownloader:
                             target_dir=target_dir, source_path=source_path
                         )
                     return None
-                self._do_download(
+                await asyncio.to_thread(
+                    self._do_download,
                     git_location=git_location,
                     source_path=source_path,
                     github_token=github_token,
@@ -120,7 +122,8 @@ class GithubDirectoryDownloader:
                     log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
         else:
-            self._do_download(
+            await asyncio.to_thread(
+                self._do_download,
                 git_location=git_location,
                 source_path=source_path,
                 github_token=github_token,
