@@ -69,16 +69,22 @@ def _parse_payload(raw: str) -> dict[str, Any]:
     return dict(json.loads(raw[len("event: mcp_app\ndata: ") :]))
 
 
-def test_base_wrapper_mcp_app_is_noop() -> None:
-    # ChatRequestWrapper is an ABC; the base implementation never touches
-    # `self`, so call it as an unbound function to confirm the no-op default
+def test_base_wrapper_mcp_app_is_concrete_not_a_noop() -> None:
+    # Unlike this base class's other create_*_sse_event defaults,
+    # create_mcp_app_sse_event is concrete here (not a no-op) since both
+    # subclasses emitted an identical body -- extracted per BAI-960 code
+    # review to remove that duplication. The base implementation never
+    # touches `self`, so call it as an unbound function to confirm this
     # without instantiating the ABC (mirrors test_base_wrapper_tool_heartbeat_is_noop
-    # / test_base_wrapper_image_output_is_noop).
+    # / test_base_wrapper_image_output_is_noop's unbound-call technique).
     result = ChatRequestWrapper.create_mcp_app_sse_event(
         object(),  # type: ignore[arg-type]
         html="<div/>",
     )
-    assert result is None
+    assert result is not None
+    payload = _parse_payload(result)
+    assert payload["type"] == "mcp_app"
+    assert payload["html"] == "<div/>"
 
 
 def test_responses_api_wrapper_includes_type_and_protocol_version() -> None:

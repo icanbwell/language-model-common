@@ -1,4 +1,5 @@
 import abc
+import json
 from abc import abstractmethod
 from typing import AsyncIterable, Literal, Any, List, Optional
 
@@ -256,14 +257,42 @@ class ChatRequestWrapper(abc.ABC):
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame carrying an MCP app HTML embed.
 
-        The default implementation returns None (no-op).  Subclasses override
-        to emit the event so the downstream pipe can render it in an iframe.
+        Concrete (not abstract) and shared by both subclasses -- unlike this
+        base class's other create_*_sse_event no-op defaults, this one is not
+        asymmetric between ChatCompletionApiRequestWrapper and
+        ResponsesApiRequestWrapper (BAI-960 code review), so there is nothing
+        subclass-specific to override here; both wrapper types emit the
+        identical ``event: mcp_app`` frame.
 
-        ``resource_uri`` (BAI-960) is the tool's declared ``ui://`` resource
-        URI, when known -- carried alongside ``html`` so a client can key
-        lifecycle state against the resource that produced this embed.
+        ``type``/``protocolVersion`` let a client discriminate this frame the
+        same way every other SSE event in this API is discriminated -- by the
+        JSON payload's own ``type`` field, not the SSE ``event:`` line.
+        Without ``type``, a client whose parser dispatches on payload shape
+        (e.g. baileyai-chat-ui's ``parseSseFrames``) cannot recognize this
+        frame at all.
+
+        ``resource_uri`` is the tool's declared ``ui://`` resource URI, when
+        known -- carried alongside ``html`` so a client can key lifecycle
+        state against the resource that produced this embed.
         """
-        return None
+        payload: dict[str, Any] = {
+            "type": "mcp_app",
+            "protocolVersion": MCP_APPS_PROTOCOL_VERSION,
+            "html": html,
+        }
+        if title:
+            payload["title"] = title
+        if resource_uri:
+            payload["resourceUri"] = resource_uri
+        if csp:
+            payload["csp"] = csp
+        if permissions:
+            payload["permissions"] = permissions
+        if prefers_border is not None:
+            payload["prefersBorder"] = prefers_border
+        if display_mode:
+            payload["displayMode"] = display_mode
+        return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     def create_task_progress_sse_event(
         self,

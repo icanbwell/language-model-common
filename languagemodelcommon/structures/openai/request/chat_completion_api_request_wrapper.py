@@ -47,7 +47,6 @@ from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
-    MCP_APPS_PROTOCOL_VERSION,
     ChatRequestWrapper,
 )
 from languagemodelcommon.utilities.chat_message_helpers import (
@@ -357,46 +356,6 @@ class ChatCompletionApiRequestWrapper(ChatRequestWrapper):
             total_usage_metadata.completion_tokens += usage_metadata["output_tokens"]
             total_usage_metadata.total_tokens += usage_metadata["total_tokens"]
         return total_usage_metadata
-
-    @override
-    def create_mcp_app_sse_event(
-        self,
-        *,
-        html: str,
-        title: str | None = None,
-        csp: dict[str, Any] | None = None,
-        permissions: dict[str, Any] | None = None,
-        prefers_border: bool | None = None,
-        display_mode: str | None = None,
-        resource_uri: str | None = None,
-    ) -> str | None:
-        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML.
-
-        ``type``/``protocolVersion`` (BAI-960) let a client discriminate this
-        frame the same way every other SSE event in this API is discriminated
-        -- by the JSON payload's own ``type`` field, not the SSE ``event:``
-        line. Without ``type``, a client whose parser dispatches on payload
-        shape (e.g. baileyai-chat-ui's ``parseSseFrames``) cannot recognize
-        this frame at all.
-        """
-        payload: dict[str, Any] = {
-            "type": "mcp_app",
-            "protocolVersion": MCP_APPS_PROTOCOL_VERSION,
-            "html": html,
-        }
-        if title:
-            payload["title"] = title
-        if resource_uri:
-            payload["resourceUri"] = resource_uri
-        if csp:
-            payload["csp"] = csp
-        if permissions:
-            payload["permissions"] = permissions
-        if prefers_border is not None:
-            payload["prefersBorder"] = prefers_border
-        if display_mode:
-            payload["displayMode"] = display_mode
-        return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override
     def create_final_sse_message(

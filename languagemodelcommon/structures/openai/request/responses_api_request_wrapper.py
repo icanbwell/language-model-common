@@ -50,7 +50,6 @@ from languagemodelcommon.structures.openai.message.responses_api_message_wrapper
     ResponsesApiMessageWrapper,
 )
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
-    MCP_APPS_PROTOCOL_VERSION,
     ChatRequestWrapper,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -289,46 +288,6 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             if self._enable_debug_logging
             else None
         )
-
-    @override
-    def create_mcp_app_sse_event(
-        self,
-        *,
-        html: str,
-        title: str | None = None,
-        csp: dict[str, Any] | None = None,
-        permissions: dict[str, Any] | None = None,
-        prefers_border: bool | None = None,
-        display_mode: str | None = None,
-        resource_uri: str | None = None,
-    ) -> str | None:
-        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML.
-
-        ``type``/``protocolVersion`` (BAI-960) let a client discriminate this
-        frame the same way every other SSE event in this API is discriminated
-        -- by the JSON payload's own ``type`` field, not the SSE ``event:``
-        line. Without ``type``, a client whose parser dispatches on payload
-        shape (e.g. baileyai-chat-ui's ``parseSseFrames``) cannot recognize
-        this frame at all.
-        """
-        payload: Dict[str, Any] = {
-            "type": "mcp_app",
-            "protocolVersion": MCP_APPS_PROTOCOL_VERSION,
-            "html": html,
-        }
-        if title:
-            payload["title"] = title
-        if resource_uri:
-            payload["resourceUri"] = resource_uri
-        if csp:
-            payload["csp"] = csp
-        if permissions:
-            payload["permissions"] = permissions
-        if prefers_border is not None:
-            payload["prefersBorder"] = prefers_border
-        if display_mode:
-            payload["displayMode"] = display_mode
-        return f"event: mcp_app\ndata: {json.dumps(payload)}\n\n"
 
     @override
     def create_tool_start_sse_event(
