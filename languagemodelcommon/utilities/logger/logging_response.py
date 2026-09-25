@@ -32,9 +32,14 @@ class LoggingResponse(httpx2.Response):
         logger.debug(
             f"====== Response: {self.request.method} {self.url} {self.status_code} ====="
         )
+        chunk_count = 0
+        total_bytes = 0
         async for chunk in super().aiter_bytes(chunk_size):
-            logger.debug(chunk)
+            chunk_count += 1
+            total_bytes += len(chunk)
+            logger.debug(f"Chunk #{chunk_count}: {len(chunk)} bytes")
             yield chunk
         logger.debug(
-            f"====== End Response: {self.request.method} {self.url} {self.status_code} ====="
+            f"====== End Response: {self.request.method} {self.url} {self.status_code} "
+            f"| chunks: {chunk_count} | total bytes: {total_bytes} ====="
         )
