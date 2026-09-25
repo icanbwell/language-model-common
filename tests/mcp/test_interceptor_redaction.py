@@ -6,6 +6,7 @@ alongside TracingMcpCallInterceptor/TruncationMcpCallInterceptor
 gets safe argument logging without copying a function.
 """
 
+import io
 import logging
 
 import pytest
@@ -18,6 +19,24 @@ from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallRequest,
     MCPToolCallResult,
 )
+
+_REDACTION_LOGGER_NAME = "languagemodelcommon.mcp.interceptors.redaction"
+
+
+def _capture_rendered_log_output() -> tuple[logging.Logger, io.StringIO]:
+    """Attach a real logging.Handler + Formatter to capture rendered DEBUG text.
+
+    caplog record attributes alone don't prove what a real handler would
+    render - this exercises the actual formatting path.
+    """
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+
+    target_logger = logging.getLogger(_REDACTION_LOGGER_NAME)
+    target_logger.addHandler(handler)
+    target_logger.setLevel(logging.DEBUG)
+    return target_logger, stream
 
 
 class TestRedactionMcpCallInterceptor:
@@ -55,3 +74,30 @@ class TestRedactionMcpCallInterceptor:
             await interceptor(request, handler)
 
         assert marker not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_rendered_output_shows_identifier_shaped_arg_names_never_values(
+        self,
+    ) -> None:
+        interceptor = RedactionMcpCallInterceptor().get_tool_interceptor_redaction()
+        marker = "MARKER-DO-NOT-LEAK-77777"
+        request = MCPToolCallRequest(
+            name="get_patient",
+            args={"patient_id": marker, "12345": "also-a-secret"},
+            server_name="fhir",
+        )
+
+        async def noop_handler(req: MCPToolCallRequest) -> MCPToolCallResult:
+            return CallToolResult(content=[TextContent(type="text", text="ok")])
+
+        target_logger, stream = _capture_rendered_log_output()
+        try:
+            await interceptor(request, noop_handler)
+        finally:
+            target_logger.handlers.clear()
+
+        rendered = stream.getvalue()
+        assert "patient_id" in rendered
+        assert marker not in rendered
+        assert "also-a-secret" not in rendered
+        assert "12345" not in rendered
