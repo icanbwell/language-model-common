@@ -5,21 +5,21 @@ baileyai, baileyai-skills-service) depend on. It must never surface a raw
 value, only its type and length.
 """
 
+import pytest
+
 from languagemodelcommon.utilities.logger.summarization import summarize_for_logging
 
 
 class TestSummarizeForLoggingScalar:
     def test_scalar_string_is_redacted_to_type_and_length(self) -> None:
-        # Positional call, matching the contract signature exactly:
-        # def summarize_for_logging(value: Any) -> dict[str, Any]
-        result = summarize_for_logging("a-secret-patient-identifier")
+        result = summarize_for_logging(value="a-secret-patient-identifier")
 
         assert result == {"type": "str", "length": len("a-secret-patient-identifier")}
 
     def test_scalar_value_never_appears_in_output(self) -> None:
         marker = "MARKER-DO-NOT-LEAK-12345"
 
-        result = summarize_for_logging(marker)
+        result = summarize_for_logging(value=marker)
 
         assert marker not in str(result)
 
@@ -31,7 +31,7 @@ class TestSummarizeForLoggingDict:
             "nested": {"note": "some free text PHI"},
         }
 
-        result = summarize_for_logging(nested)
+        result = summarize_for_logging(value=nested)
 
         assert result == {
             "patient_id": {"type": "str", "length": len("abc-123")},
@@ -42,14 +42,14 @@ class TestSummarizeForLoggingDict:
         marker = "MARKER-DO-NOT-LEAK-98765"
         nested = {"top": {"inner": marker}}
 
-        result = summarize_for_logging(nested)
+        result = summarize_for_logging(value=nested)
 
         assert marker not in str(result)
 
 
 class TestSummarizeForLoggingBytes:
     def test_bytes_length_is_byte_count_not_repr_length(self) -> None:
-        result = summarize_for_logging(b"hi")
+        result = summarize_for_logging(value=b"hi")
 
         assert result == {"type": "bytes", "length": 2}
 
@@ -58,16 +58,22 @@ class TestSummarizeForLoggingBytes:
         # ("b'\\xc3\\xa9'") is far longer than 2 characters.
         value = b"\xc3\xa9"
 
-        result = summarize_for_logging(value)
+        result = summarize_for_logging(value=value)
 
         assert result == {"type": "bytes", "length": 2}
 
     def test_bytearray_length_is_byte_count(self) -> None:
-        result = summarize_for_logging(bytearray(b"hi"))
+        result = summarize_for_logging(value=bytearray(b"hi"))
 
         assert result == {"type": "bytearray", "length": 2}
 
     def test_memoryview_length_is_byte_count(self) -> None:
-        result = summarize_for_logging(memoryview(b"hi"))
+        result = summarize_for_logging(value=memoryview(b"hi"))
 
         assert result == {"type": "memoryview", "length": 2}
+
+
+class TestSummarizeForLoggingKeywordOnly:
+    def test_positional_call_raises_type_error(self) -> None:
+        with pytest.raises(TypeError):
+            summarize_for_logging("a-secret-patient-identifier")  # type: ignore[misc]

@@ -49,11 +49,11 @@ class LoggingTransport(httpx2.AsyncBaseTransport):
         # Log presence/length of the Authorization header only - never its raw value.
         if "authorization" in request.headers:
             logger.debug(
-                f"Authorization header present: {summarize_for_logging(request.headers['authorization'])}"
+                f"Authorization header present: {summarize_for_logging(value=request.headers['authorization'])}"
             )
         if request.content:
             logger.debug(
-                f"Content (redacted): {summarize_for_logging(request.content)}"
+                f"Content (redacted): {summarize_for_logging(value=request.content)}"
             )
 
         try:

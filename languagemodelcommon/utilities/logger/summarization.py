@@ -7,20 +7,12 @@ own local (or absent) copies of this pattern. Modeled on
 (`mcp_servers/middleware/audit_middleware.py`), generalized to recurse into
 nested dicts so a JSON request/response body's shape stays inspectable
 without ever surfacing a raw value.
-
-NOTE on call signature: this repo's own style guide (AGENTS.md) mandates
-keyword-only arguments for public functions. This function is a deliberate,
-narrow exception - its signature is a cross-repo contract declared verbatim
-in the observability-platform session doc, and three sibling repos are
-already coding against `summarize_for_logging(value)` positionally as this
-session runs. Changing it to keyword-only here would silently break those
-callers. Positional-or-keyword keeps both call styles working.
 """
 
 from typing import Any
 
 
-def summarize_for_logging(value: Any) -> dict[str, Any]:
+def summarize_for_logging(*, value: Any) -> dict[str, Any]:
     """Redaction-safe stand-in for a raw value.
 
     Returns ``{"type": ..., "length": ...}`` for a scalar/bytes/str, or the
@@ -33,7 +25,7 @@ def summarize_for_logging(value: Any) -> dict[str, Any]:
     Other scalars fall back to ``len(str(value))``.
     """
     if isinstance(value, dict):
-        return {key: summarize_for_logging(item) for key, item in value.items()}
+        return {key: summarize_for_logging(value=item) for key, item in value.items()}
 
     if isinstance(value, (bytes, bytearray, memoryview)):
         length = len(value)

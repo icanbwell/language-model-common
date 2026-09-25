@@ -34,7 +34,7 @@ class RedactionMcpCallInterceptor:
             logger.debug(
                 "MCP tool call %s args (redacted): %s",
                 request.name,
-                summarize_for_logging(request.args),
+                summarize_for_logging(value=request.args),
             )
             return await handler(request)
 
