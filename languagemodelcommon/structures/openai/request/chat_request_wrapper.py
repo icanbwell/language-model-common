@@ -11,6 +11,9 @@ from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
 
+# SEP-1865 (MCP Apps) protocol version this repo's mcp_app SSE event targets.
+MCP_APPS_PROTOCOL_VERSION = "2026-01-26"
+
 
 class ChatRequestWrapper(abc.ABC):
     """This is the abstract base class for ChatCompletionRequestWrapper and ResponsesApiRequestWrapper."""
@@ -249,11 +252,16 @@ class ChatRequestWrapper(abc.ABC):
         permissions: dict[str, Any] | None = None,
         prefers_border: bool | None = None,
         display_mode: str | None = None,
+        resource_uri: str | None = None,
     ) -> str | None:
         """Emit a custom ``event: mcp_app`` SSE frame carrying an MCP app HTML embed.
 
         The default implementation returns None (no-op).  Subclasses override
         to emit the event so the downstream pipe can render it in an iframe.
+
+        ``resource_uri`` (BAI-960) is the tool's declared ``ui://`` resource
+        URI, when known -- carried alongside ``html`` so a client can key
+        lifecycle state against the resource that produced this embed.
         """
         return None
 

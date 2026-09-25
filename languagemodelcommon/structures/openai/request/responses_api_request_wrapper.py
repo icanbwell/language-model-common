@@ -50,6 +50,7 @@ from languagemodelcommon.structures.openai.message.responses_api_message_wrapper
     ResponsesApiMessageWrapper,
 )
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
+    MCP_APPS_PROTOCOL_VERSION,
     ChatRequestWrapper,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -299,11 +300,26 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         permissions: dict[str, Any] | None = None,
         prefers_border: bool | None = None,
         display_mode: str | None = None,
+        resource_uri: str | None = None,
     ) -> str | None:
-        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML."""
-        payload: Dict[str, Any] = {"html": html}
+        """Emit a custom ``event: mcp_app`` SSE frame with the MCP app HTML.
+
+        ``type``/``protocolVersion`` (BAI-960) let a client discriminate this
+        frame the same way every other SSE event in this API is discriminated
+        -- by the JSON payload's own ``type`` field, not the SSE ``event:``
+        line. Without ``type``, a client whose parser dispatches on payload
+        shape (e.g. baileyai-chat-ui's ``parseSseFrames``) cannot recognize
+        this frame at all.
+        """
+        payload: Dict[str, Any] = {
+            "type": "mcp_app",
+            "protocolVersion": MCP_APPS_PROTOCOL_VERSION,
+            "html": html,
+        }
         if title:
             payload["title"] = title
+        if resource_uri:
+            payload["resourceUri"] = resource_uri
         if csp:
             payload["csp"] = csp
         if permissions:

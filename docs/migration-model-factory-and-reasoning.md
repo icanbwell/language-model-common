@@ -120,16 +120,34 @@ No action required. This is additive and does not change existing behavior for r
 
 ### 6. MCP Apps — interactive HTML UIs from MCP tools
 
-MCP tools that declare a `ui://` resource URI in their metadata now have their HTML fetched and streamed to the client as a custom `event: mcp_app` SSE event. The client renders the HTML in a sandboxed iframe.
+**Correction (BAI-960, 2026-09-25):** the fetch/embed producer this section
+originally described (`mcp_client/ui_resource.py`,
+`MCPToolProvider.fetch_mcp_app_embed()`) was removed from this repo under
+BAI-730 (commit `b9b5042`) and moved to `baileyai-skills-service`'s
+`/tool-catalog` MCP server (`catalog/ui_resource.py`,
+`MCPToolProvider.fetch_mcp_app_embed()` in that repo — same names, different
+repo). This repo's only remaining MCP Apps surface is
+`ChatRequestWrapper.create_mcp_app_sse_event()`, which formats the SSE frame
+once `structured_content["mcp_app_embed"]` arrives from that other service's
+tool-catalog server (via the ordinary `structured_content` → LangChain
+`artifact` passthrough — no special-casing needed here).
+`docs/mcp-apps.md` referenced below was never created; see `baileyai`'s
+`adrs/010-mcp-apps-support.md` for the current design instead.
 
-Key components:
-- `mcp_client/ui_resource.py` — Detection, fetching, and JavaScript injection helpers
-- `MCPToolProvider.fetch_mcp_app_embed()` — Orchestrates UI resource fetch with session pool reuse
-- `CallToolTool` — Returns `(text, artifact)` tuples via `content_and_artifact` response format
-- `LangGraphStreamingManager._handle_on_tool_end()` — Emits `event: mcp_app` SSE when artifact contains an embed
+MCP tools that declare a `ui://` resource URI in their metadata have their
+HTML fetched (in `baileyai-skills-service`) and streamed to the client as a
+custom `event: mcp_app` SSE event, discriminated by a `type: "mcp_app"`
+field in the payload (BAI-960). The client renders the HTML in a sandboxed
+iframe.
+
+Key components (this repo):
 - `ChatRequestWrapper.create_mcp_app_sse_event()` — Formats the custom SSE frame
+- `converters/tool_event_handlers.py` — Emits `event: mcp_app` SSE when a
+  tool's `artifact` contains `mcp_app_embed`
 
-No action required for existing tools. MCP Apps are automatically detected when tools declare `meta.ui.resourceUri`. See [docs/mcp-apps.md](mcp-apps.md) for full details.
+No action required for existing tools. MCP Apps are automatically detected
+when tools declare `meta.ui.resourceUri` — detection and fetching now happen
+in `baileyai-skills-service`, not here.
 
 ---
 
