@@ -45,3 +45,29 @@ class TestSummarizeForLoggingDict:
         result = summarize_for_logging(nested)
 
         assert marker not in str(result)
+
+
+class TestSummarizeForLoggingBytes:
+    def test_bytes_length_is_byte_count_not_repr_length(self) -> None:
+        result = summarize_for_logging(b"hi")
+
+        assert result == {"type": "bytes", "length": 2}
+
+    def test_non_ascii_bytes_length_is_byte_count_not_repr_length(self) -> None:
+        # b"\xc3\xa9" is 2 bytes (UTF-8 for "é"), but its repr
+        # ("b'\\xc3\\xa9'") is far longer than 2 characters.
+        value = b"\xc3\xa9"
+
+        result = summarize_for_logging(value)
+
+        assert result == {"type": "bytes", "length": 2}
+
+    def test_bytearray_length_is_byte_count(self) -> None:
+        result = summarize_for_logging(bytearray(b"hi"))
+
+        assert result == {"type": "bytearray", "length": 2}
+
+    def test_memoryview_length_is_byte_count(self) -> None:
+        result = summarize_for_logging(memoryview(b"hi"))
+
+        assert result == {"type": "memoryview", "length": 2}

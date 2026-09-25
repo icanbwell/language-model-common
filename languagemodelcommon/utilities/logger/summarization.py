@@ -25,8 +25,21 @@ def summarize_for_logging(value: Any) -> dict[str, Any]:
 
     Returns ``{"type": ..., "length": ...}`` for a scalar/bytes/str, or the
     same recursively per key for a dict - never the underlying value itself.
+
+    For ``bytes``/``bytearray``/``memoryview``, ``length`` is the byte count
+    (``len(value)``), not the length of its ``repr``/``str`` form - the repr
+    of a bytes value (e.g. ``b'\\xc3\\xa9'``) can be up to 4x the actual byte
+    count due to ``\\xNN`` escaping. For ``str``, ``length`` is ``len(value)``.
+    Other scalars fall back to ``len(str(value))``.
     """
     if isinstance(value, dict):
         return {key: summarize_for_logging(item) for key, item in value.items()}
 
-    return {"type": type(value).__name__, "length": len(str(value))}
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        length = len(value)
+    elif isinstance(value, str):
+        length = len(value)
+    else:
+        length = len(str(value))
+
+    return {"type": type(value).__name__, "length": length}
