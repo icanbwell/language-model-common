@@ -41,7 +41,7 @@ class TestLoggingTransportHeaderNames:
     @pytest.mark.asyncio
     async def test_logs_header_names_never_values(self) -> None:
         cookie_value = "MARKER-DO-NOT-LEAK-COOKIE-VALUE"
-        api_key_value = "MARKER-DO-NOT-LEAK-API-KEY-VALUE"
+        api_key_value = "MARKER-DO-NOT-LEAK-API-KEY-VALUE"  # pragma: allowlist secret
 
         async def handler(request: httpx2.Request) -> httpx2.Response:
             return httpx2.Response(200, request=request)
