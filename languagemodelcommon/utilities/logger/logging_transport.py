@@ -45,7 +45,11 @@ class LoggingTransport(httpx2.AsyncBaseTransport):
         """
         # log the request
         logger.debug(f" ====== Request: {request.method} {request.url} =====")
-        logger.debug(f"Headers: {request.headers}")
+        # Log header names only - never values. httpx2's SENSITIVE_HEADERS
+        # masking only covers authorization/proxy-authorization, so any
+        # other sensitive header (Cookie, X-Api-Key, etc.) would otherwise
+        # render raw here.
+        logger.debug(f"Header names: {sorted(request.headers.keys())}")
         # Log presence/length of the Authorization header only - never its raw value.
         if "authorization" in request.headers:
             logger.debug(
