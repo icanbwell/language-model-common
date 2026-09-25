@@ -7,6 +7,7 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.logger.logging_response import (
     LoggingResponse,
 )
+from languagemodelcommon.utilities.logger.summarization import summarize_for_logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.HTTP)
@@ -44,12 +45,20 @@ class LoggingTransport(httpx2.AsyncBaseTransport):
         """
         # log the request
         logger.debug(f" ====== Request: {request.method} {request.url} =====")
-        logger.debug(f"Headers: {request.headers}")
-        # Log the actual Authorization header value if present
+        # Log header names only - never values. httpx2's SENSITIVE_HEADERS
+        # masking only covers authorization/proxy-authorization, so any
+        # other sensitive header (Cookie, X-Api-Key, etc.) would otherwise
+        # render raw here.
+        logger.debug(f"Header names: {sorted(request.headers.keys())}")
+        # Log presence/length of the Authorization header only - never its raw value.
         if "authorization" in request.headers:
-            logger.debug(f"Authorization header: {request.headers['authorization']}")
+            logger.debug(
+                f"Authorization header present: {summarize_for_logging(value=request.headers['authorization'])}"
+            )
         if request.content:
-            logger.debug(f"Content: {request.content.decode('utf-8', errors='ignore')}")
+            logger.debug(
+                f"Content (redacted): {summarize_for_logging(value=request.content)}"
+            )
 
         try:
             response = await self.transport.handle_async_request(request)
