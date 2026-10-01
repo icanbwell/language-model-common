@@ -201,6 +201,10 @@ categories:
         versions: ["Current"]
         notes: "K8s observability platform"
 
+      - name: "Sentry"
+        versions: ["Current"]
+        notes: "Error tracking and exception aggregation. 25+ live production projects predating this registry entry -- see EA-2671. Configuration is governed by the EA standard requiring send_default_pii=false explicitly. A separate RFC to consolidate backend observability onto Groundcover (moving backend services off Sentry) is in draft and not settled; this entry records current approved practice and does not pre-empt that RFC's outcome."
+
   # ============================================================================
   # BI & Reporting
   # ============================================================================
