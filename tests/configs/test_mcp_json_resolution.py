@@ -208,6 +208,24 @@ class TestResolveMcpServers:
         assert tool.issuers == ["https://accounts.google.com"]
         assert tool.auth_optional is True
 
+    def test_pass_through_auth_is_kept_distinct_from_jwt_token(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="pass_through",
+                )
+            }
+        )
+
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+        assert config.tools is not None
+        assert config.tools[0].auth == "pass_through"
+
     def test_mcp_json_overrides_inline_auth(self) -> None:
         """mcp_server resolution always uses .mcp.json values."""
         config = ChatModelConfig(
@@ -316,6 +334,36 @@ class TestResolveMcpServers:
         resolve_mcp_servers(configs=[config], mcp_config=mcp)
 
         tool = config.tools[0]  # type: ignore[index]
+        assert tool.oauth is not None
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["mcp_oauth_abc123"]
+
+    def test_oauth_takes_precedence_over_pass_through_auth(self) -> None:
+        """An entry with both auth=pass_through and oauth resolves to jwt_token.
+
+        An explicit OAuth config means the caller's token is verified against
+        the OAuth provider, so it must not be left as an unchecked pass-through.
+        """
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="pass_through",
+                    oauth=McpOAuthConfig(
+                        client_id="abc123",
+                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
         assert tool.oauth is not None
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_abc123"]
