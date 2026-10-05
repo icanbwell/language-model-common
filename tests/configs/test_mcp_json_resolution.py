@@ -338,6 +338,36 @@ class TestResolveMcpServers:
         assert tool.auth == "jwt_token"
         assert tool.auth_providers == ["mcp_oauth_abc123"]
 
+    def test_oauth_takes_precedence_over_pass_through_auth(self) -> None:
+        """An entry with both auth=pass_through and oauth resolves to jwt_token.
+
+        An explicit OAuth config means the caller's token is verified against
+        the OAuth provider, so it must not be left as an unchecked pass-through.
+        """
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="pass_through",
+                    oauth=McpOAuthConfig(
+                        client_id="abc123",
+                        auth_server_metadata_url="https://idp.example.com/.well-known/openid-configuration",
+                    ),
+                )
+            }
+        )
+
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+        assert config.tools is not None
+        tool = config.tools[0]
+        assert tool.oauth is not None
+        assert tool.auth == "jwt_token"
+        assert tool.auth_providers == ["mcp_oauth_abc123"]
+
     def test_oauth_parsed_from_camel_case_json(self, tmp_path: Path) -> None:
         mcp_path = _write_mcp_json(
             tmp_path,
