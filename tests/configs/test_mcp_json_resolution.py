@@ -208,6 +208,24 @@ class TestResolveMcpServers:
         assert tool.issuers == ["https://accounts.google.com"]
         assert tool.auth_optional is True
 
+    def test_pass_through_auth_is_kept_distinct_from_jwt_token(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("drive", mcp_server="google-drive")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "google-drive": McpServerEntry(
+                    url="https://mcp.example.com/drive/",
+                    auth="pass_through",
+                )
+            }
+        )
+
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+        assert config.tools is not None
+        assert config.tools[0].auth == "pass_through"
+
     def test_mcp_json_overrides_inline_auth(self) -> None:
         """mcp_server resolution always uses .mcp.json values."""
         config = ChatModelConfig(
