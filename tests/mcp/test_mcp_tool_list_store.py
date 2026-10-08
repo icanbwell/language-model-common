@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -264,3 +265,90 @@ class TestGetAllToolsRoundTrips:
 
         assert tools is not None
         cleared_at_spy.assert_not_awaited()
+
+
+class TestSequentialCallsReduced:
+    """get_tools() reads the entry and the epoch marker concurrently, and
+    get_all_tools() batches the entry reads into one get_many."""
+
+    @pytest.mark.asyncio
+    async def test_get_tools_reads_entry_and_epoch_concurrently(self) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        key = "https://mcp.example.com"
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name="search", input_schema={"type": "object"})],
+            fetched_at=time.time(),
+        )
+
+        events: list[str] = []
+        real_get = backing_store.get
+
+        async def slow_get(*args: Any, **kwargs: Any) -> Any:
+            events.append("start")
+            await asyncio.sleep(0.01)
+            result = await real_get(*args, **kwargs)
+            events.append("end")
+            return result
+
+        with patch.object(backing_store, "get", slow_get):
+            tools = await store.get_tools(key=key)
+
+        assert tools is not None
+        # Both reads (entry + epoch marker) were in flight before either finished.
+        assert events == ["start", "start", "end", "end"]
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_uses_one_get_many_not_a_get_per_key(self) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        keys = ["https://a.example.com", "https://b.example.com"]
+        for i, key in enumerate(keys):
+            await store.put_tools(
+                key=key,
+                tools=[MCPTool(name=f"tool-{i}", input_schema={"type": "object"})],
+                fetched_at=time.time(),
+            )
+
+        with (
+            patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
+            patch.object(
+                backing_store, "get_many", AsyncMock(wraps=backing_store.get_many)
+            ) as get_many_spy,
+            patch.object(
+                backing_store, "get", AsyncMock(wraps=backing_store.get)
+            ) as get_spy,
+        ):
+            tools = await store.get_all_tools()
+
+        assert sorted(t.name for t in tools) == ["tool-0", "tool-1"]
+        get_many_spy.assert_awaited_once()
+        # Only the epoch marker is read with get(); no per-key get().
+        assert get_spy.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_skips_entries_fetched_before_last_clear(
+        self,
+    ) -> None:
+        backing_store = MemoryStore(default_collection="mcp-tool-cache")
+        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+        keys = ["https://a.example.com", "https://b.example.com"]
+        stale_fetched_at = time.time()
+        await asyncio.sleep(0.01)
+        await store.clear()
+        await store.put_tools(
+            key=keys[0],
+            tools=[MCPTool(name="stale", input_schema={"type": "object"})],
+            fetched_at=stale_fetched_at,
+        )
+        await store.put_tools(
+            key=keys[1],
+            tools=[MCPTool(name="fresh", input_schema={"type": "object"})],
+            fetched_at=time.time(),
+        )
+
+        with patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)):
+            tools = await store.get_all_tools()
+
+        assert [t.name for t in tools] == ["fresh"]

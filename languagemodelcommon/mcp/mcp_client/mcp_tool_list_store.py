@@ -6,6 +6,7 @@ list is periodically rediscovered) and can also be cleared early on demand
 (e.g. via /reload).
 """
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -71,13 +72,26 @@ class McpToolListStore:
     ) -> list[MCPTool] | None:
         """Look up a cached tool list.
 
-        ``cleared_at`` lets a bulk caller (``get_all_tools``) supply an
-        already-fetched epoch marker instead of every call re-querying the
-        epoch collection.
+        ``cleared_at`` lets a bulk caller supply an already-fetched epoch
+        marker. Without it, the entry and the epoch marker (a different
+        collection, so they can't share a ``get_many``) are read concurrently
+        rather than one after the other.
         """
-        result: dict[str, Any] | None = await self._store.get(
-            key, collection=self._collection
-        )
+        entry: dict[str, Any] | None
+        effective_cleared_at: float
+        if cleared_at is not None:
+            entry = await self._store.get(key, collection=self._collection)
+            effective_cleared_at = cleared_at
+        else:
+            entry, effective_cleared_at = await asyncio.gather(
+                self._store.get(key, collection=self._collection),
+                self._get_cleared_at(),
+            )
+        return self._parse_entry(key=key, result=entry, cleared_at=effective_cleared_at)
+
+    def _parse_entry(
+        self, *, key: str, result: dict[str, Any] | None, cleared_at: float
+    ) -> list[MCPTool] | None:
         if result is None:
             return None
 
@@ -89,17 +103,13 @@ class McpToolListStore:
             return None
 
         fetched_at = result.get("fetched_at")
-        if isinstance(fetched_at, (int, float)):
-            effective_cleared_at = (
-                cleared_at if cleared_at is not None else await self._get_cleared_at()
+        if isinstance(fetched_at, (int, float)) and fetched_at < cleared_at:
+            logger.info(
+                "Cached tools for key %s were fetched before the last clear(); "
+                "treating as miss",
+                key,
             )
-            if fetched_at < effective_cleared_at:
-                logger.info(
-                    "Cached tools for key %s were fetched before the last clear(); "
-                    "treating as miss",
-                    key,
-                )
-                return None
+            return None
 
         try:
             return [MCPTool.model_validate(t) for t in tools_data]
@@ -114,9 +124,15 @@ class McpToolListStore:
         all_tools: list[MCPTool] = []
         try:
             keys = await self._get_all_keys()
-            cleared_at = await self._get_cleared_at()
-            for key in keys:
-                tools = await self.get_tools(key=key, cleared_at=cleared_at)
+            if not keys:
+                return all_tools
+            # One batched read for every entry, concurrent with the epoch read.
+            results, cleared_at = await asyncio.gather(
+                self._store.get_many(keys, collection=self._collection),
+                self._get_cleared_at(),
+            )
+            for key, result in zip(keys, results, strict=True):
+                tools = self._parse_entry(key=key, result=result, cleared_at=cleared_at)
                 if tools:
                     all_tools.extend(tools)
         except Exception:
