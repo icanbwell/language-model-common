@@ -324,14 +324,29 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    @property
+    def supports_structured_tool_progress(self) -> bool:
+        """True when this transport carries tool progress as typed items
+        (``create_tool_start_sse_event`` / ``create_tool_end_sse_event``) that a
+        client can render itself, so the handler must NOT also write the
+        friendly status line into the answer text (BAI-1106).
+
+        The default is ``False``: transports with no typed tool item (e.g.
+        chat completions) keep the inline text as their only progress signal.
+        """
+        return False
+
     def create_tool_start_sse_event(
         self,
         *,
         request_id: str,
         tool_name: str,
         tool_input: dict[str, Any] | None,
+        display_name: str | None = None,
     ) -> str | None:
         """Emit an SSE event when a tool begins execution.
+
+        ``display_name`` is the friendly, user-facing name for the call (e.g. ``🧾 Confirming your basic information``); implementations that emit a typed item include it when non-empty.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured tool events (e.g. Responses API) override this
@@ -349,6 +364,7 @@ class ChatRequestWrapper(abc.ABC):
         output: str | None = None,
         is_error: bool = False,
         structured_output: dict[str, Any] | None = None,
+        display_name: str | None = None,
     ) -> str | None:
         """Emit an SSE event when a tool finishes execution.
 
@@ -359,6 +375,8 @@ class ChatRequestWrapper(abc.ABC):
         free-text content. ``structured_output`` is the tool's own structured
         result (an MCP ``structuredContent``/artifact dict), included whenever
         the tool returned one, independent of debug-logging settings.
+
+        ``display_name`` is the friendly, user-facing name for the call (e.g. ``🧾 Confirming your basic information``); implementations that emit a typed item include it when non-empty.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured tool events (e.g. Responses API) override this

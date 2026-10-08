@@ -289,6 +289,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             else None
         )
 
+    @property
+    @override
+    def supports_structured_tool_progress(self) -> bool:
+        return True
+
     @override
     def create_tool_start_sse_event(
         self,
@@ -296,6 +301,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         request_id: str,
         tool_name: str,
         tool_input: Dict[str, Any] | None,
+        display_name: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.added`` event with a ``function_call`` item."""
         event: Dict[str, Any] = {
@@ -311,6 +317,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "status": "in_progress",
             },
         }
+        if display_name:
+            event["item"]["display_name"] = display_name
         return f"data: {json.dumps(event)}\n\n"
 
     @override
@@ -324,6 +332,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         output: str | None = None,
         is_error: bool = False,
         structured_output: Dict[str, Any] | None = None,
+        display_name: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with a ``function_call`` item.
 
@@ -352,6 +361,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "is_error": is_error,
             },
         }
+        if display_name:
+            event["item"]["display_name"] = display_name
         return f"data: {json.dumps(event)}\n\n"
 
     @override
