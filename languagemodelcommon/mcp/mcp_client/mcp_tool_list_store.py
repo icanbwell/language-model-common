@@ -6,7 +6,6 @@ list is periodically rediscovered) and can also be cleared early on demand
 (e.g. via /reload).
 """
 
-import asyncio
 import logging
 import time
 from typing import Any
@@ -67,27 +66,26 @@ class McpToolListStore:
         cleared_at = result.get("cleared_at")
         return float(cleared_at) if isinstance(cleared_at, (int, float)) else 0.0
 
-    async def get_tools(
-        self, *, key: str, cleared_at: float | None = None
-    ) -> list[MCPTool] | None:
+    async def get_tools(self, *, key: str) -> list[MCPTool] | None:
         """Look up a cached tool list.
 
-        ``cleared_at`` lets a bulk caller supply an already-fetched epoch
-        marker. Without it, the entry and the epoch marker (a different
-        collection, so they can't share a ``get_many``) are read concurrently
-        rather than one after the other.
+        The epoch marker is read *after* the entry, never concurrently with
+        it: a stale write that lands after clear() is only visible to a reader
+        whose entry read came after the clear stamped the marker, so reading
+        the marker second guarantees that reader also sees the new marker. A
+        miss costs one read; only a hit also reads the marker.
         """
-        entry: dict[str, Any] | None
-        effective_cleared_at: float
-        if cleared_at is not None:
-            entry = await self._store.get(key, collection=self._collection)
-            effective_cleared_at = cleared_at
-        else:
-            entry, effective_cleared_at = await asyncio.gather(
-                self._store.get(key, collection=self._collection),
-                self._get_cleared_at(),
-            )
-        return self._parse_entry(key=key, result=entry, cleared_at=effective_cleared_at)
+        entry: dict[str, Any] | None = await self._store.get(
+            key, collection=self._collection
+        )
+        if entry is None:
+            return None
+        cleared_at = (
+            await self._get_cleared_at()
+            if isinstance(entry.get("fetched_at"), (int, float))
+            else 0.0
+        )
+        return self._parse_entry(key=key, result=entry, cleared_at=cleared_at)
 
     def _parse_entry(
         self, *, key: str, result: dict[str, Any] | None, cleared_at: float
@@ -126,11 +124,10 @@ class McpToolListStore:
             keys = await self._get_all_keys()
             if not keys:
                 return all_tools
-            # One batched read for every entry, concurrent with the epoch read.
-            results, cleared_at = await asyncio.gather(
-                self._store.get_many(keys, collection=self._collection),
-                self._get_cleared_at(),
-            )
+            # One batched read for every entry, then the epoch marker (same
+            # entry-before-marker ordering as get_tools; see its docstring).
+            results = await self._store.get_many(keys, collection=self._collection)
+            cleared_at = await self._get_cleared_at()
             for key, result in zip(keys, results, strict=True):
                 tools = self._parse_entry(key=key, result=result, cleared_at=cleared_at)
                 if tools:

@@ -215,27 +215,34 @@ class TestClearVsConcurrentWriteRace:
         assert await store.get_tools(key=key) is None
 
 
-class TestGetAllToolsRoundTrips:
-    """get_all_tools() must fetch cleared_at once and reuse it across every
-    key, not re-query the epoch collection per key — the latter turns an
-    N-key lookup into 2N store round trips."""
+async def _seeded_store(
+    *, keys: list[str]
+) -> tuple[MemoryStore, McpToolListStore, list[str]]:
+    """A store with one single-tool entry per key (tool names tool-0, tool-1, ...),
+    with ``_get_all_keys`` left to the caller to patch (MemoryStore can't list keys)."""
+    backing_store = MemoryStore(default_collection="mcp-tool-cache")
+    store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
+    for i, key in enumerate(keys):
+        await store.put_tools(
+            key=key,
+            tools=[MCPTool(name=f"tool-{i}", input_schema={"type": "object"})],
+            fetched_at=time.time(),
+        )
+    return backing_store, store, keys
 
+
+_KEYS = ["https://a.example.com", "https://b.example.com", "https://c.example.com"]
+
+
+class TestGetAllToolsRoundTrips:
+    """get_all_tools() batches every entry read into one get_many and reads
+    the epoch marker once, instead of one get (and epoch read) per key."""
+
+    @pytest.mark.asyncio
     async def test_get_all_tools_fetches_cleared_at_once_for_multiple_keys(
         self,
     ) -> None:
-        backing_store = MemoryStore(default_collection="mcp-tool-cache")
-        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
-        keys = [
-            "https://a.example.com",
-            "https://b.example.com",
-            "https://c.example.com",
-        ]
-        for i, key in enumerate(keys):
-            await store.put_tools(
-                key=key,
-                tools=[MCPTool(name=f"tool-{i}", input_schema={"type": "object"})],
-                fetched_at=time.time(),
-            )
+        _, store, keys = await _seeded_store(keys=_KEYS)
 
         with (
             patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
@@ -248,68 +255,9 @@ class TestGetAllToolsRoundTrips:
         assert len(tools) == 3
         cleared_at_spy.assert_awaited_once()
 
-    async def test_get_tools_skips_cleared_at_query_when_provided(self) -> None:
-        backing_store = MemoryStore(default_collection="mcp-tool-cache")
-        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
-        key = "https://mcp.example.com"
-        await store.put_tools(
-            key=key,
-            tools=[MCPTool(name="search", input_schema={"type": "object"})],
-            fetched_at=time.time(),
-        )
-
-        with patch.object(
-            store, "_get_cleared_at", AsyncMock(wraps=store._get_cleared_at)
-        ) as cleared_at_spy:
-            tools = await store.get_tools(key=key, cleared_at=0.0)
-
-        assert tools is not None
-        cleared_at_spy.assert_not_awaited()
-
-
-class TestSequentialCallsReduced:
-    """get_tools() reads the entry and the epoch marker concurrently, and
-    get_all_tools() batches the entry reads into one get_many."""
-
-    @pytest.mark.asyncio
-    async def test_get_tools_reads_entry_and_epoch_concurrently(self) -> None:
-        backing_store = MemoryStore(default_collection="mcp-tool-cache")
-        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
-        key = "https://mcp.example.com"
-        await store.put_tools(
-            key=key,
-            tools=[MCPTool(name="search", input_schema={"type": "object"})],
-            fetched_at=time.time(),
-        )
-
-        events: list[str] = []
-        real_get = backing_store.get
-
-        async def slow_get(*args: Any, **kwargs: Any) -> Any:
-            events.append("start")
-            await asyncio.sleep(0.01)
-            result = await real_get(*args, **kwargs)
-            events.append("end")
-            return result
-
-        with patch.object(backing_store, "get", slow_get):
-            tools = await store.get_tools(key=key)
-
-        assert tools is not None
-        # Both reads (entry + epoch marker) were in flight before either finished.
-        assert events == ["start", "start", "end", "end"]
-
     @pytest.mark.asyncio
     async def test_get_all_tools_uses_one_get_many_not_a_get_per_key(self) -> None:
-        backing_store = MemoryStore(default_collection="mcp-tool-cache")
-        store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
-        keys = ["https://a.example.com", "https://b.example.com"]
-        for i, key in enumerate(keys):
-            await store.put_tools(
-                key=key,
-                tools=[MCPTool(name=f"tool-{i}", input_schema={"type": "object"})],
-                fetched_at=time.time(),
-            )
+        backing_store, store, keys = await _seeded_store(keys=_KEYS[:2])
 
         with (
             patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
@@ -328,12 +276,60 @@ class TestSequentialCallsReduced:
         assert get_spy.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_get_all_tools_returns_empty_without_reading_when_no_keys(
+        self,
+    ) -> None:
+        backing_store, store, _ = await _seeded_store(keys=[])
+
+        with (
+            patch.object(store, "_get_all_keys", AsyncMock(return_value=[])),
+            patch.object(backing_store, "get_many", AsyncMock()) as get_many_spy,
+        ):
+            tools = await store.get_all_tools()
+
+        assert tools == []
+        get_many_spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_skips_key_missing_from_the_batch(self) -> None:
+        _, store, keys = await _seeded_store(keys=_KEYS[:2])
+
+        with patch.object(
+            store,
+            "_get_all_keys",
+            AsyncMock(return_value=[*keys, "https://gone.example.com"]),
+        ):
+            tools = await store.get_all_tools()
+
+        assert sorted(t.name for t in tools) == ["tool-0", "tool-1"]
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_returns_empty_and_warns_when_get_many_raises(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        backing_store, store, keys = await _seeded_store(keys=_KEYS[:2])
+
+        with (
+            patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
+            patch.object(
+                backing_store,
+                "get_many",
+                AsyncMock(side_effect=RuntimeError("mongo down")),
+            ),
+            caplog.at_level(logging.WARNING, logger="languagemodelcommon"),
+        ):
+            tools = await store.get_all_tools()
+
+        assert tools == []
+        assert "Failed to retrieve all tools from persistent store" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_get_all_tools_skips_entries_fetched_before_last_clear(
         self,
     ) -> None:
         backing_store = MemoryStore(default_collection="mcp-tool-cache")
         store = McpToolListStore(store=backing_store, collection="mcp-tool-cache")
-        keys = ["https://a.example.com", "https://b.example.com"]
+        keys = _KEYS[:2]
         stale_fetched_at = time.time()
         await asyncio.sleep(0.01)
         await store.clear()
@@ -352,3 +348,72 @@ class TestSequentialCallsReduced:
             tools = await store.get_all_tools()
 
         assert [t.name for t in tools] == ["fresh"]
+
+    @pytest.mark.asyncio
+    async def test_get_all_tools_reads_entries_before_epoch_marker(self) -> None:
+        """Same entry-before-marker ordering as get_tools: the marker read
+        must start only after the batched entry read has finished."""
+        backing_store, store, keys = await _seeded_store(keys=_KEYS[:2])
+        events: list[str] = []
+        real_get_many = backing_store.get_many
+        real_get = backing_store.get
+
+        async def recording_get_many(*args: Any, **kwargs: Any) -> Any:
+            events.append("entries:start")
+            result = await real_get_many(*args, **kwargs)
+            events.append("entries:end")
+            return result
+
+        async def recording_get(*args: Any, **kwargs: Any) -> Any:
+            events.append("epoch:start")
+            return await real_get(*args, **kwargs)
+
+        with (
+            patch.object(store, "_get_all_keys", AsyncMock(return_value=keys)),
+            patch.object(backing_store, "get_many", recording_get_many),
+            patch.object(backing_store, "get", recording_get),
+        ):
+            await store.get_all_tools()
+
+        assert events == ["entries:start", "entries:end", "epoch:start"]
+
+
+class TestGetToolsReadOrdering:
+    """get_tools() reads the epoch marker only after the entry, and only for
+    a hit: reading them concurrently could pair a marker read from before a
+    clear() with an entry written after it, serving a pre-clear entry."""
+
+    @pytest.mark.asyncio
+    async def test_get_tools_reads_epoch_marker_after_entry(self) -> None:
+        backing_store, store, _ = await _seeded_store(keys=[_KEYS[0]])
+        events: list[str] = []
+        real_get = backing_store.get
+
+        async def recording_get(*args: Any, **kwargs: Any) -> Any:
+            events.append(f"start:{kwargs['collection']}")
+            result = await real_get(*args, **kwargs)
+            events.append(f"end:{kwargs['collection']}")
+            return result
+
+        with patch.object(backing_store, "get", recording_get):
+            tools = await store.get_tools(key=_KEYS[0])
+
+        assert tools is not None
+        assert events == [
+            "start:mcp-tool-cache",
+            "end:mcp-tool-cache",
+            "start:mcp-tool-cache__epoch",
+            "end:mcp-tool-cache__epoch",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_tools_miss_does_not_read_epoch_marker(self) -> None:
+        backing_store, store, _ = await _seeded_store(keys=[])
+
+        with patch.object(
+            store, "_get_cleared_at", AsyncMock(wraps=store._get_cleared_at)
+        ) as cleared_at_spy:
+            tools = await store.get_tools(key="https://absent.example.com")
+
+        assert tools is None
+        cleared_at_spy.assert_not_awaited()
