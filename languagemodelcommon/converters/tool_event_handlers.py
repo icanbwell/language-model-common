@@ -266,26 +266,38 @@ class ToolEventHandler(StreamContextMixin):
         tool_start_times[tool_key] = time.time()
         if tool_name:
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
+            mapper = self._resolve_display_name_mapper(
+                request_information=request_information
+            )
+            display_name: str = mapper.get_name_for_tool(
+                tool_name=tool_name, tool_input=tool_input
+            )
             tool_start_event = chat_request_wrapper.create_tool_start_sse_event(
                 request_id=request_information.request_id,
                 tool_name=tool_name,
                 tool_input=tool_input_display,
+                display_name=display_name or None,
             )
             if tool_start_event:
                 yield tool_start_event
-            content_text: str = self._resolve_display_name_mapper(
-                request_information=request_information
-            ).get_message_for_tool(tool_name=tool_name, tool_input=tool_input)
-            buffered_chunk = await self._stream_buffer_manager.buffer_content(
-                content_text=content_text,
-            )
-            if buffered_chunk:
-                yield chat_request_wrapper.create_sse_message(
-                    request_id=request_information.request_id,
-                    content=buffered_chunk,
-                    usage_metadata=None,
-                    source="on_tool_start",
+            # A transport that carries typed tool items already told the client
+            # (via `display_name`) what to show; writing the same line into the
+            # answer text would make it indistinguishable from the model's
+            # prose and permanent (BAI-1106).
+            if not chat_request_wrapper.supports_structured_tool_progress:
+                content_text: str = mapper.get_message_for_tool(
+                    tool_name=tool_name, tool_input=tool_input
                 )
+                buffered_chunk = await self._stream_buffer_manager.buffer_content(
+                    content_text=content_text,
+                )
+                if buffered_chunk:
+                    yield chat_request_wrapper.create_sse_message(
+                        request_id=request_information.request_id,
+                        content=buffered_chunk,
+                        usage_metadata=None,
+                        source="on_tool_start",
+                    )
             if chat_request_wrapper.enable_debug_logging:
                 self._stream_debug_output_manager.append_fragment(
                     text=f"\n--- Tool Call: {tool_name} ---\n{json.dumps(tool_input_display, indent=2, default=str)}\n",
@@ -370,6 +382,9 @@ class ToolEventHandler(StreamContextMixin):
                     request_information=request_information,
                 )
 
+            end_display_name: str = self._resolve_display_name_mapper(
+                request_information=request_information
+            ).get_name_for_tool(tool_name=tool_name, tool_input=tool_input)
             tool_end_event = chat_request_wrapper.create_tool_end_sse_event(
                 request_id=request_information.request_id,
                 tool_name=tool_name,
@@ -382,6 +397,7 @@ class ToolEventHandler(StreamContextMixin):
                 structured_output=_extract_structured_output(artifact)
                 if chat_request_wrapper.enable_debug_logging
                 else None,
+                display_name=end_display_name or None,
             )
             if tool_end_event:
                 yield tool_end_event
