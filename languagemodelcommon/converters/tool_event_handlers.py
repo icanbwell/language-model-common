@@ -272,6 +272,21 @@ class ToolEventHandler(StreamContextMixin):
             display_name: str = mapper.get_name_for_tool(
                 tool_name=tool_name, tool_input=tool_input
             )
+            if chat_request_wrapper.supports_structured_tool_progress:
+                # The inline status line (which contains "\n") used to flush
+                # the model's pending text before the tool ran. Without it,
+                # that tail would be emitted after the tool events and merge
+                # into the next model invocation's output, so flush here.
+                flushed = await self._stream_buffer_manager.buffer_content(
+                    content_text="", force_flush=True
+                )
+                if flushed:
+                    yield chat_request_wrapper.create_sse_message(
+                        request_id=request_information.request_id,
+                        content=flushed,
+                        usage_metadata=None,
+                        source="on_tool_start",
+                    )
             tool_start_event = chat_request_wrapper.create_tool_start_sse_event(
                 request_id=request_information.request_id,
                 tool_name=tool_name,

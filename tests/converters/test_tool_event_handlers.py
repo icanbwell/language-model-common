@@ -37,6 +37,7 @@ class _FakeChatRequestWrapper:
         self.image_output_events: list[dict[str, Any]] = []
         self.supports_structured_tool_progress: bool = False
         self.last_tool_start_display_name: str | None = None
+        self.tool_start_event_marker: str | None = None
         self.last_tool_end_display_name: str | None = None
 
     def create_sse_message(
@@ -58,7 +59,7 @@ class _FakeChatRequestWrapper:
         display_name: str | None = None,
     ) -> str | None:
         self.last_tool_start_display_name = display_name
-        return None
+        return self.tool_start_event_marker
 
     def create_tool_end_sse_event(
         self,
@@ -887,6 +888,57 @@ async def test_tool_end_passes_request_scoped_display_name(
         pass
 
     assert wrapper.last_tool_end_display_name == "🔍 Request-Scoped Search"
+
+
+def _handler_with_enabled_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> ToolEventHandler:
+    monkeypatch.setenv("WRITE_TOOL_OUTPUT_TO_FILE", "false")
+    return ToolEventHandler(
+        debug_file_writer=AsyncMock(spec=FileWriter),
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+        tool_display_name_mapper=ToolDisplayNameMapper(),
+        stream_buffer_manager=StreamBufferManager(
+            flush_interval_seconds=10.0, enabled=True
+        ),
+        stream_debug_output_manager=StreamDebugOutputManager(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_start_structured_transport_flushes_pending_text_before_tool_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = _handler_with_enabled_buffer(monkeypatch)
+    assert (
+        await handler._stream_buffer_manager.buffer_content(
+            content_text="Let me check."
+        )
+        is None
+    )
+    wrapper = _FakeChatRequestWrapper()
+    wrapper.supports_structured_tool_progress = True
+    wrapper.tool_start_event_marker = "TOOL_START_EVENT"
+
+    chunks = await _run_tool_start(handler, wrapper)
+
+    assert "Let me check." in chunks
+    assert chunks.index("Let me check.") < chunks.index("TOOL_START_EVENT")
+    assert any("<details>" in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_tool_start_non_structured_transport_inline_text_follows_tool_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = _handler_with_enabled_buffer(monkeypatch)
+    wrapper = _FakeChatRequestWrapper()
+    wrapper.tool_start_event_marker = "TOOL_START_EVENT"
+
+    chunks = await _run_tool_start(handler, wrapper)
+
+    inline_index = next(i for i, c in enumerate(chunks) if "Search Tool" in c)
+    assert chunks.index("TOOL_START_EVENT") < inline_index
 
 
 class TestExtractStructuredOutput:
