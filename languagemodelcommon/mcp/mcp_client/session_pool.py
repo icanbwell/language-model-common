@@ -9,9 +9,11 @@ from typing import Any, Self
 from mcp import ClientSession
 
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    McpProtocolNegotiationMode,
     open_initialized_mcp_session,
 )
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS

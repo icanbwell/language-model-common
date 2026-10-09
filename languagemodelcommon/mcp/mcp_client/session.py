@@ -7,16 +7,17 @@ import random
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import timedelta
-from enum import StrEnum
 from typing import Any
 
 import httpx2
 from mcp import ClientSession
-from mcp.client._probe import negotiate_auto
 from mcp.client.streamable_http import streamable_http_client
 from typing_extensions import NotRequired, TypedDict
 
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 
@@ -34,18 +35,6 @@ DEFAULT_SESSION_RETRY_MAX_ATTEMPTS = 3
 DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS = 0.5
 
 
-class McpProtocolNegotiationMode(StrEnum):
-    """How a client session picks its MCP protocol era (BAI-1118, ADR 0003).
-
-    ``LEGACY`` runs the ``initialize`` handshake only. ``AUTO`` probes
-    ``server/discover`` first and falls back to ``initialize`` when the server
-    does not answer it.
-    """
-
-    LEGACY = "legacy"
-    AUTO = "auto"
-
-
 async def negotiate_session(
     session: ClientSession,
     *,
@@ -57,6 +46,11 @@ async def negotiate_session(
     ``session.initialize()`` directly.
     """
     if mode is McpProtocolNegotiationMode.AUTO:
+        # Private SDK module (ADR 0003). Imported lazily so that an ``mcp``
+        # upgrade that moves it can only break ``auto`` mode, never the
+        # default ``legacy`` path or importing this library at all.
+        from mcp.client._probe import negotiate_auto
+
         await negotiate_auto(session)
         return
     await session.initialize()

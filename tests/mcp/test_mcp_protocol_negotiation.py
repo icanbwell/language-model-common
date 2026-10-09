@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from languagemodelcommon.mcp.mcp_client.session import (
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
     McpProtocolNegotiationMode,
+)
+from languagemodelcommon.mcp.mcp_client.session import (
     negotiate_session,
     open_initialized_mcp_session,
 )
@@ -52,7 +54,7 @@ def test_env_var_maps_to_mode(
 async def test_legacy_mode_only_initializes() -> None:
     session = MagicMock()
     session.initialize = AsyncMock()
-    with patch(f"{SESSION_MODULE}.negotiate_auto", new=AsyncMock()) as auto:
+    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
         await negotiate_session(session, mode=McpProtocolNegotiationMode.LEGACY)
 
     session.initialize.assert_awaited_once()
@@ -63,7 +65,7 @@ async def test_legacy_mode_only_initializes() -> None:
 async def test_default_mode_is_legacy() -> None:
     session = MagicMock()
     session.initialize = AsyncMock()
-    with patch(f"{SESSION_MODULE}.negotiate_auto", new=AsyncMock()) as auto:
+    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
         await negotiate_session(session)
 
     session.initialize.assert_awaited_once()
@@ -74,7 +76,7 @@ async def test_default_mode_is_legacy() -> None:
 async def test_auto_mode_delegates_to_sdk_probe() -> None:
     session = MagicMock()
     session.initialize = AsyncMock()
-    with patch(f"{SESSION_MODULE}.negotiate_auto", new=AsyncMock()) as auto:
+    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
         await negotiate_session(session, mode=McpProtocolNegotiationMode.AUTO)
 
     auto.assert_awaited_once_with(session)
@@ -136,6 +138,15 @@ def test_sdk_probe_symbol_is_importable() -> None:
     probe = importlib.import_module("mcp.client._probe")
 
     assert callable(probe.negotiate_auto)
+
+
+def test_session_module_has_no_import_time_reference_to_sdk_probe() -> None:
+    """The private probe is imported lazily inside ``negotiate_session``, so an
+    ``mcp`` upgrade that moves it can only break ``auto`` mode, never importing
+    this library or the default legacy path."""
+    from languagemodelcommon.mcp.mcp_client import session as session_module
+
+    assert not hasattr(session_module, "negotiate_auto")
 
 
 @pytest.fixture

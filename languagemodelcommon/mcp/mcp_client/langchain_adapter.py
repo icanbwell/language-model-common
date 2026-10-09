@@ -16,9 +16,11 @@ from languagemodelcommon.mcp.mcp_client.content_conversion import (
     ToolMessageContentBlock,
     convert_call_tool_result,
 )
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    McpProtocolNegotiationMode,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_invocation import (
@@ -138,6 +140,9 @@ def mcp_tool_to_langchain_tool(
 
     When ``session_pool`` is provided, sessions are reused across calls
     to the same MCP server URL within the pool's scope.
+
+    ``negotiation_mode`` applies only when no ``session_pool`` is given;
+    pooled sessions use the pool's own mode.
     """
 
     mcp_callbacks = (

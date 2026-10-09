@@ -16,9 +16,11 @@ from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallResult,
     ToolCallInterceptor,
 )
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
-    McpProtocolNegotiationMode,
     open_initialized_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
@@ -484,6 +486,10 @@ async def call_mcp_tool_raw(
     behavior: the underlying session raises rather than returning one.
     Pass True only if the caller actually checks
     ``isinstance(result, InputRequiredResult)``.
+
+    ``negotiation_mode`` applies only to the one-shot session opened when no
+    ``session_pool`` is given. Pooled sessions use the pool's own mode
+    (``McpSessionPool(negotiation_mode=...)``), so set both consistently.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
