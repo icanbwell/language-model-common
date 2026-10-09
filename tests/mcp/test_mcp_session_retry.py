@@ -1,7 +1,8 @@
 """Tests for BAI-889: retrying transient MCP session-establishment failures.
 
-`open_initialized_mcp_session` wraps `create_mcp_session` + `session.initialize()`
-with bounded, backed-off retry. Scope is strictly session establishment --
+`open_initialized_mcp_session` wraps `create_mcp_session` (which now completes
+the connect-time handshake on entry, via the SDK ``Client``) with bounded,
+backed-off retry. Scope is strictly session establishment --
 before any tool call reaches the server -- so retrying is safe even for
 non-idempotent tools; a failure during `call_tool` itself must never be
 retried by this function.
@@ -14,6 +15,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
     open_initialized_mcp_session,
@@ -40,7 +44,7 @@ class TestOpenInitializedMcpSession:
             patch(
                 "languagemodelcommon.mcp.mcp_client.session.create_mcp_session",
                 side_effect=lambda *args, **kwargs: _session_cm(session),
-            ),
+            ) as mock_create,
             patch(
                 "languagemodelcommon.mcp.mcp_client.session.asyncio.sleep"
             ) as mock_sleep,
@@ -51,7 +55,11 @@ class TestOpenInitializedMcpSession:
             await cm.__aexit__(None, None, None)
 
         assert returned_session is session
-        session.initialize.assert_awaited_once()
+        mock_create.assert_called_once()
+        assert (
+            mock_create.call_args.kwargs["negotiation_mode"]
+            is McpProtocolNegotiationMode.LEGACY
+        )
         mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -62,11 +70,14 @@ class TestOpenInitializedMcpSession:
         def _next_cm(*args: Any, **kwargs: Any) -> Any:
             if len(attempts) == 0:
                 failing_session = AsyncMock()
-                failing_session.initialize = AsyncMock(
-                    side_effect=ConnectionError("connection refused")
-                )
                 attempts.append(failing_session)
-                return _session_cm(failing_session)
+
+                @asynccontextmanager
+                async def _failing_handshake() -> AsyncIterator[AsyncMock]:
+                    raise ConnectionError("connection refused")
+                    yield  # pragma: no cover
+
+                return _failing_handshake()
             attempts.append(good_session)
             return _session_cm(good_session)
 
@@ -120,30 +131,25 @@ class TestOpenInitializedMcpSession:
         assert call_count == 3
 
     @pytest.mark.asyncio
-    async def test_cancellation_during_initialize_closes_session_and_propagates(
+    async def test_cancellation_during_handshake_propagates_without_retry(
         self,
     ) -> None:
-        """A CancelledError during `initialize()` must still close the
-        underlying session (matching the base branch's `async with`
-        cleanup) and must propagate immediately, without retrying."""
-        session = AsyncMock()
-        session.initialize = AsyncMock(side_effect=asyncio.CancelledError())
-        aexit_calls: list[Any] = []
-
-        @asynccontextmanager
-        async def _cm() -> AsyncIterator[AsyncMock]:
-            try:
-                yield session
-            except BaseException as exc:
-                aexit_calls.append(exc)
-                raise
-
+        """A CancelledError during the connect-time handshake (which runs on
+        entering the session cm) must propagate immediately, without retrying.
+        Closing the transport on that path is owned by the SDK's context
+        managers, not by this function."""
         call_count = 0
 
         def _next_cm(*args: Any, **kwargs: Any) -> Any:
             nonlocal call_count
             call_count += 1
-            return _cm()
+
+            @asynccontextmanager
+            async def _cancelled_handshake() -> AsyncIterator[AsyncMock]:
+                raise asyncio.CancelledError()
+                yield  # pragma: no cover
+
+            return _cancelled_handshake()
 
         with (
             patch(
@@ -161,8 +167,6 @@ class TestOpenInitializedMcpSession:
                 )
 
         assert call_count == 1
-        assert len(aexit_calls) == 1
-        assert isinstance(aexit_calls[0], asyncio.CancelledError)
         mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio

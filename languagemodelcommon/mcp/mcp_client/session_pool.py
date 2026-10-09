@@ -9,6 +9,9 @@ from typing import Any, Self
 from mcp import ClientSession
 
 from languagemodelcommon.mcp.callbacks import _MCPCallbacks
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
     open_initialized_mcp_session,
@@ -45,9 +48,16 @@ class _PooledSession:
         config: MCPConnectionConfig,
         *,
         mcp_callbacks: _MCPCallbacks | None = None,
+        negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
     ) -> None:
         """Launch the background task and wait until the session is ready."""
-        self._task = asyncio.create_task(self._run(config, mcp_callbacks=mcp_callbacks))
+        self._task = asyncio.create_task(
+            self._run(
+                config,
+                mcp_callbacks=mcp_callbacks,
+                negotiation_mode=negotiation_mode,
+            )
+        )
         await self._ready_event.wait()
         if self._error is not None:
             raise self._error
@@ -57,6 +67,7 @@ class _PooledSession:
         config: MCPConnectionConfig,
         *,
         mcp_callbacks: _MCPCallbacks | None = None,
+        negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
     ) -> None:
         """Enter the session CM, signal readiness, then wait for close.
 
@@ -68,7 +79,9 @@ class _PooledSession:
         """
         try:
             self._cm, session = await open_initialized_mcp_session(
-                config, mcp_callbacks=mcp_callbacks
+                config,
+                mcp_callbacks=mcp_callbacks,
+                negotiation_mode=negotiation_mode,
             )
         except BaseException as exc:
             self._error = exc
@@ -124,9 +137,22 @@ class McpSessionPool:
     ``streamable_http_client``.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
+    ) -> None:
+        # One mode per pool (and per process), so the (url, headers) key
+        # never mixes legacy and modern sessions to the same URL. If a
+        # per-server mode is added, it must become part of the key.
+        self._negotiation_mode = negotiation_mode
         self._sessions: dict[str, _PooledSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def negotiation_mode(self) -> McpProtocolNegotiationMode:
+        """The protocol negotiation mode every session in this pool uses."""
+        return self._negotiation_mode
 
     @staticmethod
     def _cache_key(config: MCPConnectionConfig) -> str:
@@ -203,7 +229,11 @@ class McpSessionPool:
                 return pooled.session
 
             pooled = _PooledSession(url=url)
-            await pooled.start(config, mcp_callbacks=mcp_callbacks)
+            await pooled.start(
+                config,
+                mcp_callbacks=mcp_callbacks,
+                negotiation_mode=self._negotiation_mode,
+            )
             self._sessions[key] = pooled
             logger.info("Pooled new MCP session for %s", url)
             return pooled.session

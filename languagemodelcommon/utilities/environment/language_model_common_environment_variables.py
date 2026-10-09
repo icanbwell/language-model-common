@@ -8,6 +8,9 @@ from oidcauthlib.utilities.environment.oidc_environment_variables import (
     OidcEnvironmentVariables,
 )
 
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.configs.prompt_library.prompt_library_environment_variables import (
     PromptLibraryEnvironmentVariables,
 )
@@ -344,6 +347,26 @@ class LanguageModelCommonEnvironmentVariables(
                 DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS,
             )
             return DEFAULT_MCP_TOOL_HEARTBEAT_INTERVAL_SECONDS
+
+    @property
+    def mcp_protocol_negotiation_mode(self) -> McpProtocolNegotiationMode:
+        """How MCP client sessions negotiate the protocol version (BAI-1118).
+
+        ``legacy`` (default) runs the ``initialize`` handshake only; ``auto``
+        probes ``server/discover`` and falls back to ``initialize``. An
+        unrecognized value logs a warning and uses ``legacy``."""
+        value = os.environ.get("MCP_PROTOCOL_NEGOTIATION_MODE")
+        if not value:
+            return McpProtocolNegotiationMode.LEGACY
+        try:
+            return McpProtocolNegotiationMode(value.strip().lower())
+        except ValueError:
+            logger.warning(
+                "Invalid MCP_PROTOCOL_NEGOTIATION_MODE value '%s'; using default=%s",
+                value,
+                McpProtocolNegotiationMode.LEGACY,
+            )
+            return McpProtocolNegotiationMode.LEGACY
 
     @property
     def emit_tool_heartbeat_in_chat_completions(self) -> bool:

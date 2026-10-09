@@ -16,6 +16,9 @@ from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallResult,
     ToolCallInterceptor,
 )
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
     open_initialized_mcp_session,
@@ -304,6 +307,7 @@ def _make_execute_tool(
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
+    negotiation_mode: McpProtocolNegotiationMode | None = None,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -318,7 +322,29 @@ def _make_execute_tool(
     Per-tool ``execution.task_support`` is checked from the already-cached
     tool list so that tools with ``"forbidden"`` (or no declaration) use
     normal call_tool.
+
+    ``negotiation_mode`` selects the handshake for the one-shot session
+    opened when no ``session_pool`` is given (default ``legacy``). Pooled
+    sessions use the pool's own mode, so a ``negotiation_mode`` that
+    conflicts with ``session_pool.negotiation_mode`` raises ``ValueError``
+    here rather than being silently ignored.
     """
+    if (
+        session_pool is not None
+        and negotiation_mode is not None
+        and negotiation_mode is not session_pool.negotiation_mode
+    ):
+        raise ValueError(
+            f"negotiation_mode={negotiation_mode.value!r} conflicts with the "
+            f"session pool's mode {session_pool.negotiation_mode.value!r}; "
+            "pooled sessions use the pool's mode. Omit negotiation_mode or "
+            "construct the pool with the same mode."
+        )
+    one_shot_negotiation_mode = (
+        negotiation_mode
+        if negotiation_mode is not None
+        else McpProtocolNegotiationMode.LEGACY
+    )
 
     async def execute_tool(request: MCPToolCallRequest) -> MCPToolCallResult:
         effective_config = config
@@ -383,7 +409,9 @@ def _make_execute_tool(
         # internally (BAI-889); the tool call itself below is never retried.
         captured_exception = None
         cm, session = await open_initialized_mcp_session(
-            effective_config, mcp_callbacks=mcp_callbacks
+            effective_config,
+            mcp_callbacks=mcp_callbacks,
+            negotiation_mode=one_shot_negotiation_mode,
         )
         try:
             result: CallToolResult | InputRequiredResult
@@ -464,6 +492,7 @@ async def call_mcp_tool_raw(
     input_responses: InputResponses | None = None,
     request_state: str | None = None,
     allow_input_required: bool = False,
+    negotiation_mode: McpProtocolNegotiationMode | None = None,
 ) -> MCPToolCallResult:
     """Call an MCP tool and return the raw CallToolResult (or, for a
     guard-tool-gated tool, an InputRequiredResult).
@@ -479,6 +508,12 @@ async def call_mcp_tool_raw(
     behavior: the underlying session raises rather than returning one.
     Pass True only if the caller actually checks
     ``isinstance(result, InputRequiredResult)``.
+
+    ``negotiation_mode`` selects the handshake for the one-shot session
+    opened when no ``session_pool`` is given (default ``legacy``). Pooled
+    sessions use the pool's own mode
+    (``McpSessionPool(negotiation_mode=...)``); a conflicting value raises
+    ``ValueError``.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
@@ -494,6 +529,7 @@ async def call_mcp_tool_raw(
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
+        negotiation_mode=negotiation_mode,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors
