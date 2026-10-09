@@ -7,10 +7,12 @@ import random
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import timedelta
+from enum import StrEnum
 from typing import Any
 
 import httpx2
 from mcp import ClientSession
+from mcp.client._probe import negotiate_auto
 from mcp.client.streamable_http import streamable_http_client
 from typing_extensions import NotRequired, TypedDict
 
@@ -30,6 +32,34 @@ DEFAULT_SSE_READ_TIMEOUT = timedelta(seconds=300)
 # while giving a fresh request a chance to land on a healthy pod.
 DEFAULT_SESSION_RETRY_MAX_ATTEMPTS = 3
 DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS = 0.5
+
+
+class McpProtocolNegotiationMode(StrEnum):
+    """How a client session picks its MCP protocol era (BAI-1118, ADR 0003).
+
+    ``LEGACY`` runs the ``initialize`` handshake only. ``AUTO`` probes
+    ``server/discover`` first and falls back to ``initialize`` when the server
+    does not answer it.
+    """
+
+    LEGACY = "legacy"
+    AUTO = "auto"
+
+
+async def negotiate_session(
+    session: ClientSession,
+    *,
+    mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
+) -> None:
+    """Complete the connect-time handshake on *session* per *mode*.
+
+    The single place that decides the handshake, so callers never call
+    ``session.initialize()`` directly.
+    """
+    if mode is McpProtocolNegotiationMode.AUTO:
+        await negotiate_auto(session)
+        return
+    await session.initialize()
 
 
 class McpSessionError(Exception):
@@ -182,8 +212,10 @@ async def open_initialized_mcp_session(
     mcp_callbacks: _MCPCallbacks | None = None,
     max_attempts: int = DEFAULT_SESSION_RETRY_MAX_ATTEMPTS,
     base_delay_seconds: float = DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS,
+    negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
 ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
-    """Open an MCP session and complete its ``initialize()`` handshake,
+    """Open an MCP session and complete its connect-time handshake
+    (``negotiate_session``, per *negotiation_mode*),
     retrying transient failures with exponential backoff and full jitter.
 
     Retries are scoped strictly to session *establishment* — connect and
@@ -203,7 +235,7 @@ async def open_initialized_mcp_session(
         cm = create_mcp_session(config, mcp_callbacks=mcp_callbacks)
         try:
             session = await cm.__aenter__()
-            await session.initialize()
+            await negotiate_session(session, mode=negotiation_mode)
         except BaseException as exc:
             with contextlib.suppress(Exception):
                 await cm.__aexit__(type(exc), exc, exc.__traceback__)

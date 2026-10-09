@@ -18,6 +18,7 @@ from languagemodelcommon.mcp.interceptors.types import (
 )
 from languagemodelcommon.mcp.mcp_client.session import (
     MCPConnectionConfig,
+    McpProtocolNegotiationMode,
     open_initialized_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
@@ -304,6 +305,7 @@ def _make_execute_tool(
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
+    negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -383,7 +385,9 @@ def _make_execute_tool(
         # internally (BAI-889); the tool call itself below is never retried.
         captured_exception = None
         cm, session = await open_initialized_mcp_session(
-            effective_config, mcp_callbacks=mcp_callbacks
+            effective_config,
+            mcp_callbacks=mcp_callbacks,
+            negotiation_mode=negotiation_mode,
         )
         try:
             result: CallToolResult | InputRequiredResult
@@ -464,6 +468,7 @@ async def call_mcp_tool_raw(
     input_responses: InputResponses | None = None,
     request_state: str | None = None,
     allow_input_required: bool = False,
+    negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
 ) -> MCPToolCallResult:
     """Call an MCP tool and return the raw CallToolResult (or, for a
     guard-tool-gated tool, an InputRequiredResult).
@@ -494,6 +499,7 @@ async def call_mcp_tool_raw(
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
+        negotiation_mode=negotiation_mode,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors

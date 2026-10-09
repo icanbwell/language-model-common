@@ -16,7 +16,10 @@ from languagemodelcommon.mcp.mcp_client.content_conversion import (
     ToolMessageContentBlock,
     convert_call_tool_result,
 )
-from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
+from languagemodelcommon.mcp.mcp_client.session import (
+    MCPConnectionConfig,
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 from languagemodelcommon.mcp.mcp_client.tool_invocation import (
     _make_execute_tool,
@@ -126,6 +129,7 @@ def mcp_tool_to_langchain_tool(
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
+    negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
 ) -> BaseTool:
     """Convert an MCP Tool to a LangChain BaseTool.
 
@@ -149,6 +153,7 @@ def mcp_tool_to_langchain_tool(
         session_pool=session_pool,
         tool_list_cache=tool_list_cache,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
+        negotiation_mode=negotiation_mode,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors

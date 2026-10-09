@@ -1,6 +1,6 @@
 # Configurable MCP protocol negotiation mode (`legacy` | `auto`)
 
-* Status: proposed
+* Status: accepted
 * Deciders: language-model-common maintainers, baileyai maintainers
 * Ticket: BAI-1118
 * Date: 2026-10-08
@@ -108,9 +108,10 @@ Chosen option: **C**.
   library to a private module. Alternatives: build the session through the
   SDK's public `Client(mode="auto")` (a larger change, since this library
   owns the transport, pool and callbacks), or reimplement the probe here
-  against public `ClientSession` methods (`send_discover`). Decide before
-  implementation; pin the `mcp` version range and add a test that fails if
-  the symbol moves.
+  against public `ClientSession` methods (`send_discover`). Decided: import
+  `negotiate_auto` privately, isolated inside `negotiate_session`, with a
+  contract test (`test_sdk_probe_symbol_is_importable`) that fails if an `mcp`
+  upgrade moves the symbol.
 - **Extra round trip against legacy servers.** In `auto`, a legacy server
   costs one rejected `server/discover` before the handshake. Pooled sessions
   amortize this. Callers that open a fresh session per call (baileyai's
