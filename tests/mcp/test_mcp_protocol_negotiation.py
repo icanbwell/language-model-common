@@ -226,3 +226,68 @@ async def test_pool_passes_its_mode_to_session_open() -> None:
         opened.await_args_list[0].kwargs["negotiation_mode"]
         is McpProtocolNegotiationMode.AUTO
     )
+
+
+def _patch_one_shot_session(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Patch the one-shot session open and tool call; return the open mock."""
+    from mcp.types import CallToolResult, TextContent
+
+    session = AsyncMock()
+    session.get_server_capabilities = MagicMock(return_value=None)
+    mock_cm = AsyncMock()
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    opened = AsyncMock(return_value=(mock_cm, session))
+    monkeypatch.setattr(
+        "languagemodelcommon.mcp.mcp_client.tool_invocation.open_initialized_mcp_session",
+        opened,
+    )
+    monkeypatch.setattr(
+        "languagemodelcommon.mcp.mcp_client.tool_invocation._execute_tool_call_with_heartbeat",
+        AsyncMock(
+            return_value=CallToolResult(content=[TextContent(type="text", text="ok")])
+        ),
+    )
+    return opened
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_tool_raw_forwards_mode_on_one_shot_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from languagemodelcommon.mcp.mcp_client.tool_invocation import call_mcp_tool_raw
+
+    opened = _patch_one_shot_session(monkeypatch)
+
+    await call_mcp_tool_raw(
+        config={"url": "https://example.test/mcp"},
+        tool_name="some_tool",
+        arguments={},
+        server_name="some-server",
+        negotiation_mode=McpProtocolNegotiationMode.AUTO,
+    )
+
+    assert (
+        opened.await_args_list[0].kwargs["negotiation_mode"]
+        is McpProtocolNegotiationMode.AUTO
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_tool_raw_defaults_to_legacy_on_one_shot_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from languagemodelcommon.mcp.mcp_client.tool_invocation import call_mcp_tool_raw
+
+    opened = _patch_one_shot_session(monkeypatch)
+
+    await call_mcp_tool_raw(
+        config={"url": "https://example.test/mcp"},
+        tool_name="some_tool",
+        arguments={},
+        server_name="some-server",
+    )
+
+    assert (
+        opened.await_args_list[0].kwargs["negotiation_mode"]
+        is McpProtocolNegotiationMode.LEGACY
+    )

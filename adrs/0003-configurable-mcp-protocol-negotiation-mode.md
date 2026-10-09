@@ -1,6 +1,6 @@
 # Configurable MCP protocol negotiation mode (`legacy` | `auto`)
 
-* Status: accepted
+* Status: proposed
 * Deciders: language-model-common maintainers, baileyai maintainers
 * Ticket: BAI-1118
 * Date: 2026-10-08
@@ -91,6 +91,10 @@ Chosen option: **C**.
    covers it and retries stay scoped to session establishment only.
 3. **Callers.** Pass the mode into `open_initialized_mcp_session`, with
    `legacy` as the default argument so existing call sites are unchanged.
+   `McpSessionPool` takes the mode in its constructor and uses it for every
+   pooled session, so the `negotiation_mode` argument of `call_mcp_tool_raw`
+   and `mcp_tool_to_langchain_tool` applies only to the one-shot path taken
+   when no pool is given.
    Document and expose a helper so baileyai's three direct
    `session.initialize()` calls can move onto it in a follow-up change in that
    repo.
@@ -158,8 +162,9 @@ Chosen option: **C**.
 
 ## Open Questions
 
-- Public `Client(mode="auto")`, a thin reimplementation of the probe, or a
-  private import? (See Risks.)
+- ~~Public `Client(mode="auto")`, a thin reimplementation of the probe, or a
+  private import?~~ Resolved in the implementation: private import, lazy and
+  isolated in `negotiate_session` (see Risks).
 - Is a per-server override needed in the first release, or can it wait for a
   server that cannot handle `auto`?
 - Do any third-party MCP servers in the catalog mishandle `server/discover`?
