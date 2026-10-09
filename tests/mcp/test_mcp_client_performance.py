@@ -344,16 +344,14 @@ class TestMcpSessionPool:
 
     @pytest.mark.asyncio
     async def test_initialize_failure_does_not_leak_transport(self) -> None:
-        """If session.initialize() fails, the CM should still be cleaned up
+        """If the connect-time handshake fails (it runs on entering the CM),
+        the CM should still be cleaned up
         on every retry attempt (BAI-889: session establishment now retries
         transient failures, so this happens `DEFAULT_SESSION_RETRY_MAX_ATTEMPTS`
         times, not once)."""
         config: MCPConnectionConfig = {"url": "https://example.com"}
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock(side_effect=RuntimeError("init failed"))
-
         mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("init failed"))
         mock_cm.__aexit__ = AsyncMock(return_value=None)
 
         with (

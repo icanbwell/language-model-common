@@ -67,10 +67,12 @@ move in lockstep.
 
 ### Option C: Env var selects `legacy` or `auto` (chosen)
 
-`auto` runs the SDK's `negotiate_auto`: probe `server/discover`, adopt the
-result if the server answers, otherwise fall back to the legacy `initialize`
-handshake. A modern-only server that shares no version raises, and a legacy
-server falls back. The default stays `legacy`, which is the current behavior.
+`auto` uses the SDK `Client`'s `mode="auto"`: probe `server/discover`, adopt
+the result if the server answers, otherwise fall back to the legacy
+`initialize` handshake. A modern-only server that shares no version raises,
+and a legacy server falls back. `legacy` is the same `Client` with
+`mode="legacy"`, the `initialize` handshake. The default stays `legacy`, which
+is the current behavior.
 
 ## Decision Outcome
 
@@ -84,11 +86,17 @@ Chosen option: **C**.
    `auto`. An unrecognized value logs a warning and uses `legacy`, matching
    how `mcp_tool_heartbeat_interval_seconds` treats an invalid value. Callers
    read it through the injected env-vars class, not `os.environ`.
-2. **One handshake function.** Add `negotiate_session(session, *, mode)` in
-   `session.py`. `legacy` calls `session.initialize()`. `auto` calls the
-   SDK's probe-then-fallback. `open_initialized_mcp_session` calls it in place
-   of `session.initialize()`, so the existing connect retry with backoff
-   covers it and retries stay scoped to session establishment only.
+2. **One handshake path.** `create_mcp_session` takes an optional
+   `negotiation_mode`. With a mode it enters the SDK's public `Client` over
+   this library's own httpx2 client (`Client(server=streamable_http_client(url,
+   http_client=...), mode=..., cache=None)`) and yields `client.session`,
+   already negotiated. With no mode it behaves as before and the caller runs
+   `initialize()` itself. `open_initialized_mcp_session` passes the mode, so
+   the existing connect retry with backoff covers the handshake and retries
+   stay scoped to session establishment only. The library uses
+   `client.session`, never `client.call_tool`, because it drives the
+   `InputRequiredResult` loop itself; `cache=None` leaves caching to
+   `ToolListCache`.
 3. **Callers.** Pass the mode into `open_initialized_mcp_session`, with
    `legacy` as the default argument so existing call sites are unchanged.
    `McpSessionPool` takes the mode in its constructor and uses it for every
@@ -108,15 +116,20 @@ Chosen option: **C**.
 
 ### Risks and mitigations
 
-- **Private SDK API.** `negotiate_auto` lives in `mcp.client._probe` and is
-  only re-exported to `mcp.client.client.Client`. Importing it ties the
-  library to a private module. Alternatives: build the session through the
-  SDK's public `Client(mode="auto")` (a larger change, since this library
-  owns the transport, pool and callbacks), or reimplement the probe here
-  against public `ClientSession` methods (`send_discover`). Decided: import
-  `negotiate_auto` privately, isolated inside `negotiate_session`, with a
-  contract test (`test_sdk_probe_symbol_is_importable`) that fails if an `mcp`
-  upgrade moves the symbol.
+- **Switching to `Client`.** The library builds the session through the
+  SDK's public `Client` instead of constructing `ClientSession` directly, so
+  it no longer imports any private SDK module. Verified against the SDK's
+  `MCPServer` over streamable HTTP, stateless and stateful (see Test Plan).
+  Not yet verified: this library's custom httpx2 client factory under proxy
+  and redirect conditions, and real baileyai-skills-service and mcp-fhir-agent
+  servers. `Client` also offers sampling, elicitation, roots, extensions and
+  a response cache; none are enabled here, and `cache=None` keeps the SDK
+  cache from sitting in front of `ToolListCache`.
+- **Callers that run `initialize()` themselves.** `create_mcp_session`
+  without a mode is unchanged, so they keep working. A session created with a
+  mode is already negotiated; calling `initialize()` on it again would repeat
+  the handshake. Callers moving to a mode should go through
+  `open_initialized_mcp_session`.
 - **Extra round trip against legacy servers.** In `auto`, a legacy server
   costs one rejected `server/discover` before the handshake. Pooled sessions
   amortize this. Callers that open a fresh session per call (baileyai's
@@ -142,7 +155,8 @@ Chosen option: **C**.
   revert after.
 - Good: the handshake decision lives in one function, which also fixes the
   direct `initialize()` calls bypassing retry.
-- Bad: new dependency on an SDK probe function that is not public API today.
+- Good: no dependency on a private SDK module; the library uses the public
+  `Client`.
 - Bad: one extra round trip per fresh session against legacy servers when
   `auto` is on.
 - Bad: the mode is per process, not per server, until a follow-up adds an
@@ -150,22 +164,24 @@ Chosen option: **C**.
 
 ## Test Plan
 
-- Unit: `negotiate_session` with `legacy` calls `initialize()` only; with
-  `auto` adopts a discover result, falls back on a legacy rejection, and
-  raises on a modern-only server with no shared version. Parametrized over the
-  setting's accepted, empty and invalid values.
+- Unit: the setting's accepted, empty and invalid values (parametrized).
 - Unit: `open_initialized_mcp_session` retries on a transient failure in both
-  modes, and a cancellation propagates unretried.
-- Integration (local): connect to baileyai-skills-service and mcp-fhir-agent
-  in both modes; confirm a guard-tool pause and resume completes in `auto`.
-- Contract check: the SDK symbol used for the probe is importable under the
-  pinned `mcp` range.
+  modes, and a cancellation propagates unretried. A mode that conflicts with
+  the pool's raises.
+- Integration (automated, runs in CI): the SDK's `MCPServer` over streamable
+  HTTP on a loopback port, stateless and stateful. `legacy` ends on a
+  handshake-era version, `auto` on a modern one, `auto` falls back to legacy
+  when `server/discover` is rejected, and one-shot and pooled
+  `call_mcp_tool_raw` work in both modes.
+- Integration (manual, before any environment above dev uses `auto`): connect
+  to baileyai-skills-service and mcp-fhir-agent in both modes; confirm a
+  guard-tool pause and resume completes in `auto`.
 
 ## Open Questions
 
 - ~~Public `Client(mode="auto")`, a thin reimplementation of the probe, or a
-  private import?~~ Resolved in the implementation: private import, lazy and
-  isolated in `negotiate_session` (see Risks).
+  private import?~~ Resolved in the implementation: the SDK's public
+  `Client`; no private import.
 - Is a per-server override needed in the first release, or can it wait for a
   server that cannot handle `auto`?
 - Do any third-party MCP servers in the catalog mishandle `server/discover`?

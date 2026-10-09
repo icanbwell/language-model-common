@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Any
 
 import httpx2
-from mcp import ClientSession
+from mcp import Client, ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from typing_extensions import NotRequired, TypedDict
 
@@ -33,27 +33,6 @@ DEFAULT_SSE_READ_TIMEOUT = timedelta(seconds=300)
 # while giving a fresh request a chance to land on a healthy pod.
 DEFAULT_SESSION_RETRY_MAX_ATTEMPTS = 3
 DEFAULT_SESSION_RETRY_BASE_DELAY_SECONDS = 0.5
-
-
-async def negotiate_session(
-    session: ClientSession,
-    *,
-    mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
-) -> None:
-    """Complete the connect-time handshake on *session* per *mode*.
-
-    The single place that decides the handshake, so callers never call
-    ``session.initialize()`` directly.
-    """
-    if mode is McpProtocolNegotiationMode.AUTO:
-        # Private SDK module (ADR 0003). Imported lazily so that an ``mcp``
-        # upgrade that moves it can only break ``auto`` mode, never the
-        # default ``legacy`` path or importing this library at all.
-        from mcp.client._probe import negotiate_auto
-
-        await negotiate_auto(session)
-        return
-    await session.initialize()
 
 
 class McpSessionError(Exception):
@@ -101,8 +80,16 @@ async def create_mcp_session(
     config: MCPConnectionConfig,
     *,
     mcp_callbacks: _MCPCallbacks | None = None,
+    negotiation_mode: McpProtocolNegotiationMode | None = None,
 ) -> AsyncIterator[ClientSession]:
-    """Create an MCP client session using streamable HTTP transport."""
+    """Create an MCP client session using streamable HTTP transport.
+
+    With ``negotiation_mode=None`` (the default) the yielded session has not
+    completed any handshake; the caller runs ``session.initialize()`` itself.
+    With a mode, the SDK's ``Client`` negotiates the protocol version on entry
+    (``legacy``: ``initialize``; ``auto``: probe ``server/discover`` and fall
+    back to ``initialize``) and the yielded ``client.session`` is ready to use.
+    """
     url = config["url"]
     headers = config.get("headers")
     timeout = config.get("timeout", DEFAULT_TIMEOUT)
@@ -135,15 +122,25 @@ async def create_mcp_session(
         # streamable_http_client only manages the http_client's lifecycle
         # when it creates one itself (http_client=None) -- since we always
         # pass a pre-built client, we own closing it.
-        async with (
-            http_client,
-            streamable_http_client(
-                url,
-                http_client=http_client,
-            ) as (read, write),
-            ClientSession(read, write, **session_kwargs) as session,
-        ):
-            yield session
+        async with http_client:
+            transport = streamable_http_client(url, http_client=http_client)
+            if negotiation_mode is None:
+                async with (
+                    transport as (read, write),
+                    ClientSession(read, write, **session_kwargs) as session,
+                ):
+                    yield session
+            else:
+                # Use ``client.session`` (not ``client.call_tool``): the
+                # library drives the SEP-2322 InputRequiredResult loop itself,
+                # and ``cache=None`` leaves caching to ``ToolListCache``.
+                async with Client(
+                    server=transport,
+                    mode=negotiation_mode.value,
+                    cache=None,
+                    **session_kwargs,
+                ) as client:
+                    yield client.session
     except httpx2.ConnectError as e:
         raise McpSessionError(
             f"Connection refused — is the MCP server running at {url}? "
@@ -209,7 +206,7 @@ async def open_initialized_mcp_session(
     negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
 ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
     """Open an MCP session and complete its connect-time handshake
-    (``negotiate_session``, per *negotiation_mode*),
+    (the SDK ``Client`` negotiates per *negotiation_mode*),
     retrying transient failures with exponential backoff and full jitter.
 
     Retries are scoped strictly to session *establishment* — connect and
@@ -226,10 +223,13 @@ async def open_initialized_mcp_session(
     """
     last_exc: BaseException | None = None
     for attempt in range(max_attempts):
-        cm = create_mcp_session(config, mcp_callbacks=mcp_callbacks)
+        cm = create_mcp_session(
+            config,
+            mcp_callbacks=mcp_callbacks,
+            negotiation_mode=negotiation_mode,
+        )
         try:
             session = await cm.__aenter__()
-            await negotiate_session(session, mode=negotiation_mode)
         except BaseException as exc:
             with contextlib.suppress(Exception):
                 await cm.__aexit__(type(exc), exc, exc.__traceback__)

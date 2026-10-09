@@ -1,7 +1,6 @@
 """BAI-1118 / ADR 0003: configurable MCP protocol negotiation mode."""
 
-import importlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +10,6 @@ from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
     McpProtocolNegotiationMode,
 )
 from languagemodelcommon.mcp.mcp_client.session import (
-    negotiate_session,
     open_initialized_mcp_session,
 )
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
@@ -50,146 +48,56 @@ def test_env_var_maps_to_mode(
     )
 
 
-@pytest.mark.asyncio
-async def test_legacy_mode_only_initializes() -> None:
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
-        await negotiate_session(session, mode=McpProtocolNegotiationMode.LEGACY)
-
-    session.initialize.assert_awaited_once()
-    auto.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_default_mode_is_legacy() -> None:
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
-        await negotiate_session(session)
-
-    session.initialize.assert_awaited_once()
-    auto.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_auto_mode_delegates_to_sdk_probe() -> None:
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    with patch("mcp.client._probe.negotiate_auto", new=AsyncMock()) as auto:
-        await negotiate_session(session, mode=McpProtocolNegotiationMode.AUTO)
-
-    auto.assert_awaited_once_with(session)
-    session.initialize.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_auto_mode_adopts_discover_result_without_initialize() -> None:
-    from mcp_types import DiscoverResult
-    from mcp_types.version import MODERN_PROTOCOL_VERSIONS
-
-    modern = MODERN_PROTOCOL_VERSIONS[-1]
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    session.adopt = MagicMock()
-    session.send_discover = AsyncMock(return_value={})
-
-    with patch.object(
-        DiscoverResult,
-        "model_validate",
-        return_value=MagicMock(supported_versions=[modern]),
-    ):
-        await negotiate_session(session, mode=McpProtocolNegotiationMode.AUTO)
-
-    session.adopt.assert_called_once()
-    session.initialize.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_auto_mode_falls_back_to_initialize_on_legacy_rejection() -> None:
-    from mcp.shared.exceptions import MCPError
-
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    session.send_discover = AsyncMock(
-        side_effect=MCPError(code=-32601, message="Method not found")
-    )
-
-    await negotiate_session(session, mode=McpProtocolNegotiationMode.AUTO)
-
-    session.initialize.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_auto_mode_propagates_transport_errors() -> None:
-    session = MagicMock()
-    session.initialize = AsyncMock()
-    session.send_discover = AsyncMock(side_effect=ConnectionError("down"))
-
-    with pytest.raises(ConnectionError):
-        await negotiate_session(session, mode=McpProtocolNegotiationMode.AUTO)
-
-    session.initialize.assert_not_awaited()
-
-
-def test_sdk_probe_symbol_is_importable() -> None:
-    """Contract check: ADR 0003 imports a private SDK symbol. Fail loudly if
-    an ``mcp`` upgrade moves it."""
-    probe = importlib.import_module("mcp.client._probe")
-
-    assert callable(probe.negotiate_auto)
-
-
-def test_session_module_has_no_import_time_reference_to_sdk_probe() -> None:
-    """The private probe is imported lazily inside ``negotiate_session``, so an
-    ``mcp`` upgrade that moves it can only break ``auto`` mode, never importing
-    this library or the default legacy path."""
-    from languagemodelcommon.mcp.mcp_client import session as session_module
-
-    assert not hasattr(session_module, "negotiate_auto")
-
-
-@pytest.fixture
-def fake_session_cm() -> Iterator[MagicMock]:
-    session = MagicMock()
-
-    @asynccontextmanager
-    async def _create(*_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
-        yield session
-
-    with patch(f"{SESSION_MODULE}.create_mcp_session", new=_create):
-        yield session
-
-
 @pytest.mark.parametrize(
     "mode", [McpProtocolNegotiationMode.LEGACY, McpProtocolNegotiationMode.AUTO]
 )
 @pytest.mark.asyncio
 async def test_open_session_retries_transient_failure_in_both_modes(
-    fake_session_cm: MagicMock, mode: McpProtocolNegotiationMode
+    mode: McpProtocolNegotiationMode,
 ) -> None:
-    calls = AsyncMock(side_effect=[ConnectionError("reset"), None])
-    with patch(f"{SESSION_MODULE}.negotiate_session", new=calls):
+    good_session = MagicMock()
+    seen_modes: list[McpProtocolNegotiationMode | None] = []
+
+    def _create(*_args: object, **kwargs: object) -> object:
+        seen_modes.append(kwargs.get("negotiation_mode"))  # type: ignore[arg-type]
+        first_attempt = len(seen_modes) == 1
+
+        @asynccontextmanager
+        async def _cm() -> AsyncIterator[MagicMock]:
+            if first_attempt:
+                raise ConnectionError("reset")
+            yield good_session
+
+        return _cm()
+
+    with patch(f"{SESSION_MODULE}.create_mcp_session", new=_create):
         cm, session = await open_initialized_mcp_session(
-            {"url": "http://x"},
-            base_delay_seconds=0.0,
-            negotiation_mode=mode,
+            {"url": "http://x"}, base_delay_seconds=0.0, negotiation_mode=mode
         )
         await cm.__aexit__(None, None, None)
 
-    assert session is fake_session_cm
-    assert calls.await_count == 2
-    assert all(c.kwargs["mode"] is mode for c in calls.await_args_list)
+    assert session is good_session
+    assert seen_modes == [mode, mode]
 
 
 @pytest.mark.asyncio
-async def test_open_session_does_not_retry_cancellation(
-    fake_session_cm: MagicMock,
-) -> None:
+async def test_open_session_does_not_retry_cancellation() -> None:
     import asyncio
 
-    calls = AsyncMock(side_effect=asyncio.CancelledError())
-    with patch(f"{SESSION_MODULE}.negotiate_session", new=calls):
+    calls = 0
+
+    def _create(*_args: object, **_kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+
+        @asynccontextmanager
+        async def _cm() -> AsyncIterator[MagicMock]:
+            raise asyncio.CancelledError()
+            yield MagicMock()  # pragma: no cover
+
+        return _cm()
+
+    with patch(f"{SESSION_MODULE}.create_mcp_session", new=_create):
         with pytest.raises(asyncio.CancelledError):
             await open_initialized_mcp_session(
                 {"url": "http://x"},
@@ -197,17 +105,27 @@ async def test_open_session_does_not_retry_cancellation(
                 negotiation_mode=McpProtocolNegotiationMode.AUTO,
             )
 
-    assert calls.await_count == 1
+    assert calls == 1
 
 
 @pytest.mark.asyncio
-async def test_open_session_defaults_to_legacy(fake_session_cm: MagicMock) -> None:
-    calls = AsyncMock()
-    with patch(f"{SESSION_MODULE}.negotiate_session", new=calls):
+async def test_open_session_defaults_to_legacy() -> None:
+    seen: list[object] = []
+
+    def _create(*_args: object, **kwargs: object) -> object:
+        seen.append(kwargs.get("negotiation_mode"))
+
+        @asynccontextmanager
+        async def _cm() -> AsyncIterator[MagicMock]:
+            yield MagicMock()
+
+        return _cm()
+
+    with patch(f"{SESSION_MODULE}.create_mcp_session", new=_create):
         cm, _ = await open_initialized_mcp_session({"url": "http://x"})
         await cm.__aexit__(None, None, None)
 
-    assert calls.await_args_list[0].kwargs["mode"] is McpProtocolNegotiationMode.LEGACY
+    assert seen == [McpProtocolNegotiationMode.LEGACY]
 
 
 @pytest.mark.asyncio
