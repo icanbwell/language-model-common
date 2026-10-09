@@ -291,3 +291,57 @@ async def test_call_mcp_tool_raw_defaults_to_legacy_on_one_shot_path(
         opened.await_args_list[0].kwargs["negotiation_mode"]
         is McpProtocolNegotiationMode.LEGACY
     )
+
+
+def test_conflicting_mode_with_pool_raises_instead_of_being_ignored() -> None:
+    from languagemodelcommon.mcp.callbacks import _MCPCallbacks
+    from languagemodelcommon.mcp.mcp_client.tool_invocation import _make_execute_tool
+
+    pool = McpSessionPool(negotiation_mode=McpProtocolNegotiationMode.AUTO)
+
+    with pytest.raises(ValueError, match="conflicts with the session pool's mode"):
+        _make_execute_tool(
+            config={"url": "https://example.test/mcp"},
+            mcp_callbacks=_MCPCallbacks(),
+            session_pool=pool,
+            negotiation_mode=McpProtocolNegotiationMode.LEGACY,
+        )
+
+
+@pytest.mark.parametrize(
+    "call_mode", [None, McpProtocolNegotiationMode.AUTO], ids=["omitted", "matching"]
+)
+def test_omitted_or_matching_mode_with_pool_is_accepted(
+    call_mode: McpProtocolNegotiationMode | None,
+) -> None:
+    from languagemodelcommon.mcp.callbacks import _MCPCallbacks
+    from languagemodelcommon.mcp.mcp_client.tool_invocation import _make_execute_tool
+
+    pool = McpSessionPool(negotiation_mode=McpProtocolNegotiationMode.AUTO)
+
+    handler = _make_execute_tool(
+        config={"url": "https://example.test/mcp"},
+        mcp_callbacks=_MCPCallbacks(),
+        session_pool=pool,
+        negotiation_mode=call_mode,
+    )
+
+    assert callable(handler)
+
+
+def test_langchain_adapter_rejects_conflicting_mode_with_pool() -> None:
+    from mcp.types import Tool
+
+    from languagemodelcommon.mcp.mcp_client.langchain_adapter import (
+        mcp_tool_to_langchain_tool,
+    )
+
+    pool = McpSessionPool(negotiation_mode=McpProtocolNegotiationMode.LEGACY)
+
+    with pytest.raises(ValueError, match="conflicts with the session pool's mode"):
+        mcp_tool_to_langchain_tool(
+            Tool(name="t", input_schema={"type": "object"}),
+            connection={"url": "https://example.test/mcp"},
+            session_pool=pool,
+            negotiation_mode=McpProtocolNegotiationMode.AUTO,
+        )

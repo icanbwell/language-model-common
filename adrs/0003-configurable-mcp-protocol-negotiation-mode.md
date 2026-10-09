@@ -93,8 +93,9 @@ Chosen option: **C**.
    `legacy` as the default argument so existing call sites are unchanged.
    `McpSessionPool` takes the mode in its constructor and uses it for every
    pooled session, so the `negotiation_mode` argument of `call_mcp_tool_raw`
-   and `mcp_tool_to_langchain_tool` applies only to the one-shot path taken
-   when no pool is given.
+   and `mcp_tool_to_langchain_tool` selects the handshake only for the one-shot
+   path taken when no pool is given. Passing a mode that conflicts with the
+   pool's raises `ValueError` instead of being silently ignored.
    Document and expose a helper so baileyai's three direct
    `session.initialize()` calls can move onto it in a follow-up change in that
    repo.

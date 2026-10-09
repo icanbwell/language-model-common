@@ -131,7 +131,7 @@ def mcp_tool_to_langchain_tool(
     session_pool: McpSessionPool | None = None,
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
-    negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
+    negotiation_mode: McpProtocolNegotiationMode | None = None,
 ) -> BaseTool:
     """Convert an MCP Tool to a LangChain BaseTool.
 
@@ -141,8 +141,9 @@ def mcp_tool_to_langchain_tool(
     When ``session_pool`` is provided, sessions are reused across calls
     to the same MCP server URL within the pool's scope.
 
-    ``negotiation_mode`` applies only when no ``session_pool`` is given;
-    pooled sessions use the pool's own mode.
+    ``negotiation_mode`` selects the handshake when no ``session_pool`` is
+    given (default ``legacy``); pooled sessions use the pool's own mode and a
+    conflicting value raises ``ValueError``.
     """
 
     mcp_callbacks = (

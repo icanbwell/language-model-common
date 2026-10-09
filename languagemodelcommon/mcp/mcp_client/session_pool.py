@@ -149,6 +149,11 @@ class McpSessionPool:
         self._sessions: dict[str, _PooledSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def negotiation_mode(self) -> McpProtocolNegotiationMode:
+        """The protocol negotiation mode every session in this pool uses."""
+        return self._negotiation_mode
+
     @staticmethod
     def _cache_key(config: MCPConnectionConfig) -> str:
         """Derive a pool key from the config's URL and headers."""
