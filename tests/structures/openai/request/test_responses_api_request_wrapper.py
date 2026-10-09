@@ -389,6 +389,49 @@ class TestGetTools:
         assert configs[0].headers == {"X-Token": "secret"}
         assert configs[0].tools == "tool_a,tool_b"
 
+    @pytest.mark.parametrize(
+        ("tool_extras", "expected_auth", "expected_headers"),
+        [
+            pytest.param({}, None, None, id="no-headers-key"),
+            pytest.param({"headers": None}, None, None, id="headers-none"),
+            pytest.param({"headers": {}}, None, None, id="headers-empty"),
+            pytest.param(
+                {"headers": {"X-Token": "secret"}},
+                "headers",
+                {"X-Token": "secret"},
+                id="static-header",
+            ),
+            pytest.param(
+                {"headers": {"Authorization": "Bearer abc"}},
+                "headers",
+                {"Authorization": "Bearer abc"},
+                id="authorization-header",
+            ),
+        ],
+    )
+    def test_mcp_tool_with_server_url_sets_auth_headers_only_when_headers_supplied(
+        self,
+        tool_extras: dict[str, Any],
+        expected_auth: str | None,
+        expected_headers: dict[str, str] | None,
+    ) -> None:
+        wrapper = _make_wrapper(
+            tools=[
+                {
+                    "type": "mcp",
+                    "server_url": "http://localhost:8080",
+                    "server_label": "my-server",
+                    **tool_extras,
+                }
+            ]
+        )
+
+        configs = wrapper.get_tools()
+
+        assert len(configs) == 1
+        assert configs[0].auth == expected_auth
+        assert configs[0].headers == expected_headers
+
     def test_mcp_tool_label_only_resolves_via_mcp_server_reference(self) -> None:
         """Without server_url, the config carries mcp_server set to server_label
         so the caller resolves the URL from .mcp.json at load time."""
