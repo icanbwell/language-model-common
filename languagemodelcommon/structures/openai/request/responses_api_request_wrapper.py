@@ -686,13 +686,20 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             server_label = tool["server_label"]
             server_url = tool.get("server_url")
             if server_url:
+                headers = tool.get("headers") or None
                 configs.append(
                     AgentConfig(
                         url=server_url,
                         name=server_label,
                         tools=tools_csv,
-                        headers=tool.get("headers"),
-                        auth="headers",
+                        headers=headers,
+                        # "headers" marks a server carrying its own static
+                        # credentials, which downstream consumers (e.g. the
+                        # tool-catalog's argument-allowlist gate) treat as a
+                        # partner server. Only claim it when headers were
+                        # actually supplied; a headerless URL tool leaves auth
+                        # unset so the caller's own credentials are used.
+                        auth="headers" if headers else None,
                     )
                 )
             else:
