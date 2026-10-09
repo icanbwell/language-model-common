@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock
 import pytest
 from mcp import ClientSession
 
+from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
+    McpProtocolNegotiationMode,
+)
 from languagemodelcommon.mcp.mcp_client.session import MCPConnectionConfig
 from languagemodelcommon.mcp.mcp_client.session_pool import McpSessionPool
 
@@ -37,7 +40,10 @@ class TestGetSessionReuse:
         open_calls = 0
 
         async def fake_open(
-            config: MCPConnectionConfig, *, mcp_callbacks: Any = None
+            config: MCPConnectionConfig,
+            *,
+            mcp_callbacks: Any = None,
+            negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
         ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
             nonlocal open_calls
             open_calls += 1
@@ -67,7 +73,10 @@ class TestEvict:
         open_calls = 0
 
         async def fake_open(
-            config: MCPConnectionConfig, *, mcp_callbacks: Any = None
+            config: MCPConnectionConfig,
+            *,
+            mcp_callbacks: Any = None,
+            negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
         ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
             nonlocal open_calls
             open_calls += 1
@@ -100,7 +109,10 @@ class TestCmLifecycle:
         cms: list[_FakeSessionCm] = []
 
         async def fake_open(
-            config: MCPConnectionConfig, *, mcp_callbacks: Any = None
+            config: MCPConnectionConfig,
+            *,
+            mcp_callbacks: Any = None,
+            negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
         ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
             cm = _FakeSessionCm()
             cms.append(cm)
@@ -123,7 +135,10 @@ class TestCmLifecycle:
         cms: list[_FakeSessionCm] = []
 
         async def fake_open(
-            config: MCPConnectionConfig, *, mcp_callbacks: Any = None
+            config: MCPConnectionConfig,
+            *,
+            mcp_callbacks: Any = None,
+            negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
         ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
             cm = _FakeSessionCm()
             cms.append(cm)
@@ -156,7 +171,10 @@ class TestPerKeyLocking:
         release_slow = asyncio.Event()
 
         async def fake_open(
-            config: MCPConnectionConfig, *, mcp_callbacks: Any = None
+            config: MCPConnectionConfig,
+            *,
+            mcp_callbacks: Any = None,
+            negotiation_mode: McpProtocolNegotiationMode = McpProtocolNegotiationMode.LEGACY,
         ) -> tuple[AbstractAsyncContextManager[ClientSession], ClientSession]:
             if config["url"] == "https://slow.example.com":
                 slow_started.set()
