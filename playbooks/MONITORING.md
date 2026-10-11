@@ -49,9 +49,9 @@ The library reads and writes MongoDB through consumer-supplied configuration; it
 
 | Purpose | Database env var (default) | Collection env var (default) |
 |---|---|---|
-| MCP tool-list cache (`McpToolListStore`) | `MCP_TOOL_CACHE_DB_NAME` (falls back to `MONGO_LLM_STORAGE_DB_NAME`, then `language_model_gateway`) | `MCP_TOOL_CACHE_DB_COLLECTION` (`mcp-tool-cache`) |
+| MCP tool-list cache (`McpToolListStore`) | `MCP_TOOL_CACHE_DB_NAME` (falls back to `MONGO_LLM_STORAGE_DB_NAME`, which defaults to `llm_storage`; effective default `llm_storage`; the final `language_model_gateway` fallback in `mcp_tool_cache_db_name` is unreachable) | `MCP_TOOL_CACHE_DB_COLLECTION` (`mcp-tool-cache`) |
 | Model config cache | `unverified` which database | `MODEL_CONFIG_CACHE_COLLECTION_NAME` (`models`) |
-| Prompt store | `PROMPT_STORE_DB_NAME` (falls back to `MONGO_LLM_STORAGE_DB_NAME`) | `PROMPT_STORE_COLLECTION` (`prompts`) |
+| Prompt store | `PROMPT_STORE_DB_NAME` (falls back to `MONGO_LLM_STORAGE_DB_NAME`, default `llm_storage`; effective default `llm_storage`) | `PROMPT_STORE_COLLECTION` (`prompts`) |
 | LangGraph store / checkpointer (off unless `ENABLE_LLM_STORE` / `ENABLE_LLM_CHECKPOINTER`) | `MONGO_LLM_STORAGE_DB_NAME` (`llm_storage`) | `MONGO_LLM_STORAGE_STORE_COLLECTION_NAME` (`stores`), `MONGO_LLM_STORAGE_CHECKPOINTER_COLLECTION_NAME` (`checkpoints`) |
 | OAuth DCR registrations / tokens | consumer-set | `MONGO_DB_DCR_COLLECTION_NAME` (`dcr_registrations`), `MONGO_DB_TOKEN_COLLECTION_NAME` |
 

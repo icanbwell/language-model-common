@@ -26,9 +26,9 @@ without any test in this repo failing. Callers and dependencies: [RELATIONSHIPS.
 | 7 | Mypy `--strict`, ruff and bandit pass | BLOCKING | `Build and Test` pre-commit step | `.pre-commit-config.yaml` |
 | 8 | A behavior change ships with tests, including error paths | BLOCKING | reviewer | `.claude/rules/testing.md` |
 | 9 | Event shapes follow the contract rules | REVIEW | reviewer | `.claude/rules/event-contracts.md` |
-| 10 | `AGENTS.md` and `CLAUDE.md` changes need EA review | BLOCKING | `CODEOWNERS` | `/AGENTS.md @icanbwell/enterprise-architecture` |
+| 10 | `AGENTS.md` and `CLAUDE.md` changes need EA review | REVIEW (convention; `require_code_owner_review` is false) | `CODEOWNERS` | `/AGENTS.md @icanbwell/enterprise-architecture` |
 
-Which rules are enforced by branch protection: `unverified`.
+Branch ruleset on `main` (2026-10-11): `non_fast_forward` and `pull_request` only (1 approving review from anyone, `require_code_owner_review: false`, no `required_status_checks`). No rule above is enforced by it; green CI and EA review are conventions.
 
 ## Evidence required by change type
 
@@ -50,6 +50,6 @@ TTL changes.
 
 ## Getting a PR reviewed
 
-CODEOWNERS covers only `AGENTS.md` and `CLAUDE.md` (`@icanbwell/enterprise-architecture`), so ordinary code PRs have no auto-requested reviewer: request reviewers by hand. For Bailey work the usual reviewers are the bAIley team (`unverified` for this repo; the `bailey-ai` team request works only on baileyai and mcp-fhir-agent). Branch name `{initials}-{project}-{ticket}` (`AGENTS.md`). Commit messages start with a JIRA key (`check-commit-message.yml`). PR labels required: `unverified` (no label workflow in `.github/workflows/`). A required review that has not been given blocks the merge even when someone else approved; for `AGENTS.md` that is the EA team.
+CODEOWNERS covers only `AGENTS.md` and `CLAUDE.md` (`@icanbwell/enterprise-architecture`), so ordinary code PRs have no auto-requested reviewer: request reviewers by hand. For Bailey work the usual reviewers are the bAIley team (`unverified` for this repo; the `bailey-ai` team request works only on baileyai and mcp-fhir-agent). Branch name `{initials}-{project}-{ticket}` (`AGENTS.md`). Commit messages start with a JIRA key (`check-commit-message.yml`). PR labels required: `unverified` (no label workflow in `.github/workflows/`). For `AGENTS.md` and `CLAUDE.md`, request the EA team; GitHub does not enforce it here (`require_code_owner_review: false`).
 
 Next: once approved, [MERGING.md](MERGING.md).

@@ -45,7 +45,7 @@ This library does not bind record tools and holds no tool catalog (tool-catalog 
 
 ## Come here if you're seeing stale tool lists, prompts or model configs after a change upstream
 
-**First checks:** caches have TTLs. MCP tool list: `MCP_TOOLS_METADATA_CACHE_TTL_SECONDS`; prompt store: `PROMPT_STORE_TTL_SECONDS` (default 3600); model config cache: `MODEL_CONFIG_CACHE_TTL_SECONDS` (default 3600); config reload: `CONFIG_CACHE_TIMEOUT_SECONDS` (default 120, from README). Mongo-backed entries are in the collections in [MONITORING.md](MONITORING.md).
+**First checks:** caches have TTLs. MCP tool list: `MCP_TOOLS_METADATA_CACHE_TTL_SECONDS`; prompt store: `PROMPT_STORE_TTL_SECONDS` (default 3600); model config cache: `MODEL_CONFIG_CACHE_TTL_SECONDS` (default 3600); `CONFIG_CACHE_TIMEOUT_SECONDS` is defined (code default 3600, `language_model_common_environment_variables.py`) but nothing reads it, so it controls nothing; the README's `120` is stale. Mongo-backed entries are in the collections in [MONITORING.md](MONITORING.md).
 **Action:** wait out the TTL or clear the entry with the owning consumer's process; confirm which consumer owns the data first.
 
 ## Come here if you're seeing a consumer that cannot pick up a fix released here

@@ -9,12 +9,12 @@ is in [DEPLOYMENT.md](DEPLOYMENT.md).
 ## Before you merge
 
 1. Commit messages start with a JIRA issue key, for example `BAI-1129 ...`. Enforced by `.github/workflows/check-commit-message.yml` (exempt: `Bump`, `Merge`, `Revert`, `Reapply`, `fix(security):`, `[Aikido]`, `build(deps): bump`). The same workflow rejects AI attribution in commits and the PR description.
-2. `Build and Test` is green: pre-commit (ruff, mypy `--strict`, bandit, detect-secrets), then the pytest suite (`.github/workflows/build_and_test.yml`, `.pre-commit-config.yaml`).
-3. `PR Architecture Review` has run (`.github/workflows/pr-architecture-review.yml`, reusable workflow from `icanbwell/.github`). Whether it blocks merge: `unverified`.
-4. A change to `AGENTS.md` or `CLAUDE.md` needs `@icanbwell/enterprise-architecture` review (`CODEOWNERS`). That owner must be requested; another person's approval does not satisfy it.
+2. `Build and Test` is green by convention; the ruleset has no `required_status_checks`, so GitHub does not block a merge on it: pre-commit (ruff, mypy `--strict`, bandit, detect-secrets), then the pytest suite (`.github/workflows/build_and_test.yml`, `.pre-commit-config.yaml`).
+3. `PR Architecture Review` has run (`.github/workflows/pr-architecture-review.yml`, reusable workflow from `icanbwell/.github`). It does not block merge by ruleset (no `required_status_checks`).
+4. A change to `AGENTS.md` or `CLAUDE.md` needs `@icanbwell/enterprise-architecture` review (`CODEOWNERS`). That is a convention, not enforced: the `main` ruleset has `require_code_owner_review: false`, so another person's approval satisfies GitHub, but request the owner anyway (`gh api repos/icanbwell/language-model-common/rules/branches/main`, 2026-10-11).
 5. A behavior change ships with tests in the same PR (`.claude/rules/testing.md`); public functions are keyword-only, tests included (`AGENTS.md`). Enforced by reviewer, not CI.
 6. No version bump or changelog edit is needed in the PR: the version comes from the release tag (`CONTRIBUTING.md`).
-7. Branch protection on `main` blocks direct commits (`AGENTS.md`). Required checks and review count: `unverified` (branch protection API not readable with the access used for this verification).
+7. Branch protection on `main` blocks direct commits (`AGENTS.md`). The `main` ruleset (`gh api repos/icanbwell/language-model-common/rules/branches/main`, 2026-10-11) has only `non_fast_forward` and `pull_request`: 1 approving review from anyone, `require_code_owner_review: false`, no `required_status_checks`.
 
 ## Merge mechanics
 
