@@ -1,6 +1,6 @@
 # Logging
 
-Last verified: 2026-10-11 against 8bc128d by Claude
+Last verified: 2026-10-12 against 8bc128d by Claude
 
 How this repo logs, and what a log line must carry so it can be counted, filtered and explained.
 Org-wide rules (never log PHI or credentials; single-line JSON for Groundcover; trace propagation)
@@ -51,4 +51,4 @@ Identifiers (person ids, patient ids, GUIDs) may appear in Groundcover logs as n
 - No PHI, tokens or full bodies; use `summarize_for_logging`.
 - A message text that [MONITORING.md](MONITORING.md) lists is renamed only with that file updated in the same PR, and the consumers that match on it checked.
 - A new signal responders should look for goes in [TROUBLESHOOTING.md](TROUBLESHOOTING.md); a new format, noise source or dependency goes in [MONITORING.md](MONITORING.md).
-- Review tooling: the `logging-reviewer` skill grades code; `log-audit` audits production logs.
+- Review tooling: no repo config or workflow invokes a logging reviewer or log auditor (grep of `origin/main` for `logging-reviewer` and `log-audit` finds nothing). Whether the `logging-reviewer` and `log-audit` skills are available to authors is `unverified`; do not treat them as a gate. Call-site log review is manual (see [REVIEW.md](REVIEW.md)).
