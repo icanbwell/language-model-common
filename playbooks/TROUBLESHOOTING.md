@@ -1,9 +1,9 @@
 # Troubleshooting
 
-Last verified: 2026-10-11 against 8bc128d by Claude
+Last verified: 2026-10-16 against 6245270 by Claude
 
 First checks for symptoms in this repo. This is a library: a symptom is observed in a consumer
-(baileyai, baileyai-skills-service, mcp-fhir-agent, language-model-gateway), and the first job is
+(baileyai, baileyai-skills-service, mcp-fhir-agent), and the first job is
 to decide whether this library is involved. Where to look is in [MONITORING.md](MONITORING.md).
 Method, not numbers.
 
