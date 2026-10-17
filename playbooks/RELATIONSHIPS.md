@@ -1,6 +1,6 @@
 # Relationships
 
-Last verified: 2026-10-11 against 8bc128d by Claude
+Last verified: 2026-10-16 against 6245270 by Claude
 
 Who depends on this repo and what it depends on, so a change here (or there) is checked against the
 right neighbors. This file is the source of truth for the repo; the bwell-repo-wiki repo page cites
@@ -16,7 +16,6 @@ the package's public Python API and the config schemas it reads.
 | baileyai | request wrappers, MCP client and tool plumbing, streaming converters, history, `AgentConfig` (floor `>=3.0.37`) | public class and function signatures, SSE event shapes, `AgentConfig` fields | any of those: baileyai's tests against the new version | baileyai `pyproject.toml` on `origin/main` |
 | baileyai-skills-service | config reader, prompt library, container factory, MCP and `AgentConfig` types (floor `>=3.0.30`) | `ConfigReader`, `PromptLibraryManager`, `AgentConfig.tool_argument_allowlist` and `auth="headers"` semantics | `auth` and allowlist handling: its argument-allowlist gate | `baileyai_skills_service/container/container_factory.py`; `pyproject.toml` |
 | mcp-fhir-agent | package dependency (floor `>=3.0.30`); which modules it uses: `unverified` | `unverified` | `unverified` | mcp-fhir-agent `pyproject.toml` |
-| language-model-gateway | package dependency (floor `>=2.0.99`, a 2.x floor; whether it runs 2.x or 3.x: `unverified`) | config loading and conversion; 3.0.0 removed `MCPToolProvider` and its OAuth passthrough stack | a major-version change: the gateway's tests | language-model-gateway `pyproject.toml`; bwell-repo-wiki `repos/language-model-common.md` |
 
 The bwell-repo-wiki repo page also says complaint-parser builds on this package; no import or pin was found in complaint-parser's `origin/main` (`unverified`).
 
@@ -38,13 +37,14 @@ The bwell-repo-wiki repo page also says complaint-parser builds on this package;
 - A public signature, class or SSE event shape: every consumer row above; run the consumer's tests against a build of the change before releasing.
 - `AgentConfig` fields or the `auth` value semantics (`auth="headers"`, `pass_through`): baileyai-skills-service's allowlist gate and baileyai's tool resolution (`languagemodelcommon/structures/openai/request/responses_api_request_wrapper.py`, `languagemodelcommon/configs/schemas/config_schema.py`).
 - Cache names, TTL defaults or collection names: [MONITORING.md](MONITORING.md) Databases table and the consumers' Helm values (`unverified` where).
-- A major-version bump of this package: every consumer floor; the gateway's 2.x floor in particular.
+- A major-version bump of this package: every consumer floor in the table above.
 - Removing code from this package: a consumer on a lower floor still imports it until it bumps.
 
 ## Not a relationship
 
 - `docker-compose.yml` is a local dev container only (`dev` service), not a service anyone calls.
-- bai-evaluator calls the deployed gateway over HTTP and has no dependency on this package (bwell-repo-wiki `repos/language-model-common.md`).
+- bai-evaluator has no dependency on this package (bwell-repo-wiki `repos/language-model-common.md`). Its HTTP calls to language-model-gateway are not a relationship of this package.
+- language-model-gateway is retired: it was a consumer of this package until it was archived on GitHub on 2026-10-16, so it is not listed above. No package pin or workflow reference to it remains in `pyproject.toml` or `.github/`; the one `docs/` mention (`docs/migration-model-factory-and-reasoning.md`) is a historical migration note.
 - The `alpine-wheels` index in `pyproject.toml` is a wheel source for builds, not a runtime dependency.
 
 Next: [REVIEW.md](REVIEW.md) (blast radius for the PR).

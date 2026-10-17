@@ -1,6 +1,6 @@
 # Review
 
-Last verified: 2026-10-11 against 8bc128d by Claude
+Last verified: 2026-10-16 against 6245270 by Claude
 
 Instructions for whoever reviews a PR in this repo, human or agent, and for authors preparing one.
 Inherits the org review rubrics in `icanbwell/.github` (the `PR Architecture Review` workflow runs
@@ -10,7 +10,7 @@ wins. This file covers only what is specific to this repo.
 ## What makes this repo different
 
 A change here ships to every consumer that bumps, in-process, with no staging of its own. A signature
-or behavior change can break baileyai, baileyai-skills-service, mcp-fhir-agent or language-model-gateway
+or behavior change can break baileyai, baileyai-skills-service or mcp-fhir-agent
 without any test in this repo failing. Callers and dependencies: [RELATIONSHIPS.md](RELATIONSHIPS.md).
 
 ## Rules

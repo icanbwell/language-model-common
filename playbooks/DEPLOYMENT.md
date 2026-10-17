@@ -1,6 +1,6 @@
 # Deployment
 
-Last verified: 2026-10-11 against 8bc128d by Claude
+Last verified: 2026-10-16 against 6245270 by Claude
 
 This repo is a library released as a PyPI package, `language-model-common`. Nothing is deployed from
 here: a "deploy" is a release here followed by each consumer bumping its version and deploying
@@ -25,7 +25,7 @@ Not applicable; library. Environments belong to the consumers.
 
 **Downstream bump path (what a "deploy" of this library means):**
 
-1. After the PyPI publish succeeds, each consumer bumps its dependency in its own `pyproject.toml` and relocks. Consumers and their current floors on `origin/main` as of this verification: baileyai `language-model-common>=3.0.37`, baileyai-skills-service `>=3.0.30`, mcp-fhir-agent `>=3.0.30`, language-model-gateway `>=2.0.99` (evidence: each repo's `pyproject.toml`).
+1. After the PyPI publish succeeds, each consumer bumps its dependency in its own `pyproject.toml` and relocks. Consumers and their current floors on `origin/main` as of this verification: baileyai `language-model-common>=3.0.37`, baileyai-skills-service `>=3.0.30`, mcp-fhir-agent `>=3.0.30` (evidence: each repo's `pyproject.toml`). language-model-gateway is retired and is not a consumer to bump ([RELATIONSHIPS.md](RELATIONSHIPS.md)).
 2. `baileyai` and `baileyai-skills-service` also set `[tool.uv.exclude-newer-package] language-model-common = "0 days"` so a fresh release resolves immediately (`CONTRIBUTING.md`; confirmed for baileyai in its `pyproject.toml`). Other consumers: `unverified` whether they set it; without it `uv` applies its freshness cutoff to the new release.
 3. A floor bump alone does not change what is deployed: the consumer's lock file and its own deploy do. Check the consumer's lock file for the resolved version.
 
