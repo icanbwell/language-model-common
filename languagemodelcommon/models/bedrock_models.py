@@ -13,6 +13,7 @@ from typing import FrozenSet
 ALLOWED_BEDROCK_MODELS: FrozenSet[str] = frozenset(
     {
         # Anthropic Claude models
+        "us.anthropic.claude-sonnet-5-5",
         "us.anthropic.claude-sonnet-4-20250514-v1:0",
         "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
         "anthropic.claude-3-5-sonnet-20241022-v2:0",
