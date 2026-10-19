@@ -73,6 +73,9 @@ class MCPConnectionConfig(TypedDict, total=False):
     timeout: NotRequired[timedelta]
     sse_read_timeout: NotRequired[timedelta]
     httpx_client_factory: NotRequired[Any]
+    # Forwarded to mcp's streamable_http_client(max_sse_event_size=...). Omit to
+    # keep mcp's default (1 MiB per SSE event); None disables the limit.
+    max_sse_event_size: NotRequired[int | None]
 
 
 @asynccontextmanager
@@ -123,7 +126,14 @@ async def create_mcp_session(
         # when it creates one itself (http_client=None) -- since we always
         # pass a pre-built client, we own closing it.
         async with http_client:
-            transport = streamable_http_client(url, http_client=http_client)
+            # Only forward when the caller set it, so an absent key inherits
+            # mcp's default; an explicit None must reach mcp to disable it.
+            transport_kwargs: dict[str, Any] = {}
+            if "max_sse_event_size" in config:
+                transport_kwargs["max_sse_event_size"] = config["max_sse_event_size"]
+            transport = streamable_http_client(
+                url, http_client=http_client, **transport_kwargs
+            )
             if negotiation_mode is None:
                 async with (
                     transport as (read, write),
