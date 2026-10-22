@@ -765,6 +765,72 @@ class TestUsageConversion:
         assert usage["total_tokens"] == 10
         assert usage["input_tokens_details"]["cache_write_tokens"] == 0
 
+    @pytest.mark.parametrize(
+        ("input_token_details", "expected_cached", "expected_cache_write"),
+        [
+            ({"cache_read": 100, "cache_creation": 200}, 100, 200),
+            ({"cache_read": 100}, 100, 0),
+            ({"cache_creation": 200}, 0, 200),
+            ({"audio": 10}, 0, 0),
+            ({}, 0, 0),
+        ],
+    )
+    def test_streamed_completed_event_reports_cache_tokens_from_input_token_details(
+        self,
+        input_token_details: dict[str, int],
+        expected_cached: int,
+        expected_cache_write: int,
+    ) -> None:
+        wrapper = _make_wrapper()
+        usage_metadata = {
+            "input_tokens": 300,
+            "output_tokens": 7,
+            "total_tokens": 307,
+            "input_token_details": input_token_details,
+        }
+        result = wrapper.create_final_sse_message(
+            request_id="req-1", usage_metadata=cast(Any, usage_metadata), source="test"
+        )
+        completed = next(
+            json.loads(line[len("data: ") :])
+            for line in result.strip().split("\n")
+            if line.startswith("data: ") and '"response.completed"' in line
+        )
+        details = completed["response"]["usage"]["input_tokens_details"]
+        assert details["cached_tokens"] == expected_cached
+        assert details["cache_write_tokens"] == expected_cache_write
+
+    def test_non_streaming_response_sums_cache_tokens_across_messages(self) -> None:
+        wrapper = _make_wrapper()
+        first = AIMessage(content="a")
+        first.usage_metadata = {
+            "input_tokens": 300,
+            "output_tokens": 4,
+            "total_tokens": 304,
+            "input_token_details": {"cache_read": 100, "cache_creation": 50},
+        }
+        second = AIMessage(content="b")
+        second.usage_metadata = {
+            "input_tokens": 200,
+            "output_tokens": 2,
+            "total_tokens": 202,
+            "input_token_details": {"cache_read": 25},
+        }
+        third = AIMessage(content="c")
+        third.usage_metadata = {
+            "input_tokens": 10,
+            "output_tokens": 1,
+            "total_tokens": 11,
+        }
+        result = wrapper.create_non_streaming_response(
+            request_id="req-1",
+            json_output_requested=False,
+            responses=cast(List[AnyMessage], [first, second, third]),
+        )
+        details = result["usage"]["input_tokens_details"]
+        assert details["cached_tokens"] == 125
+        assert details["cache_write_tokens"] == 50
+
     def test_non_streaming_response_without_usage_has_no_usage(self) -> None:
         wrapper = _make_wrapper()
         result = wrapper.create_non_streaming_response(

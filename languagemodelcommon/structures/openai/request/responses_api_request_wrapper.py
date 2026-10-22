@@ -507,17 +507,26 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         input_tokens = 0
         output_tokens = 0
         total_tokens = 0
+        cached_tokens = 0
+        cache_write_tokens = 0
         for u in usages:
             input_tokens += u.get("input_tokens", 0)
             output_tokens += u.get("output_tokens", 0)
             total_tokens += u.get("total_tokens", 0)
+            # `input_token_details` and its keys are all optional in LangChain's TypedDict.
+            input_token_details = u.get("input_token_details") or {}
+            cached_tokens += input_token_details.get("cache_read", 0)
+            cache_write_tokens += input_token_details.get("cache_creation", 0)
         return ResponseUsage(
             input_tokens=input_tokens,
             # Newer openai releases (2.45.0 is confirmed to require it, as do 3.x) require
             # `cache_write_tokens`; older ones (this repo's lock pins 2.41.0) ignore the
             # extra field (the model allows extras), so build it from a dict to satisfy both.
             input_tokens_details=InputTokensDetails.model_validate(
-                {"cached_tokens": 0, "cache_write_tokens": 0}
+                {
+                    "cached_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                }
             ),
             output_tokens=output_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
