@@ -514,8 +514,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         return ResponseUsage(
             input_tokens=input_tokens,
             # Newer openai releases (2.45.0 is confirmed to require it, as do 3.x) require
-            # `cache_write_tokens`; older ones (this repo's lock pins 2.41.0) ignore the
-            # extra field (the model allows extras), so build it from a dict to satisfy both.
+            # `cache_write_tokens`; older ones (this repo's lock pins 2.41.0) keep the
+            # extra field and serialize it (the model allows extras), so build it from a dict to satisfy both.
             input_tokens_details=InputTokensDetails.model_validate(
                 {"cached_tokens": 0, "cache_write_tokens": 0}
             ),
