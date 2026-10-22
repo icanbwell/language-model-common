@@ -41,12 +41,16 @@ class TestConversationAccepted:
 
 class TestConversationRejected:
     @pytest.mark.parametrize("conversation", ["c1", {"id": "c1"}])
+    @pytest.mark.parametrize("previous_response_id", ["resp_1", ""])
     def test_conversation_with_previous_response_id_is_rejected(
-        self, conversation: str | dict[str, str]
+        self, conversation: str | dict[str, str], previous_response_id: str
     ) -> None:
         with pytest.raises(ValidationError, match="previous_response_id"):
             ResponsesRequest.model_validate(
-                _payload(conversation=conversation, previous_response_id="resp_1")
+                _payload(
+                    conversation=conversation,
+                    previous_response_id=previous_response_id,
+                )
             )
 
     @pytest.mark.parametrize(

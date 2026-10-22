@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
-from languagemodelcommon.schema.openai.responses import ResponsesRequest
+from languagemodelcommon.schema.openai.responses import (
+    MAX_CONVERSATION_ID_LENGTH,
+    ResponsesRequest,
+)
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
     ResponsesApiRequestWrapper,
 )
@@ -815,7 +818,9 @@ class TestConversationEcho:
         assert _completed_response(wrapper=wrapper)["conversation"] is None
         assert _non_streaming(wrapper=wrapper)["conversation"] is None
 
-    @pytest.mark.parametrize("value", ["", "   ", "x" * 257])
+    @pytest.mark.parametrize(
+        "value", ["", "   ", "x" * (MAX_CONVERSATION_ID_LENGTH + 1)]
+    )
     def test_setting_blank_conversation_id_raises(self, value: str) -> None:
         wrapper = _make_wrapper()
 
