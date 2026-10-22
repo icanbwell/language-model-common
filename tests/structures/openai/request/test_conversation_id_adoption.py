@@ -94,6 +94,8 @@ class TestAdoptConversationId:
 
         wrapper.adopt_conversation_id(conversation_id="u1:chat-ab12")
 
+        assert not hasattr(wrapper, "conversation_id")
+
 
 class TestStreamStartSseEvent:
     def test_responses_wrapper_emits_response_created_with_conversation(self) -> None:

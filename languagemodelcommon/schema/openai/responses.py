@@ -1,3 +1,4 @@
+import logging
 import warnings
 from typing import Annotated, Optional, Union, Any
 
@@ -10,6 +11,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_INSTRUCTIONS_LENGTH: int = 2000
 MAX_CONVERSATION_ID_LENGTH: int = 256
@@ -105,17 +108,24 @@ class ResponsesRequest(BaseModel):
 
     @model_validator(mode="after")
     def _warn_on_deprecated_fields(self) -> "ResponsesRequest":
-        # `model_fields_set` avoids reading the deprecated attributes, which would
-        # themselves raise a DeprecationWarning.
+        # Read `__dict__` rather than the attributes: attribute access on a deprecated
+        # field raises a DeprecationWarning of its own. A None value (an explicit null
+        # or a model_dump round-trip) is not a use of the field.
         for field_name in ("thread_id", "user_id"):
-            if field_name in self.model_fields_set:
-                warnings.warn(
-                    f"`{field_name}` is deprecated and ignored; it will be removed "
-                    "in a future release.",
-                    DeprecationWarning,
-                    # validator -> pydantic's __init__/model_validate -> the caller
-                    stacklevel=3,
-                )
+            if self.__dict__.get(field_name) is None:
+                continue
+            message = (
+                f"`{field_name}` is deprecated and ignored; it will be removed "
+                "in a future release."
+            )
+            # DeprecationWarning is hidden by default outside tests, so also log it.
+            logger.warning(message)
+            warnings.warn(
+                message,
+                DeprecationWarning,
+                # validator -> pydantic's __init__/model_validate -> the caller
+                stacklevel=3,
+            )
         return self
 
     @field_validator("conversation")

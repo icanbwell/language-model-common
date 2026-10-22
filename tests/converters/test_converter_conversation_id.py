@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, List, cast
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import AIMessage, AnyMessage
 
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
@@ -183,6 +183,7 @@ async def _ainvoke_ok(**_kwargs: Any) -> List[AnyMessage]:
         ("u1:chat-ab12", "caller-set", {"id": "caller-set"}),
         (None, None, None),
         ("", None, None),
+        ("x" * 257, None, None),
     ],
 )
 async def test_non_streaming_response_adopts_the_thread_id(
@@ -207,3 +208,60 @@ async def test_non_streaming_response_adopts_the_thread_id(
 
     body = json.loads(bytes(cast(JSONResponse, response).body))
     assert body["conversation"] == expected
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_adopts_the_thread_id_through_call_agent_with_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converter = _build_converter(monkeypatch)
+    monkeypatch.setattr(converter, "astream_events", _no_events)
+    wrapper = _responses_wrapper(stream=True)
+
+    response = await converter.call_agent_with_input(
+        chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
+        compiled_state_graph=None,  # type: ignore[arg-type]
+        system_messages=[],
+        request_information=_request_information(thread_id="u1:chat-ab12"),
+        config=None,
+        state=None,
+    )
+
+    chunks = [
+        chunk if isinstance(chunk, str) else bytes(chunk).decode()
+        async for chunk in cast(StreamingResponse, response).body_iterator
+    ]
+    events = [
+        json.loads(line[len("data: ") :])
+        for chunk in chunks
+        for line in chunk.split("\n")
+        if line.startswith("data: ") and line != "data: [DONE]"
+    ]
+    by_type = {e["type"]: e for e in events if "response" in e}
+    assert by_type["response.created"]["response"]["conversation"] == {
+        "id": "u1:chat-ab12"
+    }
+    assert by_type["response.completed"]["response"]["conversation"] == {
+        "id": "u1:chat-ab12"
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_error_still_opens_with_response_created_and_ends_with_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    converter = _build_converter(monkeypatch)
+
+    async def _explode(**_kwargs: Any) -> AsyncGenerator[Any, None]:
+        raise RuntimeError("boom")
+        yield  # pragma: no cover - makes this an async generator
+
+    monkeypatch.setattr(converter, "astream_events", _explode)
+    wrapper = _responses_wrapper(stream=True)
+    wrapper.conversation_id = "u1:chat-ab12"
+
+    chunks = await _collect(converter=converter, wrapper=wrapper)
+
+    assert json.loads(chunks[0][len("data: ") :])["type"] == "response.created"
+    assert '"response.completed"' in chunks[-1]
+    assert len(chunks) > 2
