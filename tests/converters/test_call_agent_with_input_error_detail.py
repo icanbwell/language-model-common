@@ -34,6 +34,9 @@ class _FakeChatRequestWrapper:
         self.response_format = None
         self.appended_messages: list[Any] = []
 
+    def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
+        pass
+
     def create_system_message(self, *, content: str) -> str:
         return content
 

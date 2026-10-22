@@ -1,3 +1,4 @@
+import warnings
 from typing import Annotated, Optional, Union, Any
 
 from openai.types.responses import ResponseInputParam
@@ -93,9 +94,28 @@ class ResponsesRequest(BaseModel):
     thread_id: Optional[str] = Field(
         None,
         description="Accepted for compatibility; not used by this package.",
+        deprecated=True,
     )
-    user_id: Optional[str] = None
+    user_id: Optional[str] = Field(
+        None,
+        description="Accepted for compatibility; not used by this package.",
+        deprecated=True,
+    )
     metadata: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _warn_on_deprecated_fields(self) -> "ResponsesRequest":
+        # `model_fields_set` avoids reading the deprecated attributes, which would
+        # themselves raise a DeprecationWarning.
+        for field_name in ("thread_id", "user_id"):
+            if field_name in self.model_fields_set:
+                warnings.warn(
+                    f"`{field_name}` is deprecated and ignored; it will be removed "
+                    "in a future release.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return self
 
     @field_validator("conversation")
     @classmethod

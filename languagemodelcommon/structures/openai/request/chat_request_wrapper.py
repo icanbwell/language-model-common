@@ -324,6 +324,24 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
+        """Use ``conversation_id`` as this request's conversation id when none is set.
+
+        The default implementation is a no-op: transports with no conversation
+        field (e.g. chat completions) ignore it.  Subclasses override to echo
+        the id on their responses.  An id the caller already set is kept.
+        """
+
+    def create_stream_start_sse_event(
+        self, *, request_id: str, source: str
+    ) -> str | None:
+        """Emit the event that opens a streamed response, before any content.
+
+        The default implementation returns None (no-op): chat completions has
+        no separate opening message.  Subclasses override to emit one.
+        """
+        return None
+
     @property
     def supports_structured_tool_progress(self) -> bool:
         """True when this transport carries tool progress as typed items
