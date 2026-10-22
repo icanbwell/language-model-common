@@ -13,7 +13,7 @@
 - `docs/superpowers/plans/2026-10-21-conversation-api-and-test-ui.md`, Task 10 (this plan expands it) and Task 11 (baileyai side) (baileyai repo, same branch).
 - `docs/superpowers/specs/2026-10-21-chat-ui-bailey-client-design.md` section 6.7 and `docs/superpowers/plans/2026-10-21-chat-ui-bailey-client.md` Tasks 13-14 (baileyai-chat-ui repo, branch `origin/IQ-BAI-1237`).
 
-Repo rules followed: branch `IQ-BAI-1237`; commit messages start `BAI-1237 `, no AI-attribution trailer, no `--no-verify` (`CLAUDE.md` Commit Messages, Code Ownership); keyword-only arguments, empty `__init__.py`, no in-process caches; no version bump or changelog edit in the PR, the version comes from the release tag (`CONTRIBUTING.md`, `playbooks/MERGING.md:16`); plans live in `docs/superpowers/plans/`, ADRs in `adrs/`.
+Repo rules followed: `CLAUDE.md` (commit, branch, keyword-only and attribution rules) and `CONTRIBUTING.md`; this plan adds only: empty `__init__.py`, no in-process caches; no version bump or changelog edit in the PR, the version comes from the release tag (`CONTRIBUTING.md`, `playbooks/MERGING.md:16`); plans live in `docs/superpowers/plans/`, ADRs in `adrs/`.
 
 ## Global Constraints
 
@@ -21,7 +21,8 @@ Repo rules followed: branch `IQ-BAI-1237`; commit messages start `BAI-1237 `, no
 - Unknown fields stay forbidden except `conversation`: `ResponsesRequest` keeps `ConfigDict(extra="forbid")`; `conversation` is the only new accepted key.
 - Backward compatible for existing callers: a caller that never sets `conversation` on the request and never sets `conversation_id` on the wrapper gets the same behavior as today (the response object's `conversation` stays `null`, as it serializes today).
 - No PHI: the conversation id is an opaque identifier; it is never logged by this package with message text, and no test fixture contains real user data.
-- Keyword-only arguments per the repo's rules: every new public function, method and constructor uses the `*` separator and every call site and test passes keywords (property setters are the framework-required exception).
+- Keyword-only arguments per `CLAUDE.md` (property setters are the framework-required exception).
+- Every new public name (`ConversationParam`, `conversation`, `requested_conversation_id`, `conversation_id` property and setter, `MAX_CONVERSATION_ID_LENGTH`) gets a docstring or `Field(description=...)`, not only `thread_id`.
 
 ## Verified current state (2026-10-21, `origin/main` 0654b17)
 
@@ -48,6 +49,7 @@ Repo rules followed: branch `IQ-BAI-1237`; commit messages start `BAI-1237 `, no
 This plan changes a public request/response contract consumed by baileyai and baileyai-chat-ui. `CLAUDE.md` ("Process References") requires a Tech Design Review for public API and cross-team changes, and requires the governing document to be referenced in the PR and commit message. The baileyai plan lists the review ticket and any EA exception as an unresolved blocker (its Open question 4, "Blocks implementation").
 
 - [ ] **Gate 0 (before Task 1):** a Tech Design Review ticket (type "Tech Design Review", EA project) exists for the baileyai design `docs/tech-designs/conversation-api-for-chat-ui-client.md` (item 7), and its status is approved. Record the ticket key in the ADR (Task 3), in the PR description, and in each commit body.
+- Intermediate state to record in the ADR: once the new package is published but baileyai has not shipped its Task 11, a body `conversation` goes from an explicit 400 to accepted and ignored (compatibility matrix, new package / old baileyai). Keep baileyai Task 11 in the same rollout window; chat-ui stays on the header default meanwhile.
 - [ ] **Gate 0b:** the EA decisions that shape the contract are answered by the owners: unknown or other-user `conversation` id behavior (baileyai design question 6), `thread_id` deprecation (Open question 4 below), and the id length bound (Open question 2).
 - An executor that cannot confirm Gate 0 stops. Implementing Tasks 1-3 on a branch is allowed only as a draft PR; do not mark it ready, merge it, or run Task 4 until the gate is confirmed by the user. Who may create a GitHub Release in this repo is `unverified` (`playbooks/DEPLOYMENT.md`, item 6); Task 4 Step 1 is a user action.
 
@@ -160,7 +162,7 @@ Why a wrapper property, not a keyword on the methods: the three methods are abst
 - Consumes: Tasks 1-2.
 - Produces: the recorded decisions that Open questions 1-4 resolve.
 
-- [ ] **Step 1: Write the ADR** in MADR format (copy the section layout of `adrs/0003-configurable-mcp-protocol-negotiation-mode.md`), Ticket BAI-1237. Options considered for how the server's id reaches the payloads: (a) new keyword on the three abstract `create_*` methods, (b) caller-set property on the Responses wrapper (chosen), (c) converter copies `request_information.conversation_thread_id` automatically. Also record: echo only the id the server used, `conversation` and `previous_response_id` exclusive, `thread_id` kept and not aliased, `Response.conversation` was already `null` in payloads, standards position (Open Responses 2026-04-24 defines no conversation field and permits implementation-specific fields; OpenAI's `conversation` request parameter is mirrored; whether OpenAI's Response object returns `conversation` and the ID format are not confirmed). Cite the approved Tech Design Review ticket (Gate 0) and the baileyai tech design (PR #543) as the governing documents.
+- [ ] **Step 1: Write the ADR** in MADR format (copy the section layout of `adrs/0003-configurable-mcp-protocol-negotiation-mode.md`), Ticket: BAI-1244 is the implementation ticket used by PR #132; confirm which key the ADR and commits carry. Options considered for how the server's id reaches the payloads: (a) new keyword on the three abstract `create_*` methods, (b) caller-set property on the Responses wrapper (chosen), (c) converter copies `request_information.conversation_thread_id` automatically. Also record: echo only the id the server used, `conversation` and `previous_response_id` exclusive, `thread_id` kept and not aliased, `Response.conversation` was already `null` in payloads, standards position (Open Responses 2026-04-24 defines no conversation field and permits implementation-specific fields; OpenAI's `conversation` request parameter is mirrored; whether OpenAI's Response object returns `conversation` and the ID format are not confirmed). Cite the approved Tech Design Review ticket (Gate 0) and the baileyai tech design (PR #543) as the governing documents.
 - [ ] **Step 2: Run the repo gates** from the worktree root: `~/git/language-model-common/.venv/bin/python -m ruff check languagemodelcommon tests`, `~/git/language-model-common/.venv/bin/python -m ruff format --check languagemodelcommon tests`, `~/git/language-model-common/.venv/bin/python -m mypy --strict --python-version=3.12 languagemodelcommon/schema/openai/responses.py languagemodelcommon/structures/openai/request/responses_api_request_wrapper.py`. Expected: no findings. The canonical full run is `make run-pre-commit` and `make tests` (Docker); CI runs both (`.github/workflows/build_and_test.yml`).
 - [ ] **Step 3: Commit**
   ```bash
@@ -214,8 +216,9 @@ Order: this repo merged and released, then baileyai floor bump and Task 11 to de
 3. Should the converter set `conversation_id` automatically from `request_information.conversation_thread_id`? Not done: it would start exposing thread ids to every consumer that never asked, and baileyai's `<sub>:chat-...` shape embeds the subject. Revisit only if a second consumer wants it.
 4. Is `thread_id` (and `user_id`) on `ResponsesRequest` to be deprecated? Unused in this package and in baileyai code, but baileyai tests send `thread_id`. Not changed here.
 5. Exclusivity uses `previous_response_id is not None`; an empty-string `previous_response_id` therefore also conflicts. Confirm that is intended.
-6. Does the `openai>=2.5.0` floor in `pyproject.toml` include `Response.conversation` / `Conversation`? Verified present in 2.41.0 (this repo's lock) and 2.54.0 (local venv), not checked for 2.5.0. If absent, raise the floor in Task 2.
+6. Answered in PR #132: `Response.conversation` is present in the openai 2.5.0 wheel, so no floor change. (Also verified in 2.41.0 and 2.54.0.)
 7. Not confirmed anywhere: the format of OpenAI conversation ids and whether OpenAI's Response object returns `conversation`; the field name and `{ id }` shape here follow the request parameter and the SDK's `Response.conversation` model.
+8. Deferred items (initial `response.created` on live streams, `thread_id` deprecation, converter auto-copy) have no tickets yet. File them and cite the keys here before Task 1 starts.
 
 ## Self-review
 
