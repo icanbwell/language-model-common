@@ -49,6 +49,8 @@ Option B.
 * On a normal live agent turn only `response.completed` is emitted by this package; `response.created` comes from `write_response` streams (canned and error paths). Clients get the id at the end of the stream, or from the header earlier.
 * baileyai must set `conversation_id` on the wrapper and add `conversation` to the events it builds by hand (`baileyai/services/pipeline/output/responses_api_output.py`).
 * An old backend returns an error for a body `conversation` (baileyai maps the pydantic error to HTTP 400), so clients stay on the header until the new package is deployed.
+* New package with an old baileyai: once this package is published and baileyai has not yet shipped Task 11, a body `conversation` goes from a 400 to accepted and ignored, and the response echoes `conversation: null`. baileyai Task 11 should ship in the same rollout window as the package bump.
+* The package validates id shape only (non-blank, no surrounding whitespace, no ASCII control characters, at most 256 characters). The value is untrusted client input; ownership/tenant checks on the conversation are the backend's job and must happen before reading history or echoing the id.
 * Rollback: stop setting `conversation_id` and ignore the field; a published version cannot be unpublished.
 
 ## Test Plan

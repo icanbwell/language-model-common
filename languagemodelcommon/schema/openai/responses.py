@@ -23,9 +23,19 @@ ConversationId = Annotated[
 
 
 def validate_conversation_id(*, value: str) -> str:
-    """Return `value` if it is a usable conversation id, else raise ValueError."""
+    """Return `value` if it is a usable conversation id, else raise ValueError.
+
+    The value is untrusted client input. This only checks its shape (not blank,
+    no surrounding whitespace, no ASCII control characters, bounded length). It
+    does not check that the caller owns the conversation: the backend must
+    verify ownership before reading history or echoing the id.
+    """
     if not value.strip():
         raise ValueError("conversation id must not be blank")
+    if value != value.strip():
+        raise ValueError("conversation id must not have leading or trailing whitespace")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError("conversation id must not contain control characters")
     if len(value) > MAX_CONVERSATION_ID_LENGTH:
         raise ValueError(
             f"conversation id must be at most {MAX_CONVERSATION_ID_LENGTH} characters"
