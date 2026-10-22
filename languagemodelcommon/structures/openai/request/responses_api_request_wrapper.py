@@ -36,13 +36,17 @@ from openai.types.responses import (
     ResponseCreatedEvent,
     ResponseUsage,
 )
+from openai.types.responses.response import Conversation
 from openai.types.responses.response_usage import (
     InputTokensDetails,
     OutputTokensDetails,
 )
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
-from languagemodelcommon.schema.openai.responses import ResponsesRequest
+from languagemodelcommon.schema.openai.responses import (
+    MAX_CONVERSATION_ID_LENGTH,
+    ResponsesRequest,
+)
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
@@ -86,6 +90,31 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # Disambiguates multiple llm_call items emitted within the same
         # response -- same reasoning as _image_output_counter above (BAI-882).
         self._llm_call_counter: int = 0
+        # The conversation id the SERVER used for this request. Set by the
+        # caller (the backend decides the id); never copied from the request,
+        # which the backend may have ignored.
+        self._conversation_id: Optional[str] = None
+
+    @property
+    def conversation_id(self) -> Optional[str]:
+        """The conversation id echoed as `conversation: { id }` on responses."""
+        return self._conversation_id
+
+    @conversation_id.setter
+    def conversation_id(self, value: Optional[str]) -> None:
+        if value is not None and (
+            not value.strip() or len(value) > MAX_CONVERSATION_ID_LENGTH
+        ):
+            raise ValueError(
+                "conversation_id must be non-blank and at most "
+                f"{MAX_CONVERSATION_ID_LENGTH} characters"
+            )
+        self._conversation_id = value
+
+    def _conversation_payload(self) -> Optional[Conversation]:
+        if self._conversation_id is None:
+            return None
+        return Conversation(id=self._conversation_id)
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (
@@ -233,6 +262,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 ),
                 tools=[],
                 tool_choice="auto",
+                conversation=self._conversation_payload(),
             ),
             type="response.created",
             sequence_number=0,
@@ -549,6 +579,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 tools=[],
                 tool_choice="auto",
                 usage=response_usage,
+                conversation=self._conversation_payload(),
             ),
             type="response.completed",
             sequence_number=len(self._messages) + 1,
@@ -648,6 +679,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             tools=[],
             tool_choice="auto",
             usage=response_usage,
+            conversation=self._conversation_payload(),
         )
         return response.model_dump(mode="json")
 
