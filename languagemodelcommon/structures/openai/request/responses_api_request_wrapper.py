@@ -44,6 +44,8 @@ from openai.types.responses.response_usage import (
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.schema.openai.responses import (
+    HISTORY_STATUSES,
+    HistoryStatus,
     ResponsesRequest,
     validate_conversation_id,
 )
@@ -94,6 +96,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # caller (the backend decides the id); never copied from the request,
         # which the backend may have ignored.
         self._conversation_id: Optional[str] = None
+        # Outcome of loading stored history (BAI-1263), set by the caller from
+        # PipelineContext. Emitted inside `conversation` only when the status is set.
+        self._history_status: Optional[HistoryStatus] = None
+        self._history_loaded: int = 0
 
     @property
     def conversation_id(self) -> Optional[str]:
@@ -106,6 +112,28 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             validate_conversation_id(value=value)
         self._conversation_id = value
 
+    @property
+    def history_status(self) -> Optional[HistoryStatus]:
+        """`loaded`, `empty` or `failed`; None when the caller did not record it."""
+        return self._history_status
+
+    @history_status.setter
+    def history_status(self, value: Optional[str]) -> None:
+        if value is not None and value not in HISTORY_STATUSES:
+            raise ValueError(f"history status must be one of {HISTORY_STATUSES}")
+        self._history_status = cast(Optional[HistoryStatus], value)
+
+    @property
+    def history_loaded(self) -> int:
+        """Number of prior messages loaded; only emitted with `history_status`."""
+        return self._history_loaded
+
+    @history_loaded.setter
+    def history_loaded(self, value: int) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("history loaded must be a non-negative integer")
+        self._history_loaded = value
+
     @override
     def create_stream_start_sse_event(
         self, *, request_id: str, source: str
@@ -115,7 +143,18 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def _conversation_payload(self) -> Optional[Conversation]:
         if self._conversation_id is None:
             return None
-        return Conversation(id=self._conversation_id)
+        if self._history_status is None:
+            return Conversation(id=self._conversation_id)
+        # The upstream Conversation model allows extra keys, so the history
+        # outcome rides along without a new response model. Without a
+        # conversation id there is no `conversation` object to attach it to.
+        return Conversation.model_validate(
+            {
+                "id": self._conversation_id,
+                "history_status": self._history_status,
+                "history_loaded": self._history_loaded,
+            }
+        )
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (

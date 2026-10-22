@@ -37,4 +37,9 @@ class PipelineContext:
     response_messages: list[AnyMessage] = field(default_factory=list)
 
     conversation_id: str = ""
+    # Outcome of loading stored history: "loaded" | "empty" | "failed" (None = not
+    # recorded) and the number of prior messages loaded (BAI-1263). Set by the
+    # history step; copied onto the response wrapper by the caller.
+    history_status: str | None = None
+    history_loaded: int = 0
     user_id: str = ""

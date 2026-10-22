@@ -1,6 +1,7 @@
 """Tests for ResponsesApiRequestWrapper."""
 
 import json
+import re
 from typing import Any, List, cast
 from unittest.mock import MagicMock
 
@@ -860,3 +861,152 @@ class TestConversationEcho:
         assert completed["response"]["conversation"] == {"id": "u1:chat-ab12"}
         assert completed["message_id"] == "m1"
         assert "message_id" not in completed["response"]
+
+
+class TestHistoryOutcomeEcho:
+    """The history load outcome rides in `conversation` on every Response (BAI-1263)."""
+
+    @pytest.mark.parametrize(
+        ("status", "loaded"),
+        [("loaded", 7), ("empty", 0), ("failed", 0)],
+    )
+    @pytest.mark.parametrize(
+        "builder", [_created_response, _completed_response, _non_streaming]
+    )
+    def test_status_and_count_are_emitted_in_all_three_payloads(
+        self, status: str, loaded: int, builder: Any
+    ) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_status = status
+        wrapper.history_loaded = loaded
+
+        assert builder(wrapper=wrapper)["conversation"] == {
+            "id": "u1:chat-ab12",
+            "history_status": status,
+            "history_loaded": loaded,
+        }
+
+    @pytest.mark.parametrize(
+        "builder", [_created_response, _completed_response, _non_streaming]
+    )
+    def test_unset_status_leaves_conversation_identical_to_id_only(
+        self, builder: Any
+    ) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_loaded = 5  # a count without a status is never emitted
+
+        assert builder(wrapper=wrapper)["conversation"] == {"id": "u1:chat-ab12"}
+
+    @pytest.mark.parametrize(
+        "builder", [_created_response, _completed_response, _non_streaming]
+    )
+    def test_status_without_conversation_id_keeps_conversation_null(
+        self, builder: Any
+    ) -> None:
+        wrapper = _make_wrapper()
+        wrapper.history_status = "failed"
+
+        assert builder(wrapper=wrapper)["conversation"] is None
+
+    def test_failed_status_with_zero_loaded_emits_the_zero(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_status = "failed"
+
+        conversation = _completed_response(wrapper=wrapper)["conversation"]
+        assert conversation["history_loaded"] == 0
+        assert "history_loaded" in conversation
+
+    def test_key_order_and_raw_serialization_are_stable(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_status = "loaded"
+        wrapper.history_loaded = 2
+
+        chunk = wrapper.create_first_sse_message(request_id="r", source="t")
+
+        assert (
+            '"conversation":{"id":"u1:chat-ab12","history_status":"loaded",'
+            '"history_loaded":2}'
+        ) in chunk
+        assert chunk.count("\n") == 2  # single-line data: event
+
+    def test_payload_without_history_is_byte_identical_to_before(self) -> None:
+        plain = _make_wrapper()
+        plain.conversation_id = "u1:chat-ab12"
+        touched = _make_wrapper()
+        touched.conversation_id = "u1:chat-ab12"
+        touched.history_status = "empty"
+        touched.history_status = None  # cleared again
+
+        def normalise(chunk: str) -> str:
+            return re.sub(r'"created_at":[^,}]*', "", chunk)
+
+        assert normalise(
+            plain.create_final_sse_message(
+                request_id="r", usage_metadata=None, source="t"
+            )
+        ) == normalise(
+            touched.create_final_sse_message(
+                request_id="r", usage_metadata=None, source="t"
+            )
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_stream_start_and_completed_events_both_carry_outcome(
+        self,
+    ) -> None:
+        wrapper = _make_wrapper(stream=True)
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_status = "failed"
+        expected = {
+            "id": "u1:chat-ab12",
+            "history_status": "failed",
+            "history_loaded": 0,
+        }
+
+        started = wrapper.create_stream_start_sse_event(request_id="r", source="t")
+        assert started is not None
+        assert _event_lines(chunk=started)[0]["response"]["conversation"] == expected
+        assert _completed_response(wrapper=wrapper)["conversation"] == expected
+
+    def test_completed_chunk_survives_a_top_level_key_rewrite(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.history_status = "loaded"
+        wrapper.history_loaded = 3
+        chunk = wrapper.create_final_sse_message(
+            request_id="r", usage_metadata=None, source="t"
+        )
+
+        event = next(
+            e for e in _event_lines(chunk=chunk) if e["type"] == "response.completed"
+        )
+        event["message_id"] = "m1"
+        reparsed = json.loads(json.dumps(event))
+        assert reparsed["response"]["conversation"]["history_loaded"] == 3
+
+    @pytest.mark.parametrize("value", ["", "LOADED", "partial"])
+    def test_unknown_status_is_rejected_on_the_producer(self, value: str) -> None:
+        wrapper = _make_wrapper()
+
+        with pytest.raises(ValueError):
+            wrapper.history_status = value
+
+    @pytest.mark.parametrize("value", [-1, True, 1.5])
+    def test_invalid_count_is_rejected(self, value: Any) -> None:
+        wrapper = _make_wrapper()
+
+        with pytest.raises(ValueError):
+            wrapper.history_loaded = value
+
+    def test_consumer_parsing_tolerates_an_unknown_status_value(self) -> None:
+        from openai.types.responses.response import Conversation
+
+        parsed = Conversation.model_validate(
+            {"id": "c", "history_status": "future-value", "history_loaded": 1}
+        )
+
+        assert parsed.id == "c"

@@ -41,6 +41,10 @@ ADR 0004 added `ResponsesApiRequestWrapper.conversation_id` and deferred two ite
 * Test doubles that duck-type `ChatRequestWrapper` without subclassing it must add `create_stream_start_sse_event`; subclasses inherit the no-op default.
 * Rollback: stop relying on the event; a published version cannot be unpublished.
 
+## Addendum (BAI-1263): history outcome in `conversation`
+
+Additive, no change to the decisions above. `PipelineContext` gains `history_status` (`loaded` | `empty` | `failed`, default `None`) and `history_loaded` (prior messages loaded, default `0`). `ResponsesApiRequestWrapper` gains matching `history_status` / `history_loaded` properties that the caller copies from the context. When `history_status` is set and `conversation_id` is set, the `conversation` object on `response.created`, `response.completed` and the non-streaming body becomes `{ id, history_status, history_loaded }`; otherwise it is unchanged (`{ id }` or `null`), so existing callers get byte-identical payloads. A status without a conversation id is not emitted. The producer rejects unknown status values; the upstream `Conversation` model allows extra keys, so consumers reading a value added later do not fail. The package does not log or carry message content for this signal. Tests: `TestHistoryOutcomeEcho` in `tests/structures/openai/request/test_responses_api_request_wrapper.py`, `tests/pipeline/test_context_history_fields.py`.
+
 ## Test Plan
 
 `tests/structures/openai/request/test_stream_start_sse_event.py` (event on both wrappers), `tests/converters/test_converter_stream_start_event.py` (stream opens with `response.created`; no extra chunk when the wrapper has none; a failing start event and a failing stream both go through error handling), `tests/schema/openai/test_responses_request_deprecated_fields.py` (warns per supplied field, silent otherwise, caller attribution, log without the value, schema marks `deprecated`).
