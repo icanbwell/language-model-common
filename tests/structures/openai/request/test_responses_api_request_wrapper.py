@@ -989,11 +989,35 @@ class TestHistoryOutcomeEcho:
         assert reparsed["response"]["conversation"]["history_loaded"] == 3
 
     @pytest.mark.parametrize("value", ["", "LOADED", "partial"])
-    def test_unknown_status_is_rejected_on_the_producer(self, value: str) -> None:
+    def test_unknown_status_is_ignored_not_raised(self, value: str) -> None:
         wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
 
-        with pytest.raises(ValueError):
-            wrapper.history_status = value
+        wrapper.history_status = value
+
+        assert wrapper.history_status is None
+        assert _completed_response(wrapper=wrapper)["conversation"] == {
+            "id": "u1:chat-ab12"
+        }
+
+    def test_created_event_only_carries_status_set_before_it_is_built(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        before = _created_response(wrapper=wrapper)["conversation"]
+        wrapper.history_status = "failed"
+
+        assert before == {"id": "u1:chat-ab12"}
+        assert (
+            _completed_response(wrapper=wrapper)["conversation"]["history_status"]
+            == "failed"
+        )
+
+    def test_upstream_conversation_model_still_allows_extra_keys(self) -> None:
+        from openai.types.responses.response import Conversation
+
+        assert Conversation.model_config.get("extra") == "allow", (
+            "history fields rely on openai Conversation allowing extras"
+        )
 
     @pytest.mark.parametrize("value", [-1, True, 1.5])
     def test_invalid_count_is_rejected(self, value: Any) -> None:

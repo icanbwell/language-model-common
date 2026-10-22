@@ -114,18 +114,28 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
 
     @property
     def history_status(self) -> Optional[HistoryStatus]:
-        """`loaded`, `empty` or `failed`; None when the caller did not record it."""
+        """`loaded`, `empty` or `failed`; None when the caller did not record it.
+
+        Unknown values are ignored (logged), not raised. `response.created` carries
+        the outcome only if it is set before that event is built; `response.completed`
+        and the non-streaming body are authoritative.
+        """
         return self._history_status
 
     @history_status.setter
     def history_status(self, value: Optional[str]) -> None:
         if value is not None and value not in HISTORY_STATUSES:
-            raise ValueError(f"history status must be one of {HISTORY_STATUSES}")
+            # An observability field must not fail the turn: drop it and log
+            # (without the value) so the response still goes out.
+            logger.warning(
+                "Ignoring unknown history status; expected one of %s", HISTORY_STATUSES
+            )
+            value = None
         self._history_status = cast(Optional[HistoryStatus], value)
 
     @property
     def history_loaded(self) -> int:
-        """Number of prior messages loaded; only emitted with `history_status`."""
+        """Prior messages loaded; only emitted with `history_status`, meaningful for `loaded`."""
         return self._history_loaded
 
     @history_loaded.setter
