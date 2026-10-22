@@ -58,6 +58,13 @@ class TestConversationRejected:
         [
             "",
             "   ",
+            " a",
+            "a ",
+            "a\nb",
+            "a\r\nb",
+            "a\x00b",
+            "a\x7fb",
+            {"id": " a\nb "},
             {"id": ""},
             {"id": "  "},
             "x" * (MAX_CONVERSATION_ID_LENGTH + 1),
