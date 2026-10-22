@@ -513,7 +513,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             total_tokens += u.get("total_tokens", 0)
         return ResponseUsage(
             input_tokens=input_tokens,
-            input_tokens_details=InputTokensDetails(cached_tokens=0),
+            # openai>=3 requires `cache_write_tokens`; older releases ignore the extra field
+            # (the model allows extras), so build it from a dict to satisfy both.
+            input_tokens_details=InputTokensDetails.model_validate(
+                {"cached_tokens": 0, "cache_write_tokens": 0}
+            ),
             output_tokens=output_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
             total_tokens=total_tokens,
