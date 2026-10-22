@@ -44,8 +44,8 @@ from openai.types.responses.response_usage import (
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.schema.openai.responses import (
-    MAX_CONVERSATION_ID_LENGTH,
     ResponsesRequest,
+    validate_conversation_id,
 )
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
@@ -102,13 +102,8 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
 
     @conversation_id.setter
     def conversation_id(self, value: Optional[str]) -> None:
-        if value is not None and (
-            not value.strip() or len(value) > MAX_CONVERSATION_ID_LENGTH
-        ):
-            raise ValueError(
-                "conversation_id must be non-blank and at most "
-                f"{MAX_CONVERSATION_ID_LENGTH} characters"
-            )
+        if value is not None:
+            validate_conversation_id(value=value)
         self._conversation_id = value
 
     def _conversation_payload(self) -> Optional[Conversation]:

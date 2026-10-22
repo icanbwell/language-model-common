@@ -18,9 +18,14 @@ ConversationId = Annotated[
 ]
 
 
-def _reject_blank_conversation_id(*, value: str) -> str:
+def validate_conversation_id(*, value: str) -> str:
+    """Return `value` if it is a usable conversation id, else raise ValueError."""
     if not value.strip():
         raise ValueError("conversation id must not be blank")
+    if len(value) > MAX_CONVERSATION_ID_LENGTH:
+        raise ValueError(
+            f"conversation id must be at most {MAX_CONVERSATION_ID_LENGTH} characters"
+        )
     return value
 
 
@@ -34,7 +39,7 @@ class ConversationParam(BaseModel):
     @field_validator("id")
     @classmethod
     def _id_is_not_blank(cls, value: str) -> str:
-        return _reject_blank_conversation_id(value=value)
+        return validate_conversation_id(value=value)
 
 
 class ResponsesRequest(BaseModel):
@@ -98,7 +103,7 @@ class ResponsesRequest(BaseModel):
         cls, value: Optional[Union[str, ConversationParam]]
     ) -> Optional[Union[str, ConversationParam]]:
         if isinstance(value, str):
-            _reject_blank_conversation_id(value=value)
+            validate_conversation_id(value=value)
         return value
 
     @model_validator(mode="after")
