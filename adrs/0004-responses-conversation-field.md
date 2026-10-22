@@ -4,7 +4,7 @@
 * Deciders: language-model-common maintainers, baileyai maintainers
 * Ticket: BAI-1244 (sub-task of BAI-1231; plan ticket BAI-1237)
 * Date: 2026-10-21
-* Partly superseded by ADR 0005 (BAI-1256): Option C below and the initial `response.created` question.
+* Partly superseded by ADR 0005 (BAI-1256): the initial `response.created` question.
 * Governing documents: baileyai `docs/tech-designs/conversation-api-for-chat-ui-client.md`, item 7 (baileyai PR #543); plan `docs/superpowers/plans/2026-10-21-responses-conversation-field.md` (PR #131). The Tech Design Review ticket does not exist yet; the EA decisions are pending. This change ships as a draft PR until both are done.
 
 ## Context and Problem Statement

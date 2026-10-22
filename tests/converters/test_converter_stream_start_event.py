@@ -1,13 +1,10 @@
-"""The LangGraph converter adopts the thread id as the conversation id and
-opens Responses streams with `response.created` (BAI-1256)."""
+"""The LangGraph converter opens Responses streams with `response.created` (BAI-1256)."""
 
 import json
-from typing import Any, AsyncGenerator, List, cast
+from typing import Any, AsyncGenerator, cast
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.messages import AIMessage, AnyMessage
 
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
@@ -169,81 +166,6 @@ async def test_failing_stream_start_event_goes_through_stream_error_handling(
     assert chunks[0].startswith("error:")
     assert "boom" not in chunks[0]
     assert chunks[-1] == "final"
-
-
-async def _ainvoke_ok(**_kwargs: Any) -> List[AnyMessage]:
-    return [AIMessage(content="ok")]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("thread_id", "caller_set_id", "expected"),
-    [
-        ("u1:chat-ab12", None, {"id": "u1:chat-ab12"}),
-        ("u1:chat-ab12", "caller-set", {"id": "caller-set"}),
-        (None, None, None),
-        ("", None, None),
-        ("x" * 257, None, None),
-    ],
-)
-async def test_non_streaming_response_adopts_the_thread_id(
-    monkeypatch: pytest.MonkeyPatch,
-    thread_id: str | None,
-    caller_set_id: str | None,
-    expected: dict[str, str] | None,
-) -> None:
-    converter = _build_converter(monkeypatch)
-    monkeypatch.setattr(converter, "ainvoke", _ainvoke_ok)
-    wrapper = _responses_wrapper(stream=False)
-    wrapper.conversation_id = caller_set_id
-
-    response = await converter.call_agent_with_input(
-        chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
-        compiled_state_graph=None,  # type: ignore[arg-type]
-        system_messages=[],
-        request_information=_request_information(thread_id=thread_id),
-        config=None,
-        state=None,
-    )
-
-    body = json.loads(bytes(cast(JSONResponse, response).body))
-    assert body["conversation"] == expected
-
-
-@pytest.mark.asyncio
-async def test_streaming_response_adopts_the_thread_id_through_call_agent_with_input(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    converter = _build_converter(monkeypatch)
-    monkeypatch.setattr(converter, "astream_events", _no_events)
-    wrapper = _responses_wrapper(stream=True)
-
-    response = await converter.call_agent_with_input(
-        chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
-        compiled_state_graph=None,  # type: ignore[arg-type]
-        system_messages=[],
-        request_information=_request_information(thread_id="u1:chat-ab12"),
-        config=None,
-        state=None,
-    )
-
-    chunks = [
-        chunk if isinstance(chunk, str) else bytes(chunk).decode()
-        async for chunk in cast(StreamingResponse, response).body_iterator
-    ]
-    events = [
-        json.loads(line[len("data: ") :])
-        for chunk in chunks
-        for line in chunk.split("\n")
-        if line.startswith("data: ") and line != "data: [DONE]"
-    ]
-    by_type = {e["type"]: e for e in events if "response" in e}
-    assert by_type["response.created"]["response"]["conversation"] == {
-        "id": "u1:chat-ab12"
-    }
-    assert by_type["response.completed"]["response"]["conversation"] == {
-        "id": "u1:chat-ab12"
-    }
 
 
 @pytest.mark.asyncio

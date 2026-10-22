@@ -484,10 +484,6 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         if chat_request_wrapper is None:
             raise ValueError("chat_request must not be None")
 
-        chat_request_wrapper.adopt_conversation_id(
-            conversation_id=request_information.conversation_thread_id
-        )
-
         if chat_request_wrapper.stream:
             return StreamingResponse(
                 content=await self.get_streaming_response_async(

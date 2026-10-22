@@ -1,17 +1,10 @@
-"""Tests for adopting a conversation id on a request wrapper and emitting the
-initial stream event (BAI-1256)."""
+"""Tests for the stream-start SSE event on the request wrappers (BAI-1256)."""
 
 import json
-import logging
 from unittest.mock import MagicMock
 
-import pytest
-
 from languagemodelcommon.schema.openai.completions import ChatRequest
-from languagemodelcommon.schema.openai.responses import (
-    MAX_CONVERSATION_ID_LENGTH,
-    ResponsesRequest,
-)
+from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.chat_completion_api_request_wrapper import (
     ChatCompletionApiRequestWrapper,
 )
@@ -48,53 +41,6 @@ def _chat_completion_wrapper() -> ChatCompletionApiRequestWrapper:
         enable_debug_logging=False,
         environment_variables=_make_env(),
     )
-
-
-class TestAdoptConversationId:
-    def test_adopts_when_unset(self) -> None:
-        wrapper = _responses_wrapper()
-
-        wrapper.adopt_conversation_id(conversation_id="u1:chat-ab12")
-
-        assert wrapper.conversation_id == "u1:chat-ab12"
-
-    def test_does_not_overwrite_a_caller_set_id(self) -> None:
-        wrapper = _responses_wrapper()
-        wrapper.conversation_id = "caller-set"
-
-        wrapper.adopt_conversation_id(conversation_id="u1:chat-ab12")
-
-        assert wrapper.conversation_id == "caller-set"
-
-    @pytest.mark.parametrize(
-        "conversation_id",
-        [None, "", "   ", "x" * (MAX_CONVERSATION_ID_LENGTH + 1)],
-    )
-    def test_skips_missing_or_invalid_ids(self, conversation_id: str | None) -> None:
-        wrapper = _responses_wrapper()
-
-        wrapper.adopt_conversation_id(conversation_id=conversation_id)
-
-        assert wrapper.conversation_id is None
-
-    def test_invalid_id_is_not_written_to_logs(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        wrapper = _responses_wrapper()
-        too_long = "subject-" + "x" * MAX_CONVERSATION_ID_LENGTH
-
-        with caplog.at_level(logging.WARNING):
-            wrapper.adopt_conversation_id(conversation_id=too_long)
-
-        assert caplog.records
-        assert "subject-" not in caplog.text
-
-    def test_chat_completions_wrapper_ignores_it(self) -> None:
-        wrapper = _chat_completion_wrapper()
-
-        wrapper.adopt_conversation_id(conversation_id="u1:chat-ab12")
-
-        assert not hasattr(wrapper, "conversation_id")
 
 
 class TestStreamStartSseEvent:
