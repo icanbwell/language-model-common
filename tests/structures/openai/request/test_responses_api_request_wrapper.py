@@ -773,11 +773,22 @@ class TestUsageConversion:
             ({"cache_creation": 200}, 0, 200),
             ({"audio": 10}, 0, 0),
             ({}, 0, 0),
+            ({"cache_read": None, "cache_creation": None}, 0, 0),
+            (
+                {
+                    "cache_read": 100,
+                    "cache_creation": 0,
+                    "ephemeral_5m_input_tokens": 120,
+                    "ephemeral_1h_input_tokens": 80,
+                },
+                100,
+                200,
+            ),
         ],
     )
     def test_streamed_completed_event_reports_cache_tokens_from_input_token_details(
         self,
-        input_token_details: dict[str, int],
+        input_token_details: dict[str, int | None],
         expected_cached: int,
         expected_cache_write: int,
     ) -> None:

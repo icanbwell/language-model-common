@@ -6,6 +6,7 @@ from typing import (
     AsyncIterable,
     Dict,
     Literal,
+    Mapping,
     Union,
     override,
     Optional,
@@ -514,9 +515,16 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             output_tokens += u.get("output_tokens", 0)
             total_tokens += u.get("total_tokens", 0)
             # `input_token_details` and its keys are all optional in LangChain's TypedDict.
-            input_token_details = u.get("input_token_details") or {}
-            cached_tokens += input_token_details.get("cache_read", 0)
-            cache_write_tokens += input_token_details.get("cache_creation", 0)
+            # TypedDict also allows provider-specific extra keys; read it as a plain mapping.
+            details = cast(Mapping[str, int | None], u.get("input_token_details") or {})
+            cached_tokens += details.get("cache_read") or 0
+            # langchain-anthropic/-aws zero `cache_creation` and report the writes under
+            # the per-TTL keys instead when a TTL breakdown exists, so sum all three.
+            cache_write_tokens += (
+                (details.get("cache_creation") or 0)
+                + (details.get("ephemeral_5m_input_tokens") or 0)
+                + (details.get("ephemeral_1h_input_tokens") or 0)
+            )
         return ResponseUsage(
             input_tokens=input_tokens,
             # Newer openai releases (2.45.0 is confirmed to require it, as do 3.x) require
