@@ -113,7 +113,8 @@ class ResponsesRequest(BaseModel):
                     f"`{field_name}` is deprecated and ignored; it will be removed "
                     "in a future release.",
                     DeprecationWarning,
-                    stacklevel=2,
+                    # validator -> pydantic's __init__/model_validate -> the caller
+                    stacklevel=3,
                 )
         return self
 

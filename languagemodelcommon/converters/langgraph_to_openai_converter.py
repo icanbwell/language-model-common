@@ -272,14 +272,14 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         # Track tool start times for concurrent tool runs
         tool_start_times: Dict[str, float] = {}
 
-        # Open the stream so the client gets the conversation id before any content.
-        stream_start_event = chat_request_wrapper.create_stream_start_sse_event(
-            request_id=request_id, source="stream_start"
-        )
-        if stream_start_event:
-            yield stream_start_event
-
         try:
+            # Open the stream so the client gets the conversation id before any content.
+            stream_start_event = chat_request_wrapper.create_stream_start_sse_event(
+                request_id=request_id, source="stream_start"
+            )
+            if stream_start_event:
+                yield stream_start_event
+
             # Process streamed events from the graph and yield messages over the SSE stream.
             event: StandardStreamEvent | CustomStreamEvent
             async for event in self.astream_events(

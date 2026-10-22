@@ -32,6 +32,20 @@ class TestDeprecatedRequestFields:
         assert "thread_id" in messages
         assert "user_id" in messages
 
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda: ResponsesRequest.model_validate(_payload(thread_id="t")),
+            lambda: ResponsesRequest(model="m", input="hi", thread_id="t"),
+        ],
+        ids=["model_validate", "constructor"],
+    )
+    def test_warning_is_attributed_to_the_caller(self, build: Any) -> None:
+        with pytest.warns(DeprecationWarning) as recorded:
+            build()
+
+        assert recorded[0].filename == __file__
+
     def test_request_without_deprecated_fields_does_not_warn(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
