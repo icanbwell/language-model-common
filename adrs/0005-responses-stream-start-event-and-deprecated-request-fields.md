@@ -25,19 +25,19 @@ ADR 0004 added `ResponsesApiRequestWrapper.conversation_id` and deferred two ite
 * **B. `isinstance` check in the converter.** Couples the converter to one wrapper. Not chosen.
 
 ### Item 2, deprecation
-* **A. Deprecate, keep accepting (chosen).** `Field(deprecated=True)` (JSON schema `deprecated: true`), a `DeprecationWarning` attributed to the caller and a log line (field name only) when a non-null value is supplied.
+* **A. Deprecate, keep accepting (chosen).** `Field(deprecated=True)` (JSON schema `deprecated: true`), a `DeprecationWarning` attributed to the caller and a DEBUG log line (field name only) when a non-null value is supplied.
 * **B. Reject the fields.** Returns a 400 and breaks baileyai tests. Not chosen.
 
 ## Decision Outcome
 
 * `ChatRequestWrapper.create_stream_start_sse_event(*, request_id, source)` (default `None`). `ResponsesApiRequestWrapper` returns its `response.created` event, with `conversation: { id }` when `conversation_id` is set and `conversation: null` otherwise. `_stream_resp_async_generator` yields it first, inside the stream's `try`, so a failure goes through the stream's error handling.
-* `thread_id` and `user_id` stay accepted and ignored. A non-null value logs a warning and raises a `DeprecationWarning`; an explicit `null` or a `model_dump` round-trip does not.
+* `thread_id` and `user_id` stay accepted and ignored. A non-null value raises a `DeprecationWarning` and writes a DEBUG log line; an explicit `null` does not. Re-validating a dump of a request that did supply the field warns again, because the dump carries the value.
 
 ### Consequences
 
 * **New first chunk on live Responses streams.** `response.created` is now the first chunk of every live Responses stream (it was absent), with `conversation: null` unless the caller set `conversation_id`. Consumers that assume the first chunk is content, or that count events, must tolerate it. It is a single-line `data:` event, so baileyai's newline-splitting `message_id` rewrite is unaffected.
 * `write_response` and `stream_response` already emit their own `response.created`; they are alternative paths, so there is no duplicate.
-* Python hides `DeprecationWarning` by default outside `__main__` and shows it once per location, so the log line is what operators see. Test suites that run with warnings as errors will fail until they stop sending `thread_id` or `user_id`.
+* Python hides `DeprecationWarning` by default outside `__main__` and shows it once per location, so operators see it only with a warnings filter or DEBUG logging; the JSON schema `deprecated` flag is the durable signal. The log line is DEBUG, not WARNING, so a client that keeps sending the field does not add one WARNING per request. Test suites that run with warnings as errors will fail until they stop sending `thread_id` or `user_id`.
 * Test doubles that duck-type `ChatRequestWrapper` without subclassing it must add `create_stream_start_sse_event`; subclasses inherit the no-op default.
 * Rollback: stop relying on the event; a published version cannot be unpublished.
 

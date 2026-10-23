@@ -64,18 +64,36 @@ class TestDeprecatedRequestFields:
             warnings.simplefilter("error", DeprecationWarning)
             ResponsesRequest.model_validate(_payload(**{field: None}))
 
-    def test_dump_and_revalidate_round_trip_does_not_warn(self) -> None:
+    def test_dump_and_revalidate_round_trip_without_the_fields_does_not_warn(
+        self,
+    ) -> None:
         original = ResponsesRequest.model_validate(_payload())
 
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             ResponsesRequest.model_validate(original.model_dump())
 
+    @pytest.mark.parametrize("field", ["thread_id", "user_id"])
+    def test_revalidating_a_dump_that_supplied_the_field_warns_again(
+        self, field: str
+    ) -> None:
+        with pytest.warns(DeprecationWarning):
+            original = ResponsesRequest.model_validate(_payload(**{field: "value"}))
+
+        with pytest.warns(DeprecationWarning, match=field):
+            ResponsesRequest.model_validate(original.model_dump())
+
     def test_use_is_logged_without_the_value(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING), pytest.warns(DeprecationWarning):
+        with caplog.at_level(logging.DEBUG), pytest.warns(DeprecationWarning):
             ResponsesRequest.model_validate(_payload(thread_id="sub-123:chat-abcd"))
 
         assert "thread_id" in caplog.text
         assert "sub-123" not in caplog.text
+
+    def test_use_does_not_log_a_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.DEBUG), pytest.warns(DeprecationWarning):
+            ResponsesRequest.model_validate(_payload(thread_id="t"))
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

@@ -128,8 +128,9 @@ class ResponsesRequest(BaseModel):
                 f"`{field_name}` is deprecated and ignored; it will be removed "
                 "in a future release."
             )
-            # DeprecationWarning is hidden by default outside tests, so also log it.
-            logger.warning(message)
+            # DeprecationWarning is hidden by default outside tests. Log at DEBUG, not
+            # WARNING: a client that keeps sending the field would log once per request.
+            logger.debug(message)
             warnings.warn(
                 message,
                 DeprecationWarning,
