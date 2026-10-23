@@ -6,6 +6,7 @@ from typing import (
     AsyncIterable,
     Dict,
     Literal,
+    Mapping,
     Union,
     override,
     Optional,
@@ -552,17 +553,35 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         input_tokens = 0
         output_tokens = 0
         total_tokens = 0
+        cached_tokens = 0
+        cache_write_tokens = 0
         for u in usages:
             input_tokens += u.get("input_tokens", 0)
             output_tokens += u.get("output_tokens", 0)
             total_tokens += u.get("total_tokens", 0)
+            # `input_token_details` and its keys are all optional in LangChain's TypedDict.
+            # TypedDict also allows provider-specific extra keys; read it as a plain mapping.
+            details = cast(Mapping[str, int | None], u.get("input_token_details") or {})
+            cached_tokens += details.get("cache_read") or 0
+            # langchain-anthropic's ChatAnthropic zeros `cache_creation` and reports the
+            # writes under the per-TTL keys when a TTL breakdown exists; langchain-aws
+            # emits only `cache_creation`. The keys are disjoint, so summing all three is
+            # correct for both.
+            cache_write_tokens += (
+                (details.get("cache_creation") or 0)
+                + (details.get("ephemeral_5m_input_tokens") or 0)
+                + (details.get("ephemeral_1h_input_tokens") or 0)
+            )
         return ResponseUsage(
             input_tokens=input_tokens,
             # Newer openai releases (2.45.0 is confirmed to require it, as do 3.x) require
             # `cache_write_tokens`; older ones (this repo's lock pins 2.41.0) keep the
             # extra field and serialize it (the model allows extras), so build it from a dict to satisfy both.
             input_tokens_details=InputTokensDetails.model_validate(
-                {"cached_tokens": 0, "cache_write_tokens": 0}
+                {
+                    "cached_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                }
             ),
             output_tokens=output_tokens,
             output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
@@ -837,6 +856,22 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                         accumulated_usage["total_tokens"] += (
                             response_message.usage_metadata.get("total_tokens", 0)
                         )
+                    # Sum the per-key cache breakdown so the streamed `response.completed`
+                    # usage matches the non-streaming path.
+                    message_details = cast(
+                        Mapping[str, int | None],
+                        response_message.usage_metadata.get("input_token_details")
+                        or {},
+                    )
+                    if message_details:
+                        accumulated_details = cast(
+                            dict[str, int],
+                            accumulated_usage.setdefault("input_token_details", {}),
+                        )
+                        for key, value in message_details.items():
+                            accumulated_details[key] = accumulated_details.get(
+                                key, 0
+                            ) + (value or 0)
 
             yield self.create_final_sse_message(
                 request_id=request_id,
