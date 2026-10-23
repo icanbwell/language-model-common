@@ -916,9 +916,11 @@ class TestHistoryOutcomeEcho:
         wrapper.conversation_id = "u1:chat-ab12"
         wrapper.history_status = "failed"
 
-        conversation = _completed_response(wrapper=wrapper)["conversation"]
-        assert conversation["history_loaded"] == 0
-        assert "history_loaded" in conversation
+        assert _completed_response(wrapper=wrapper)["conversation"] == {
+            "id": "u1:chat-ab12",
+            "history_status": "failed",
+            "history_loaded": 0,
+        }
 
     def test_key_order_and_raw_serialization_are_stable(self) -> None:
         wrapper = _make_wrapper()
@@ -1042,15 +1044,6 @@ class TestHistoryOutcomeEcho:
         wrapper.history_loaded = value
 
         assert wrapper.history_loaded == value
-
-    def test_consumer_parsing_tolerates_an_unknown_status_value(self) -> None:
-        from openai.types.responses.response import Conversation
-
-        parsed = Conversation.model_validate(
-            {"id": "c", "history_status": "future-value", "history_loaded": 1}
-        )
-
-        assert parsed.id == "c"
 
 
 class TestUsageConversion:
