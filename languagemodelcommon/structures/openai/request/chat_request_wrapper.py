@@ -324,6 +324,14 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
+        """Use ``conversation_id`` as this request's conversation id when none is set.
+
+        The default implementation is a no-op: transports with no conversation
+        field (e.g. chat completions) ignore it.  Subclasses override to echo
+        the id on their responses.  An id the caller already set is kept.
+        """
+
     @property
     def supports_structured_tool_progress(self) -> bool:
         """True when this transport carries tool progress as typed items
