@@ -16,9 +16,9 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from languagemodelcommon.history.conversation_history_manager import (
     ConversationHistoryManager,
@@ -407,3 +407,41 @@ class TestIsDuplicate:
             manager._is_duplicate(new_message=new_message, existing_messages=existing)
             is expected
         )
+
+
+class TestAsGraphNode:
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason=(
+            "select_history returns the trimmed messages as a state update, but "
+            "MyMessagesState.messages uses the add_messages reducer, which never drops "
+            "messages, so the next node still receives the untrimmed history. Remove this "
+            "marker once trimming actually reduces what the next node sees."
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_the_next_node_receives_the_trimmed_history(self) -> None:
+        seen_by_next_node: list[list[str]] = []
+
+        def _capture(state: MyMessagesState) -> dict[str, Any]:
+            seen_by_next_node.append([str(m.content) for m in state["messages"]])
+            return {}
+
+        manager = _manager(checkpointer=None, max_messages=2, max_tokens=8)
+        graph = StateGraph(MyMessagesState)
+        graph.add_node("select_history", RunnableLambda(manager.select_history))
+        graph.add_node("capture", _capture)
+        graph.add_edge(START, "select_history")
+        graph.add_edge("select_history", "capture")
+        graph.add_edge("capture", END)
+        compiled = graph.compile()
+        history: list[BaseMessage] = [
+            HumanMessage(content="one two three four"),
+            AIMessage(content="five six seven eight"),
+            HumanMessage(content="nine ten eleven twelve"),
+        ]
+
+        await compiled.ainvoke(_state(history))
+
+        assert seen_by_next_node == [["five six seven eight", "nine ten eleven twelve"]]

@@ -145,6 +145,25 @@ class TestWithinLimits:
         assert result is state
         assert llm.calls == []
 
+    @pytest.mark.asyncio
+    async def test_history_exactly_at_both_limits_is_left_alone(self) -> None:
+        """Exactly max_messages messages and exactly max_tokens tokens is still within
+        limits: the late system note must not be moved ahead of the conversation."""
+        manager = ConversationHistoryManager(max_messages=3, max_tokens=3)
+        messages: list[BaseMessage] = [
+            HumanMessage(content="m0"),
+            SystemMessage(content="late"),
+            AIMessage(content="m1"),
+        ]
+        llm = _StubSummarizerLlm()
+        state = _state(messages)
+
+        result = await manager.manage_history(state=state, llm=cast(Any, llm))
+
+        assert manager.count_tokens(messages=messages) == 3
+        assert _contents(result) == ["m0", "late", "m1"]
+        assert llm.calls == []
+
 
 class TestSummarization:
     @pytest.mark.asyncio
@@ -247,6 +266,50 @@ class TestSummarization:
 
         assert _contents(result) == ["m0", "m1", "m2", "m3", "m4"]
         assert llm.calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("conversation_length", "summarizer_calls"),
+        [(6, 0), (7, 1)],
+        ids=["exactly-summary-threshold", "one-over-summary-threshold"],
+    )
+    async def test_summarization_starts_above_the_summary_threshold(
+        self, conversation_length: int, summarizer_calls: int
+    ) -> None:
+        manager = ConversationHistoryManager(
+            max_messages=3, max_tokens=1000, summary_threshold=6, keep_recent=3
+        )
+        llm = _StubSummarizerLlm()
+
+        result = await manager.manage_history(
+            state=_state(_conversation(conversation_length)), llm=cast(Any, llm)
+        )
+
+        assert len(llm.calls) == summarizer_calls
+        if summarizer_calls == 0:
+            assert len(result["messages"]) == conversation_length
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("conversation_length", "summarizer_calls"),
+        [(4, 0), (5, 1)],
+        ids=["exactly-keep-recent", "one-over-keep-recent"],
+    )
+    async def test_only_messages_beyond_keep_recent_are_ever_summarized(
+        self, conversation_length: int, summarizer_calls: int
+    ) -> None:
+        manager = ConversationHistoryManager(
+            max_messages=2, max_tokens=1000, summary_threshold=1, keep_recent=4
+        )
+        llm = _StubSummarizerLlm()
+
+        result = await manager.manage_history(
+            state=_state(_conversation(conversation_length)), llm=cast(Any, llm)
+        )
+
+        assert len(llm.calls) == summarizer_calls
+        if summarizer_calls == 0:
+            assert _contents(result) == [f"m{i}" for i in range(conversation_length)]
 
 
 class TestTokenTrimming:
@@ -354,3 +417,42 @@ class TestTokenTrimming:
         assert len(result["messages"]) == 1
         assert isinstance(result["messages"][0], SystemMessage)
         assert manager.count_tokens(messages=result["messages"]) > 10
+
+    @pytest.mark.asyncio
+    async def test_a_history_exactly_at_the_token_budget_is_kept_whole(self) -> None:
+        manager = ConversationHistoryManager(
+            max_messages=2, max_tokens=8, summary_threshold=100, keep_recent=10
+        )
+        messages: list[BaseMessage] = [
+            HumanMessage(content=self._words(3, "a")),
+            AIMessage(content=self._words(3, "b")),
+            HumanMessage(content=self._words(2, "c")),
+        ]
+
+        result = await manager.manage_history(
+            state=_state(messages), llm=cast(Any, _StubSummarizerLlm())
+        )
+
+        assert manager.count_tokens(messages=messages) == 8
+        assert _contents(result) == [
+            self._words(3, "a"),
+            self._words(3, "b"),
+            self._words(2, "c"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_messages_that_fit_the_budget_exactly_are_kept(self) -> None:
+        manager = ConversationHistoryManager(
+            max_messages=10, max_tokens=8, summary_threshold=100, keep_recent=10
+        )
+        messages: list[BaseMessage] = [
+            HumanMessage(content=self._words(2, "old")),
+            AIMessage(content=self._words(4, "mid")),
+            HumanMessage(content=self._words(4, "new")),
+        ]
+
+        result = await manager.manage_history(
+            state=_state(messages), llm=cast(Any, _StubSummarizerLlm())
+        )
+
+        assert _contents(result) == [self._words(4, "mid"), self._words(4, "new")]
