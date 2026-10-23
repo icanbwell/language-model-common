@@ -113,6 +113,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     ) -> str | None:
         return self.create_first_sse_message(request_id=request_id, source=source)
 
+    @override
     def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
         if conversation_id is None or self._conversation_id is not None:
             return
