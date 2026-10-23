@@ -70,6 +70,18 @@ class LanguageModelCommonEnvironmentVariables(
         )
 
     @property
+    def adopt_thread_id_as_conversation_id(self) -> bool:
+        """Use the request's conversation thread id as the Responses conversation id.
+
+        Off by default: the thread id can embed the user subject (baileyai ids are
+        ``<sub>:chat-<hex>``), so echoing it to every consumer is opt-in.  A
+        conversation id the caller already set is never replaced.
+        """
+        return self.str2bool(
+            os.environ.get("ADOPT_THREAD_ID_AS_CONVERSATION_ID", "false")
+        )
+
+    @property
     def enable_streaming_buffering(self) -> bool:
         """Enable token buffering for streamed chunks."""
         return self.str2bool(os.environ.get("ENABLE_STREAMING_BUFFERING", "true"))
