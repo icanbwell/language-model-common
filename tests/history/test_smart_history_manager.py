@@ -17,6 +17,8 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
 
 from languagemodelcommon.history.conversation_history_manager import (
     ConversationHistoryManager,
@@ -49,9 +51,13 @@ class _FakeCheckpointer:
         return self.checkpoint
 
 
+class _SummarizerWasCalled(BaseException):
+    """BaseException so ConversationHistoryManager's `except Exception` cannot swallow it."""
+
+
 class _UnusedLlm:
     async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
-        raise AssertionError("history within limits must not call the LLM")
+        raise _SummarizerWasCalled("history within limits must not call the LLM")
 
 
 @pytest.fixture(autouse=True)
@@ -317,6 +323,46 @@ class TestServerHistoryIsTheSourceOfTruth:
 
         assert _contents(result)[0] == "be brief"
         assert _contents(result)[-1] == "newest question"
+
+
+class TestRealCheckpointerShape:
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AttributeError,
+        reason=(
+            "SmartHistoryManager reads `checkpoint.channel_values` as an attribute, but "
+            "langgraph's BaseCheckpointSaver.aget returns a Checkpoint dict. Remove this "
+            "marker once the production code reads checkpoint['channel_values']."
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_a_real_langgraph_checkpoint_supplies_the_stored_history(
+        self,
+    ) -> None:
+        saver = InMemorySaver()
+        graph = StateGraph(MessagesState)
+        graph.add_node("reply", lambda state: {"messages": [("ai", "stored answer")]})
+        graph.add_edge(START, "reply")
+        compiled = graph.compile(checkpointer=saver)
+        config = _config("real-thread")
+        await compiled.ainvoke(
+            {"messages": [HumanMessage(content="stored question")]}, config
+        )
+        manager = SmartHistoryManager(
+            checkpointer=saver,
+            history_manager=ConversationHistoryManager(),
+            llm=cast(Any, _UnusedLlm()),
+        )
+
+        result = await manager.select_history(
+            state=_state([HumanMessage(content="newest question")]), config=config
+        )
+
+        assert _contents(result) == [
+            "stored question",
+            "stored answer",
+            "newest question",
+        ]
 
 
 class TestIsDuplicate:
