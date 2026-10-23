@@ -37,13 +37,17 @@ from openai.types.responses import (
     ResponseCreatedEvent,
     ResponseUsage,
 )
+from openai.types.responses.response import Conversation
 from openai.types.responses.response_usage import (
     InputTokensDetails,
     OutputTokensDetails,
 )
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
-from languagemodelcommon.schema.openai.responses import ResponsesRequest
+from languagemodelcommon.schema.openai.responses import (
+    ResponsesRequest,
+    validate_conversation_id,
+)
 from languagemodelcommon.structures.openai.message.chat_message_wrapper import (
     ChatMessageWrapper,
 )
@@ -87,6 +91,26 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # Disambiguates multiple llm_call items emitted within the same
         # response -- same reasoning as _image_output_counter above (BAI-882).
         self._llm_call_counter: int = 0
+        # The conversation id the SERVER used for this request. Set by the
+        # caller (the backend decides the id); never copied from the request,
+        # which the backend may have ignored.
+        self._conversation_id: Optional[str] = None
+
+    @property
+    def conversation_id(self) -> Optional[str]:
+        """The conversation id echoed as `conversation: { id }` on responses."""
+        return self._conversation_id
+
+    @conversation_id.setter
+    def conversation_id(self, value: Optional[str]) -> None:
+        if value is not None:
+            validate_conversation_id(value=value)
+        self._conversation_id = value
+
+    def _conversation_payload(self) -> Optional[Conversation]:
+        if self._conversation_id is None:
+            return None
+        return Conversation(id=self._conversation_id)
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (
@@ -234,6 +258,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 ),
                 tools=[],
                 tool_choice="auto",
+                conversation=self._conversation_payload(),
             ),
             type="response.created",
             sequence_number=0,
@@ -518,8 +543,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             # TypedDict also allows provider-specific extra keys; read it as a plain mapping.
             details = cast(Mapping[str, int | None], u.get("input_token_details") or {})
             cached_tokens += details.get("cache_read") or 0
-            # langchain-anthropic/-aws zero `cache_creation` and report the writes under
-            # the per-TTL keys instead when a TTL breakdown exists, so sum all three.
+            # langchain-anthropic's ChatAnthropic zeros `cache_creation` and reports the
+            # writes under the per-TTL keys when a TTL breakdown exists; langchain-aws
+            # emits only `cache_creation`. The keys are disjoint, so summing all three is
+            # correct for both.
             cache_write_tokens += (
                 (details.get("cache_creation") or 0)
                 + (details.get("ephemeral_5m_input_tokens") or 0)
@@ -571,6 +598,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 tools=[],
                 tool_choice="auto",
                 usage=response_usage,
+                conversation=self._conversation_payload(),
             ),
             type="response.completed",
             sequence_number=len(self._messages) + 1,
@@ -670,6 +698,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             tools=[],
             tool_choice="auto",
             usage=response_usage,
+            conversation=self._conversation_payload(),
         )
         return response.model_dump(mode="json")
 
@@ -807,6 +836,22 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                         accumulated_usage["total_tokens"] += (
                             response_message.usage_metadata.get("total_tokens", 0)
                         )
+                    # Sum the per-key cache breakdown so the streamed `response.completed`
+                    # usage matches the non-streaming path.
+                    message_details = cast(
+                        Mapping[str, int | None],
+                        response_message.usage_metadata.get("input_token_details")
+                        or {},
+                    )
+                    if message_details:
+                        accumulated_details = cast(
+                            dict[str, int],
+                            accumulated_usage.setdefault("input_token_details", {}),
+                        )
+                        for key, value in message_details.items():
+                            accumulated_details[key] = accumulated_details.get(
+                                key, 0
+                            ) + (value or 0)
 
             yield self.create_final_sse_message(
                 request_id=request_id,

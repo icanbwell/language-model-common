@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
-from languagemodelcommon.schema.openai.responses import ResponsesRequest
+from languagemodelcommon.schema.openai.responses import (
+    MAX_CONVERSATION_ID_LENGTH,
+    ResponsesRequest,
+)
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
     ResponsesApiRequestWrapper,
 )
@@ -34,6 +37,7 @@ def _make_wrapper(
     parallel_tool_calls: bool | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
+    conversation: str | dict[str, Any] | None = None,
 ) -> ResponsesApiRequestWrapper:
     request = ResponsesRequest(
         model=model,
@@ -49,6 +53,7 @@ def _make_wrapper(
         parallel_tool_calls=parallel_tool_calls,
         tool_choice=tool_choice,
         metadata=metadata,
+        conversation=cast(Any, conversation),
     )
     return ResponsesApiRequestWrapper(
         chat_request=request,
@@ -703,6 +708,160 @@ class TestCreateImageOutputSseEvent:
         assert first["item"]["id"] != second["item"]["id"]
 
 
+def _event_lines(*, chunk: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for line in chunk.split("\n"):
+        if line.startswith("data: ") and line[6:] != "[DONE]":
+            events.append(json.loads(line[6:]))
+    return events
+
+
+def _completed_response(*, wrapper: ResponsesApiRequestWrapper) -> dict[str, Any]:
+    chunk = wrapper.create_final_sse_message(
+        request_id="r", usage_metadata=None, source="t"
+    )
+    (completed,) = [
+        e for e in _event_lines(chunk=chunk) if e["type"] == "response.completed"
+    ]
+    return cast(dict[str, Any], completed["response"])
+
+
+def _created_response(*, wrapper: ResponsesApiRequestWrapper) -> dict[str, Any]:
+    chunk = wrapper.create_first_sse_message(request_id="r", source="t")
+    (created,) = _event_lines(chunk=chunk)
+    assert created["type"] == "response.created"
+    return cast(dict[str, Any], created["response"])
+
+
+def _non_streaming(*, wrapper: ResponsesApiRequestWrapper) -> dict[str, Any]:
+    return wrapper.create_non_streaming_response(
+        request_id="r",
+        json_output_requested=False,
+        responses=[AIMessage(content="ok")],
+    )
+
+
+class TestConversationEcho:
+    """The server-chosen conversation id is echoed on every Response object (BAI-1244)."""
+
+    def test_created_event_carries_conversation_id(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+
+        assert _created_response(wrapper=wrapper)["conversation"] == {
+            "id": "u1:chat-ab12"
+        }
+
+    def test_completed_event_carries_conversation_id(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+
+        assert _completed_response(wrapper=wrapper)["conversation"] == {
+            "id": "u1:chat-ab12"
+        }
+        chunk = wrapper.create_final_sse_message(
+            request_id="r", usage_metadata=None, source="t"
+        )
+        assert chunk.count("data: ") == 3
+        assert chunk.endswith("data: [DONE]\n\n")
+
+    def test_non_streaming_body_carries_conversation_id(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+
+        assert _non_streaming(wrapper=wrapper)["conversation"] == {"id": "u1:chat-ab12"}
+
+    @pytest.mark.asyncio
+    async def test_conversation_id_is_identical_across_all_three_payloads(
+        self,
+    ) -> None:
+        wrapper = _make_wrapper(stream=True)
+        wrapper.conversation_id = "u1:chat-ab12"
+        expected = {"id": "u1:chat-ab12"}
+
+        assert _created_response(wrapper=wrapper)["conversation"] == expected
+        assert _completed_response(wrapper=wrapper)["conversation"] == expected
+        assert _non_streaming(wrapper=wrapper)["conversation"] == expected
+
+        streamed = [
+            event
+            async for chunk in wrapper.stream_response(
+                request_id="r", response_messages1=[AIMessage(content="ok")]
+            )
+            for event in _event_lines(chunk=chunk)
+        ]
+        conversations = {
+            e["type"]: e["response"]["conversation"]
+            for e in streamed
+            if e["type"] in ("response.created", "response.completed")
+        }
+        assert conversations == {
+            "response.created": expected,
+            "response.completed": expected,
+        }
+
+    def test_unset_conversation_id_leaves_payload_conversation_null(self) -> None:
+        wrapper = _make_wrapper()
+
+        assert _created_response(wrapper=wrapper)["conversation"] is None
+        assert _completed_response(wrapper=wrapper)["conversation"] is None
+        assert _non_streaming(wrapper=wrapper)["conversation"] is None
+        assert wrapper.conversation_id is None
+
+    @pytest.mark.parametrize("conversation", ["u1:chat-zz", {"id": "u1:chat-zz"}])
+    def test_request_conversation_is_not_echoed_unless_the_caller_sets_conversation_id(
+        self, conversation: str | dict[str, Any]
+    ) -> None:
+        wrapper = _make_wrapper(conversation=conversation)
+
+        assert _created_response(wrapper=wrapper)["conversation"] is None
+        assert _completed_response(wrapper=wrapper)["conversation"] is None
+        assert _non_streaming(wrapper=wrapper)["conversation"] is None
+
+    @pytest.mark.parametrize(
+        "value", ["", "   ", "x" * (MAX_CONVERSATION_ID_LENGTH + 1)]
+    )
+    def test_setting_blank_conversation_id_raises(self, value: str) -> None:
+        wrapper = _make_wrapper()
+
+        with pytest.raises(ValueError):
+            wrapper.conversation_id = value
+
+    def test_setting_none_clears_conversation_id(self) -> None:
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        wrapper.conversation_id = None
+
+        assert wrapper.conversation_id is None
+        assert _completed_response(wrapper=wrapper)["conversation"] is None
+
+    def test_completed_chunk_survives_a_top_level_key_rewrite(self) -> None:
+        """Mirrors baileyai's attach_message_id_to_completed_event round trip."""
+        wrapper = _make_wrapper()
+        wrapper.conversation_id = "u1:chat-ab12"
+        chunk = wrapper.create_final_sse_message(
+            request_id="r", usage_metadata=None, source="t"
+        )
+
+        rewritten: list[str] = []
+        for line in chunk.split("\n"):
+            if line.startswith("data: ") and line[6:] != "[DONE]":
+                event = json.loads(line[6:])
+                if event["type"] == "response.completed":
+                    event["message_id"] = "m1"
+                    line = f"data: {json.dumps(event)}"
+            rewritten.append(line)
+
+        completed = [
+            e
+            for e in _event_lines(chunk="\n".join(rewritten))
+            if e["type"] == "response.completed"
+        ][0]
+        assert completed["response"]["conversation"] == {"id": "u1:chat-ab12"}
+        assert completed["message_id"] == "m1"
+        assert "message_id" not in completed["response"]
+
+
 class TestUsageConversion:
     """Usage metadata must serialize on every response path.
 
@@ -841,6 +1000,57 @@ class TestUsageConversion:
         details = result["usage"]["input_tokens_details"]
         assert details["cached_tokens"] == 125
         assert details["cache_write_tokens"] == 50
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("first_details", "second_details", "expected_cached", "expected_cache_write"),
+        [
+            ({"cache_read": 100, "cache_creation": 50}, None, 100, 50),
+            ({"cache_read": 100, "cache_creation": 50}, {"cache_read": 25}, 125, 50),
+            (
+                {"cache_read": 100, "cache_creation": 0, "ephemeral_5m_input_tokens": 30},
+                {"cache_creation": 20, "ephemeral_1h_input_tokens": 10},
+                100,
+                60,
+            ),
+            (None, None, 0, 0),
+        ],
+    )
+    async def test_stream_response_completed_event_reports_cache_tokens(
+        self,
+        first_details: dict[str, int] | None,
+        second_details: dict[str, int] | None,
+        expected_cached: int,
+        expected_cache_write: int,
+    ) -> None:
+        wrapper = _make_wrapper(stream=True)
+        first = AIMessage(content="a")
+        first.usage_metadata = cast(
+            Any,
+            {"input_tokens": 300, "output_tokens": 4, "total_tokens": 304}
+            | ({"input_token_details": first_details} if first_details else {}),
+        )
+        second = AIMessage(content="b")
+        second.usage_metadata = cast(
+            Any,
+            {"input_tokens": 200, "output_tokens": 2, "total_tokens": 202}
+            | ({"input_token_details": second_details} if second_details else {}),
+        )
+
+        completed = [
+            json.loads(line[len("data: ") :])
+            async for chunk in wrapper.stream_response(
+                request_id="r", response_messages1=[first, second]
+            )
+            for line in chunk.split("\n")
+            if line.startswith("data: ") and '"response.completed"' in line
+        ]
+
+        (event,) = completed
+        usage = event["response"]["usage"]
+        assert usage["input_tokens"] == 500
+        assert usage["input_tokens_details"]["cached_tokens"] == expected_cached
+        assert usage["input_tokens_details"]["cache_write_tokens"] == expected_cache_write
 
     def test_non_streaming_response_without_usage_has_no_usage(self) -> None:
         wrapper = _make_wrapper()
