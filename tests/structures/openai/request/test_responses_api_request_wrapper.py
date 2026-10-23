@@ -860,3 +860,75 @@ class TestConversationEcho:
         assert completed["response"]["conversation"] == {"id": "u1:chat-ab12"}
         assert completed["message_id"] == "m1"
         assert "message_id" not in completed["response"]
+
+
+class TestUsageConversion:
+    """Usage metadata must serialize on every response path.
+
+    Newer openai releases require `cache_write_tokens` on `InputTokensDetails`; building it
+    from `cached_tokens` alone raised a ValidationError whenever a turn carried usage metadata.
+    """
+
+    @pytest.mark.parametrize(
+        ("usage_metadata", "expected_input", "expected_output", "expected_total"),
+        [
+            ({"input_tokens": 5, "output_tokens": 7, "total_tokens": 12}, 5, 7, 12),
+            ({"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, 0, 0, 0),
+        ],
+    )
+    def test_streamed_completed_event_carries_usage(
+        self,
+        usage_metadata: dict[str, int],
+        expected_input: int,
+        expected_output: int,
+        expected_total: int,
+    ) -> None:
+        wrapper = _make_wrapper()
+        result = wrapper.create_final_sse_message(
+            request_id="req-1", usage_metadata=cast(Any, usage_metadata), source="test"
+        )
+        completed = next(
+            json.loads(line[len("data: ") :])
+            for line in result.strip().split("\n")
+            if line.startswith("data: ") and '"response.completed"' in line
+        )
+        usage = completed["response"]["usage"]
+        assert usage["input_tokens"] == expected_input
+        assert usage["output_tokens"] == expected_output
+        assert usage["total_tokens"] == expected_total
+        assert usage["input_tokens_details"]["cached_tokens"] == 0
+        assert usage["input_tokens_details"]["cache_write_tokens"] == 0
+
+    def test_non_streaming_response_sums_usage_across_messages(self) -> None:
+        wrapper = _make_wrapper()
+        first = AIMessage(content="a")
+        first.usage_metadata = {
+            "input_tokens": 3,
+            "output_tokens": 4,
+            "total_tokens": 7,
+        }
+        second = AIMessage(content="b")
+        second.usage_metadata = {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "total_tokens": 3,
+        }
+        result = wrapper.create_non_streaming_response(
+            request_id="req-1",
+            json_output_requested=False,
+            responses=cast(List[AnyMessage], [first, second]),
+        )
+        usage = result["usage"]
+        assert usage["input_tokens"] == 4
+        assert usage["output_tokens"] == 6
+        assert usage["total_tokens"] == 10
+        assert usage["input_tokens_details"]["cache_write_tokens"] == 0
+
+    def test_non_streaming_response_without_usage_has_no_usage(self) -> None:
+        wrapper = _make_wrapper()
+        result = wrapper.create_non_streaming_response(
+            request_id="req-1",
+            json_output_requested=False,
+            responses=cast(List[AnyMessage], [AIMessage(content="a")]),
+        )
+        assert result["usage"] is None
