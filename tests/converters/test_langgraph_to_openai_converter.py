@@ -33,6 +33,11 @@ class _FakeChatRequestWrapper:
     ) -> str:
         return content or ""
 
+    def create_stream_start_sse_event(
+        self, *, request_id: str, source: str
+    ) -> str | None:
+        return None
+
     def create_final_sse_message(
         self,
         *,

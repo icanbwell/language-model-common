@@ -1,3 +1,5 @@
+import logging
+import warnings
 from typing import Annotated, Optional, Union, Any
 
 from openai.types.responses import ResponseInputParam
@@ -9,6 +11,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_INSTRUCTIONS_LENGTH: int = 2000
 MAX_CONVERSATION_ID_LENGTH: int = 256
@@ -103,9 +107,37 @@ class ResponsesRequest(BaseModel):
     thread_id: Optional[str] = Field(
         None,
         description="Accepted for compatibility; not used by this package.",
+        deprecated=True,
     )
-    user_id: Optional[str] = None
+    user_id: Optional[str] = Field(
+        None,
+        description="Accepted for compatibility; not used by this package.",
+        deprecated=True,
+    )
     metadata: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _warn_on_deprecated_fields(self) -> "ResponsesRequest":
+        # Read `__dict__` rather than the attributes: attribute access on a deprecated
+        # field raises a DeprecationWarning of its own. A None value (an explicit null
+        # or a model_dump round-trip) is not a use of the field.
+        for field_name in ("thread_id", "user_id"):
+            if self.__dict__.get(field_name) is None:
+                continue
+            message = (
+                f"`{field_name}` is deprecated and ignored; it will be removed "
+                "in a future release."
+            )
+            # DeprecationWarning is hidden by default outside tests. Log at DEBUG, not
+            # WARNING: a client that keeps sending the field would log once per request.
+            logger.debug(message)
+            warnings.warn(
+                message,
+                DeprecationWarning,
+                # validator -> pydantic's __init__/model_validate -> the caller
+                stacklevel=3,
+            )
+        return self
 
     @field_validator("conversation")
     @classmethod
