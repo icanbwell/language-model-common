@@ -7,6 +7,7 @@ from langchain_core.messages import AnyMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
+from languagemodelcommon.schema.openai.responses import HistoryStatus
 from languagemodelcommon.state.messages_state import MyMessagesState
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
@@ -37,4 +38,9 @@ class PipelineContext:
     response_messages: list[AnyMessage] = field(default_factory=list)
 
     conversation_id: str = ""
+    # Outcome of loading stored history: "loaded" | "empty" | "failed" (None = not
+    # recorded) and the number of prior messages loaded (BAI-1263). Set by the
+    # history step; copied onto the response wrapper by the caller.
+    history_status: HistoryStatus | None = None
+    history_loaded: int = 0
     user_id: str = ""

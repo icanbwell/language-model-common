@@ -45,6 +45,8 @@ from openai.types.responses.response_usage import (
 
 from languagemodelcommon.configs.schemas.config_schema import AgentConfig
 from languagemodelcommon.schema.openai.responses import (
+    HISTORY_STATUSES,
+    HistoryStatus,
     ResponsesRequest,
     validate_conversation_id,
 )
@@ -96,6 +98,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # the converter (adopt_conversation_id); never copied from the request's
         # `conversation` field, which the backend may have ignored.
         self._conversation_id: Optional[str] = None
+        # Outcome of loading stored history (BAI-1263), set by the caller from
+        # PipelineContext. Emitted inside `conversation` only when the status is set.
+        self._history_status: Optional[HistoryStatus] = None
+        self._history_loaded: int = 0
 
     @property
     def conversation_id(self) -> Optional[str]:
@@ -107,6 +113,42 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         if value is not None:
             validate_conversation_id(value=value)
         self._conversation_id = value
+
+    @property
+    def history_status(self) -> Optional[HistoryStatus]:
+        """`loaded`, `empty` or `failed`; None when the caller did not record it.
+
+        Unknown values are ignored (logged), not raised. `response.created` carries
+        the outcome only if it is set before that event is built; `response.completed`
+        and the non-streaming body are authoritative.
+        """
+        return self._history_status
+
+    @history_status.setter
+    def history_status(self, value: Optional[str]) -> None:
+        validated_status = value
+        if value is not None and value not in HISTORY_STATUSES:
+            # An observability field must not fail the turn: drop it and log
+            # (without the value) so the response still goes out.
+            logger.warning(
+                "Ignoring unknown history status; expected one of %s", HISTORY_STATUSES
+            )
+            validated_status = None
+        self._history_status = cast(Optional[HistoryStatus], validated_status)
+
+    @property
+    def history_loaded(self) -> int:
+        """Prior messages loaded; only emitted with `history_status`, meaningful for `loaded`."""
+        return self._history_loaded
+
+    @history_loaded.setter
+    def history_loaded(self, value: int) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            # Same policy as history_status: an observability field must not fail the
+            # turn, so drop the bad count (back to 0) and log without the value.
+            logger.warning("Ignoring invalid history count; expected an int >= 0")
+            value = 0
+        self._history_loaded = value
 
     @override
     def create_stream_start_sse_event(
@@ -130,7 +172,18 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def _conversation_payload(self) -> Optional[Conversation]:
         if self._conversation_id is None:
             return None
-        return Conversation(id=self._conversation_id)
+        if self._history_status is None:
+            return Conversation(id=self._conversation_id)
+        # The upstream Conversation model allows extra keys, so the history
+        # outcome rides along without a new response model. Without a
+        # conversation id there is no `conversation` object to attach it to.
+        return Conversation.model_validate(
+            {
+                "id": self._conversation_id,
+                "history_status": self._history_status,
+                "history_loaded": self._history_loaded,
+            }
+        )
 
     def _apply_debug_prefix_toggle(self) -> None:
         from languagemodelcommon.utilities.slash_command.slash_command_processor import (

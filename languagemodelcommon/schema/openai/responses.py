@@ -1,6 +1,6 @@
 import logging
 import warnings
-from typing import Annotated, Optional, Union, Any
+from typing import Annotated, Literal, Optional, Union, Any, get_args
 
 from openai.types.responses import ResponseInputParam
 from pydantic import (
@@ -20,6 +20,13 @@ MAX_CONVERSATION_ID_LENGTH: int = 256
 ConversationId = Annotated[
     str, StringConstraints(min_length=1, max_length=MAX_CONVERSATION_ID_LENGTH)
 ]
+
+
+# Outcome of loading stored history for a turn (BAI-1263). Producers only emit
+# these values; the upstream `conversation` payload model allows extra keys and
+# the fields are optional, so a consumer reading a value added later does not fail.
+HistoryStatus = Literal["loaded", "empty", "failed"]
+HISTORY_STATUSES: tuple[str, ...] = get_args(HistoryStatus)
 
 
 def validate_conversation_id(*, value: str) -> str:
