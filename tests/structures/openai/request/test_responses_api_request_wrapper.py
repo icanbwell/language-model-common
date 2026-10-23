@@ -1,6 +1,7 @@
 """Tests for ResponsesApiRequestWrapper."""
 
 import json
+import logging
 import re
 from typing import Any, List, cast
 from unittest.mock import MagicMock
@@ -1019,12 +1020,28 @@ class TestHistoryOutcomeEcho:
             "history fields rely on openai Conversation allowing extras"
         )
 
-    @pytest.mark.parametrize("value", [-1, True, 1.5])
-    def test_invalid_count_is_rejected(self, value: Any) -> None:
+    @pytest.mark.parametrize("value", [-1, True, 1.5, "3", None])
+    def test_invalid_count_is_dropped_and_logged_not_raised(
+        self, value: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Same policy as an unknown status: an observability field must not fail the turn."""
+        wrapper = _make_wrapper()
+        wrapper.history_loaded = 4
+
+        with caplog.at_level(logging.WARNING):
+            wrapper.history_loaded = value
+
+        assert wrapper.history_loaded == 0
+        assert "Ignoring invalid history count" in caplog.text
+        assert repr(value) not in caplog.text
+
+    @pytest.mark.parametrize("value", [0, 1, 250])
+    def test_valid_count_is_kept(self, value: int) -> None:
         wrapper = _make_wrapper()
 
-        with pytest.raises(ValueError):
-            wrapper.history_loaded = value
+        wrapper.history_loaded = value
+
+        assert wrapper.history_loaded == value
 
     def test_consumer_parsing_tolerates_an_unknown_status_value(self) -> None:
         from openai.types.responses.response import Conversation

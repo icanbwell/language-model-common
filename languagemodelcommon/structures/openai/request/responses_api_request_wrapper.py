@@ -125,14 +125,15 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
 
     @history_status.setter
     def history_status(self, value: Optional[str]) -> None:
+        validated_status = value
         if value is not None and value not in HISTORY_STATUSES:
             # An observability field must not fail the turn: drop it and log
             # (without the value) so the response still goes out.
             logger.warning(
                 "Ignoring unknown history status; expected one of %s", HISTORY_STATUSES
             )
-            value = None
-        self._history_status = cast(Optional[HistoryStatus], value)
+            validated_status = None
+        self._history_status = cast(Optional[HistoryStatus], validated_status)
 
     @property
     def history_loaded(self) -> int:
@@ -142,7 +143,10 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
     @history_loaded.setter
     def history_loaded(self, value: int) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError("history loaded must be a non-negative integer")
+            # Same policy as history_status: an observability field must not fail the
+            # turn, so drop the bad count (back to 0) and log without the value.
+            logger.warning("Ignoring invalid history count; expected an int >= 0")
+            value = 0
         self._history_loaded = value
 
     @override
