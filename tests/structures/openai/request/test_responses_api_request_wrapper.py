@@ -1008,7 +1008,11 @@ class TestUsageConversion:
             ({"cache_read": 100, "cache_creation": 50}, None, 100, 50),
             ({"cache_read": 100, "cache_creation": 50}, {"cache_read": 25}, 125, 50),
             (
-                {"cache_read": 100, "cache_creation": 0, "ephemeral_5m_input_tokens": 30},
+                {
+                    "cache_read": 100,
+                    "cache_creation": 0,
+                    "ephemeral_5m_input_tokens": 30,
+                },
                 {"cache_creation": 20, "ephemeral_1h_input_tokens": 10},
                 100,
                 60,
@@ -1050,7 +1054,9 @@ class TestUsageConversion:
         usage = event["response"]["usage"]
         assert usage["input_tokens"] == 500
         assert usage["input_tokens_details"]["cached_tokens"] == expected_cached
-        assert usage["input_tokens_details"]["cache_write_tokens"] == expected_cache_write
+        assert (
+            usage["input_tokens_details"]["cache_write_tokens"] == expected_cache_write
+        )
 
     def test_non_streaming_response_without_usage_has_no_usage(self) -> None:
         wrapper = _make_wrapper()
