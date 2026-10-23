@@ -484,6 +484,11 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         if chat_request_wrapper is None:
             raise ValueError("chat_request must not be None")
 
+        self._adopt_thread_id_as_conversation_id(
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
+
         if chat_request_wrapper.stream:
             return StreamingResponse(
                 content=await self.get_streaming_response_async(
@@ -698,6 +703,24 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
             case _:
                 raise ValueError(f"Unexpected response format type: {response_format}")
 
+    def _adopt_thread_id_as_conversation_id(
+        self,
+        *,
+        chat_request_wrapper: ChatRequestWrapper,
+        request_information: RequestInformation,
+    ) -> None:
+        """Echo the thread id as the conversation id when ADOPT_THREAD_ID_AS_CONVERSATION_ID is on.
+
+        Called from every entry point that builds a response (callers such as
+        baileyai use ``get_streaming_response_async`` directly); it is idempotent
+        and never replaces an id the caller already set.
+        """
+        if not self.environment_variables.adopt_thread_id_as_conversation_id:
+            return
+        chat_request_wrapper.adopt_conversation_id(
+            conversation_id=request_information.conversation_thread_id
+        )
+
     async def get_streaming_response_async(
         self,
         *,
@@ -722,6 +745,11 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
         Returns:
             The streaming response as an async generator.
         """
+
+        self._adopt_thread_id_as_conversation_id(
+            chat_request_wrapper=chat_request_wrapper,
+            request_information=request_information,
+        )
 
         new_messages: List[ChatMessageWrapper] = [
             m for m in chat_request_wrapper.messages

@@ -91,8 +91,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         # response -- same reasoning as _image_output_counter above (BAI-882).
         self._llm_call_counter: int = 0
         # The conversation id the SERVER used for this request. Set by the
-        # caller (the backend decides the id); never copied from the request,
-        # which the backend may have ignored.
+        # caller (the backend decides the id) or adopted from the thread id by
+        # the converter (adopt_conversation_id); never copied from the request's
+        # `conversation` field, which the backend may have ignored.
         self._conversation_id: Optional[str] = None
 
     @property
@@ -111,6 +112,18 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         self, *, request_id: str, source: str
     ) -> str | None:
         return self.create_first_sse_message(request_id=request_id, source=source)
+
+    def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
+        if conversation_id is None or self._conversation_id is not None:
+            return
+        try:
+            validate_conversation_id(value=conversation_id)
+        except ValueError:
+            # The id comes from outside this request's `conversation` field and may
+            # embed a subject, so keep its value out of the log.
+            logger.warning("Not adopting conversation id: it failed validation")
+            return
+        self._conversation_id = conversation_id
 
     def _conversation_payload(self) -> Optional[Conversation]:
         if self._conversation_id is None:
