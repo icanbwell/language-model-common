@@ -324,6 +324,16 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_stream_start_sse_event(
+        self, *, request_id: str, source: str
+    ) -> str | None:
+        """Emit the event that opens a streamed response, before any content.
+
+        The default implementation returns None (no-op): chat completions has
+        no separate opening message.  Subclasses override to emit one.
+        """
+        return None
+
     def adopt_conversation_id(self, *, conversation_id: str | None) -> None:
         """Use ``conversation_id`` as this request's conversation id when none is set.
 
