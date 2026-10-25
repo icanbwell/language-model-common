@@ -11,7 +11,7 @@ import fsspec  # type: ignore[import-untyped]
 import httpx
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
-from languagemodelcommon.utilities.cache.advisory_lock import AdvisoryLock
+from oidcauthlib.cache_gate.advisory_lock import AdvisoryLock
 
 logger = logging.getLogger(__name__)
 

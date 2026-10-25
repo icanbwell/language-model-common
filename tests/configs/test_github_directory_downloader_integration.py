@@ -469,6 +469,79 @@ async def test_download_returns_content_subdir(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_download_with_store_acquires_and_releases_lock(
+    tmp_path: Path,
+) -> None:
+    """With a store, download() runs under the AdvisoryLock and releases it."""
+    from hashlib import sha256
+
+    from key_value.aio.stores.memory import MemoryStore
+    from oidcauthlib.cache_gate.advisory_lock import LOCK_COLLECTION
+
+    cache_path = tmp_path / "cache"
+    cache_path.mkdir()
+    store = MemoryStore()
+    downloader = GithubDirectoryDownloader()
+    lock_seen_during_download: list[bool] = []
+
+    def fake_do_download(*, target_dir: Path, source_path: str, **_: Any) -> None:
+        subdir = target_dir / Path(source_path).name
+        subdir.mkdir(parents=True, exist_ok=True)
+
+    def record_lock(**kwargs: Any) -> None:
+        lock_seen_during_download.append(True)
+        fake_do_download(**kwargs)
+
+    with patch.object(downloader, "_do_download", side_effect=record_lock):
+        result = await downloader.download(
+            source_uri="github://org/repo/bailey/prompts?ref=main",
+            github_token=None,
+            cache_path=cache_path,
+            store=store,
+        )
+
+    assert result is not None
+    assert lock_seen_during_download == [True]
+    lock_key = (
+        f"github_download:{sha256(b'org/repo:main:bailey/prompts').hexdigest()[:16]}"
+    )
+    assert await store.get(lock_key, collection=LOCK_COLLECTION) is None
+
+
+@pytest.mark.asyncio
+async def test_download_with_store_skips_when_lock_held(tmp_path: Path) -> None:
+    """If another worker holds the lock, download() does not fetch."""
+    from hashlib import sha256
+
+    from key_value.aio.stores.memory import MemoryStore
+    from oidcauthlib.cache_gate.advisory_lock import LOCK_COLLECTION
+
+    cache_path = tmp_path / "cache"
+    cache_path.mkdir()
+    store = MemoryStore()
+    downloader = GithubDirectoryDownloader()
+
+    key = "org/repo:main:bailey/prompts"
+    lock_key = f"github_download:{sha256(key.encode('utf-8')).hexdigest()[:16]}"
+    await store.put(
+        lock_key, {"holder": "other-pod"}, collection=LOCK_COLLECTION, ttl=60
+    )
+
+    with patch.object(downloader, "_do_download") as do_download:
+        result = await downloader.download(
+            source_uri="github://org/repo/bailey/prompts?ref=main",
+            github_token=None,
+            cache_path=cache_path,
+            store=store,
+        )
+
+    do_download.assert_not_called()
+    assert result is None
+    held = await store.get(lock_key, collection=LOCK_COLLECTION)
+    assert held == {"holder": "other-pod"}
+
+
+@pytest.mark.asyncio
 async def test_download_cached_returns_content_subdir(tmp_path: Path) -> None:
     """download() always re-downloads (no local freshness check)."""
     cache_path = tmp_path / "cache"
