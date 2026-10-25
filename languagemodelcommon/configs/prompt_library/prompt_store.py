@@ -85,6 +85,10 @@ class PromptStore:
 
     async def clear(self) -> None:
         if isinstance(self._store, BaseDestroyCollectionStore):
+            # destroy_collection assumes the collection was already set up in
+            # this process (MongoDBStore raises KeyError otherwise), but the
+            # collection is shared across workers and may hold entries.
+            await self._store.setup_collection(collection=self._collection)
             await self._store.destroy_collection(collection=self._collection)
             self._store._setup_collection_complete[self._collection] = False
         else:
