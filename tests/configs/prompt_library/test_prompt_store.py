@@ -1,8 +1,10 @@
+from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pathlib import Path
 
+from key_value.aio.stores.base import BaseDestroyCollectionStore
 from key_value.aio.stores.memory import MemoryStore
 
 from languagemodelcommon.configs.prompt_library.prompt_store import PromptStore
@@ -214,3 +216,37 @@ async def test_non_positive_ttl_is_sanitized_to_no_expiry(
     fake_store.put.assert_awaited_once()
     _, kwargs = fake_store.put.call_args
     assert kwargs["ttl"] is None
+
+
+@pytest.mark.asyncio
+async def test_clear_sets_up_collection_before_destroying_it() -> None:
+    """MongoDBStore.destroy_collection raises KeyError until the collection
+    has been set up in this process, even though the collection is shared
+    with other workers and may hold entries. clear() must set the collection
+    up first so a cold process really drops what is there."""
+    calls: list[str] = []
+    fake_store = MagicMock(spec=BaseDestroyCollectionStore)
+    fake_store._setup_collection_complete = defaultdict(bool)
+    fake_store.setup_collection = AsyncMock(
+        side_effect=lambda **_: calls.append("setup_collection")
+    )
+    fake_store.destroy_collection = AsyncMock(
+        side_effect=lambda **_: calls.append("destroy_collection")
+    )
+    prompt_store = PromptStore(store=fake_store, collection="prompts")
+
+    await prompt_store.clear()
+
+    assert calls == ["setup_collection", "destroy_collection"]
+    fake_store.setup_collection.assert_awaited_once_with(collection="prompts")
+    fake_store.destroy_collection.assert_awaited_once_with(collection="prompts")
+    assert fake_store._setup_collection_complete["prompts"] is False
+
+
+@pytest.mark.asyncio
+async def test_clear_removes_existing_prompts(prompt_store: PromptStore) -> None:
+    await prompt_store.put_prompt(name="greeting", content="hello")
+
+    await prompt_store.clear()
+
+    assert await prompt_store.get_prompt(name="greeting") is None
