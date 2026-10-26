@@ -50,11 +50,17 @@ class LearnedTitleCache:
                 self._titles.move_to_end(tool_name)
             return title
 
+    @staticmethod
+    def is_storable(*, tool_name: str, title: str) -> bool:
+        """Whether a learned title is within the length caps (shared with
+        the persistent ``LearnedTitleStore`` so both enforce one limit)."""
+        return (
+            len(title) <= _LEARNED_TITLE_MAX_CHARS
+            and len(tool_name) <= _LEARNED_TITLE_NAME_MAX_CHARS
+        )
+
     def put(self, *, tool_name: str, title: str) -> None:
-        if (
-            len(title) > _LEARNED_TITLE_MAX_CHARS
-            or len(tool_name) > _LEARNED_TITLE_NAME_MAX_CHARS
-        ):
+        if not self.is_storable(tool_name=tool_name, title=title):
             return
         with self._lock:
             self._titles[tool_name] = title
@@ -93,6 +99,20 @@ class ToolDisplayNameMapper:
         if configured is not None:
             return configured
         return self._learned_titles.get(tool_name=tool_name)
+
+    def has_title_for_call_tool_target(self, *, tool_name: str) -> bool:
+        """Whether a ``call_tool`` start line for ``tool_name`` already has a title."""
+        return self._call_tool_target_name(tool_name=tool_name) is not None
+
+    def remember_shared_title(self, *, tool_name: str, title: str) -> None:
+        """Fill the process-wide learned-title cache only (no request-scoped entry).
+
+        Used to hydrate from the persistent store; the request's own config
+        dict is left untouched so static config and live tool titles still win.
+        """
+        stripped_title = title.strip()
+        if stripped_title:
+            self._learned_titles.put(tool_name=tool_name, title=stripped_title)
 
     @classmethod
     def from_mapping(

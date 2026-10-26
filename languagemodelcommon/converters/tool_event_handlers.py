@@ -37,6 +37,9 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.exception_logger import ExceptionLogger
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
+from languagemodelcommon.utilities.learned_title_store import (
+    LearnedTitleStoreProtocol,
+)
 from languagemodelcommon.utilities.tool_display_name_mapper import (
     MCP_DISCOVERY_CALL_TOOL_NAME,
     MCP_DISCOVERY_SEARCH_TOOLS_NAME,
@@ -113,6 +116,7 @@ class ToolEventHandler(StreamContextMixin):
         debug_file_writer: FileWriter,
         environment_variables: LanguageModelCommonEnvironmentVariables,
         tool_display_name_mapper: ToolDisplayNameMapper,
+        learned_title_store: LearnedTitleStoreProtocol | None = None,
         stream_buffer_manager: StreamBufferManager | None = None,
         stream_debug_output_manager: StreamDebugOutputManager | None = None,
     ) -> None:
@@ -126,6 +130,7 @@ class ToolEventHandler(StreamContextMixin):
         self._debug_file_writer = debug_file_writer
         self._environment_variables = environment_variables
         self._tool_display_name_mapper = tool_display_name_mapper
+        self._learned_title_store = learned_title_store
         self._static_stream_buffer_manager = stream_buffer_manager
         self._static_stream_debug_output_manager = stream_debug_output_manager
 
@@ -141,7 +146,7 @@ class ToolEventHandler(StreamContextMixin):
             or self._tool_display_name_mapper
         )
 
-    def _learn_runtime_tool_titles(
+    async def _learn_runtime_tool_titles(
         self,
         *,
         tool_name: str,
@@ -179,19 +184,25 @@ class ToolEventHandler(StreamContextMixin):
         # into every other concurrent request sharing the singleton.
         if mapper is None or mapper is self._tool_display_name_mapper:
             return
+        learned: list[tuple[str, str]] = []
         if tool_name == MCP_DISCOVERY_SEARCH_TOOLS_NAME:
-            self._learn_titles_from_search_tools_result(
+            learned = self._learn_titles_from_search_tools_result(
                 mapper=mapper, tool_message_content=tool_message_content
             )
         elif tool_name == MCP_DISCOVERY_CALL_TOOL_NAME:
-            self._learn_title_from_call_tool_result(
+            learned = self._learn_title_from_call_tool_result(
                 mapper=mapper, tool_input=tool_input, artifact=artifact
             )
+        if self._learned_title_store is not None:
+            for learned_name, learned_title in learned:
+                await self._learned_title_store.put_title(
+                    tool_name=learned_name, title=learned_title
+                )
 
     @staticmethod
     def _learn_titles_from_search_tools_result(
         *, mapper: ToolDisplayNameMapper, tool_message_content: str
-    ) -> None:
+    ) -> list[tuple[str, str]]:
         try:
             parsed = json.loads(tool_message_content)
         except (TypeError, ValueError):
@@ -199,13 +210,14 @@ class ToolEventHandler(StreamContextMixin):
                 "search_tools result is not valid JSON, skipping title learning: %.200s",
                 tool_message_content,
             )
-            return
+            return []
         if not isinstance(parsed, list):
             logger.debug(
                 "search_tools result is not a JSON list, skipping title learning: %s",
                 type(parsed),
             )
-            return
+            return []
+        learned: list[tuple[str, str]] = []
         for entry in parsed:
             if not isinstance(entry, dict):
                 continue
@@ -213,6 +225,8 @@ class ToolEventHandler(StreamContextMixin):
             title = entry.get("title")
             if isinstance(name, str) and isinstance(title, str):
                 mapper.register_title(tool_name=name, title=title)
+                learned.append((name, title))
+        return learned
 
     @staticmethod
     def _learn_title_from_call_tool_result(
@@ -220,14 +234,14 @@ class ToolEventHandler(StreamContextMixin):
         mapper: ToolDisplayNameMapper,
         tool_input: Optional[Dict[str, Any]],
         artifact: Optional[Any],
-    ) -> None:
+    ) -> list[tuple[str, str]]:
         if not isinstance(tool_input, dict):
-            return
+            return []
         target_name = tool_input.get("name")
         if not isinstance(target_name, str) or not target_name:
-            return
+            return []
         if not isinstance(artifact, dict):
-            return
+            return []
         structured_content = artifact.get("structured_content")
         if not isinstance(structured_content, dict):
             logger.debug(
@@ -236,10 +250,41 @@ class ToolEventHandler(StreamContextMixin):
                 target_name,
                 type(structured_content),
             )
-            return
+            return []
         title = structured_content.get("tool_title")
         if isinstance(title, str) and title:
             mapper.register_title(tool_name=target_name, title=title)
+            return [(target_name, title)]
+        return []
+
+    async def _hydrate_call_tool_target_title(
+        self,
+        *,
+        mapper: ToolDisplayNameMapper,
+        tool_name: str,
+        tool_input: Optional[Dict[str, Any]],
+    ) -> None:
+        """Fill the in-process cache from the persistent store on a cold miss.
+
+        Only for a ``call_tool`` start whose target has no title yet (BAI-1306),
+        so a freshly started pod still renders the real title on the first
+        start line. Store failures and timeouts are absorbed by the store; the
+        line then falls back to the humanized name.
+        """
+        if self._learned_title_store is None:
+            return
+        if tool_name != MCP_DISCOVERY_CALL_TOOL_NAME or not isinstance(
+            tool_input, dict
+        ):
+            return
+        target_name = tool_input.get("name")
+        if not isinstance(target_name, str) or not target_name:
+            return
+        if mapper.has_title_for_call_tool_target(tool_name=target_name):
+            return
+        title = await self._learned_title_store.get_title(tool_name=target_name)
+        if title:
+            mapper.remember_shared_title(tool_name=target_name, title=title)
 
     async def handle_tool_start(
         self,
@@ -268,6 +313,9 @@ class ToolEventHandler(StreamContextMixin):
             logger.debug("on_tool_start: %s %s", tool_name, tool_input_display)
             mapper = self._resolve_display_name_mapper(
                 request_information=request_information
+            )
+            await self._hydrate_call_tool_target_title(
+                mapper=mapper, tool_name=tool_name, tool_input=tool_input
             )
             display_name: str = mapper.get_name_for_tool(
                 tool_name=tool_name, tool_input=tool_input
@@ -389,7 +437,7 @@ class ToolEventHandler(StreamContextMixin):
                 # (format_message_content) rather than tool_message_content
                 # above, which is display-oriented and would json.loads() a
                 # Python repr instead of the underlying JSON array.
-                self._learn_runtime_tool_titles(
+                await self._learn_runtime_tool_titles(
                     tool_name=tool_name,
                     tool_input=tool_input,
                     tool_message_content=format_message_content(tool_message.content),

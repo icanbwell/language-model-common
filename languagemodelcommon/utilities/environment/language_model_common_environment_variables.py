@@ -304,6 +304,37 @@ class LanguageModelCommonEnvironmentVariables(
         return float(os.environ.get("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60"))
 
     @property
+    def learned_title_store_db_name(self) -> str:
+        """MongoDB database name for the learned MCP tool title store.
+
+        Falls back to MONGO_LLM_STORAGE_DB_NAME like the other stores.
+        """
+        return (
+            os.environ.get("LEARNED_TITLE_STORE_DB_NAME")
+            or self.mongo_llm_storage_db_name
+            or "language_model_gateway"
+        )
+
+    @property
+    def learned_title_store_collection(self) -> str:
+        """MongoDB collection name for learned MCP tool titles."""
+        return os.environ.get("LEARNED_TITLE_STORE_COLLECTION", "learned_tool_titles")
+
+    @property
+    def learned_title_store_ttl_seconds(self) -> int:
+        """TTL in seconds for learned tool titles. Defaults to 86400 (24 hours)."""
+        return int(os.environ.get("LEARNED_TITLE_STORE_TTL_SECONDS", "86400"))
+
+    @property
+    def learned_title_store_timeout_seconds(self) -> float:
+        """Timeout in seconds for each learned-title store read or write.
+
+        Defaults to 0.5. The read sits on the call_tool start-event path, so
+        it must stay short; a timeout falls back to the humanized tool name.
+        """
+        return float(os.environ.get("LEARNED_TITLE_STORE_TIMEOUT_SECONDS", "0.5"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
