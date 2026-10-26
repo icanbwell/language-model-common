@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
@@ -17,15 +19,68 @@ MCP_DISCOVERY_SEARCH_TOOLS_NAME = "search_tools"
 MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 
 
+_LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
+_LEARNED_TITLE_MAX_CHARS = 256
+
+
+class LearnedTitleCache:
+    """Bounded, thread-safe, process-wide LRU of MCP tool titles learned at runtime.
+
+    A tool reached through the ``call_tool`` discovery meta-tool is never bound
+    as a LangChain tool, so its title is only learned from a ``search_tools`` or
+    ``call_tool`` result. Per-request mappers learn it too late for the *first*
+    ``call_tool`` start event of a request that did not search first. Titles are
+    catalog metadata (tool name -> title template), never per-user data, so
+    sharing them across requests only lets a later request render a tool's
+    start line with the title an earlier request already saw. Placeholders are
+    substituted per call from that call's own arguments; nothing from a
+    request's arguments or results is stored here.
+    """
+
+    def __init__(self, *, max_entries: int = _LEARNED_TITLE_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max_entries
+        self._titles: "OrderedDict[str, str]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, *, tool_name: str) -> str | None:
+        with self._lock:
+            title = self._titles.get(tool_name)
+            if title is not None:
+                self._titles.move_to_end(tool_name)
+            return title
+
+    def put(self, *, tool_name: str, title: str) -> None:
+        if len(title) > _LEARNED_TITLE_MAX_CHARS:
+            return
+        with self._lock:
+            self._titles[tool_name] = title
+            self._titles.move_to_end(tool_name)
+            while len(self._titles) > self._max_entries:
+                self._titles.popitem(last=False)
+
+
 class ToolDisplayNameMapper:
     """Provide user-facing tool names for streaming progress updates."""
 
-    def __init__(self, *, name_to_display_name: Dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        name_to_display_name: Dict[str, str] | None = None,
+        learned_titles: LearnedTitleCache | None = None,
+    ) -> None:
         self._name_to_display_name: Dict[str, str] = {
             name: display_name
             for name, display_name in (name_to_display_name or {}).items()
             if display_name is not None
         }
+        self._learned_titles: LearnedTitleCache = learned_titles or LearnedTitleCache()
+
+    def _configured_name(self, *, tool_name: str) -> str | None:
+        """Static config / live tool titles first, then titles learned earlier."""
+        configured = self._name_to_display_name.get(tool_name)
+        if configured is not None:
+            return configured
+        return self._learned_titles.get(tool_name=tool_name)
 
     @classmethod
     def from_mapping(
@@ -103,6 +158,7 @@ class ToolDisplayNameMapper:
         stripped_title = title.strip()
         if stripped_title:
             self._name_to_display_name[tool_name] = stripped_title
+            self._learned_titles.put(tool_name=tool_name, title=stripped_title)
 
     def with_tools(self, *, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
         """Return a new mapper with this request's live tool titles merged in.
@@ -115,7 +171,8 @@ class ToolDisplayNameMapper:
         the process lifetime.
         """
         merged = ToolDisplayNameMapper(
-            name_to_display_name=dict(self._name_to_display_name)
+            name_to_display_name=dict(self._name_to_display_name),
+            learned_titles=self._learned_titles,
         )
         merged.register_from_tools(tools)
         return merged
@@ -170,7 +227,7 @@ class ToolDisplayNameMapper:
     def get_display_name(
         self, *, tool_name: str, tool_input: Dict[str, Any] | None = None
     ) -> str:
-        display_name = self._name_to_display_name.get(tool_name)
+        display_name = self._configured_name(tool_name=tool_name)
         if display_name is None:
             return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
         if display_name == "":
@@ -214,7 +271,7 @@ class ToolDisplayNameMapper:
         target_tool_name = str(inputs.get("name") or "")
         if not target_tool_name:
             return "Call Tool"
-        configured = self._name_to_display_name.get(target_tool_name)
+        configured = self._configured_name(tool_name=target_tool_name)
         if configured is None:
             return Humanizer.humanize_tool_name(key=target_tool_name)
         if configured == "":
