@@ -2,9 +2,10 @@ import json
 import logging
 import re
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Dict, Mapping, Sequence
+from typing import Any, Callable, Dict, Mapping, Sequence
 
 from langchain_core.tools import BaseTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -22,6 +23,7 @@ MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 _LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
 _LEARNED_TITLE_MAX_CHARS = 256
 _LEARNED_TITLE_NAME_MAX_CHARS = 128
+_LEARNED_TITLE_TTL_SECONDS = 3600.0
 
 
 class LearnedTitleCache:
@@ -38,16 +40,31 @@ class LearnedTitleCache:
     request's arguments or results is stored here.
     """
 
-    def __init__(self, *, max_entries: int = _LEARNED_TITLE_CACHE_MAX_ENTRIES) -> None:
+    def __init__(
+        self,
+        *,
+        max_entries: int = _LEARNED_TITLE_CACHE_MAX_ENTRIES,
+        ttl_seconds: float = _LEARNED_TITLE_TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._max_entries = max_entries
-        self._titles: "OrderedDict[str, str]" = OrderedDict()
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        # name -> (title, expires_at). Entries expire so a title changed on the
+        # server (or in the persistent store) is picked up without a restart.
+        self._titles: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
         self._lock = threading.Lock()
 
     def get(self, *, tool_name: str) -> str | None:
         with self._lock:
-            title = self._titles.get(tool_name)
-            if title is not None:
-                self._titles.move_to_end(tool_name)
+            entry = self._titles.get(tool_name)
+            if entry is None:
+                return None
+            title, expires_at = entry
+            if self._clock() >= expires_at:
+                del self._titles[tool_name]
+                return None
+            self._titles.move_to_end(tool_name)
             return title
 
     @staticmethod
@@ -63,7 +80,7 @@ class LearnedTitleCache:
         if not self.is_storable(tool_name=tool_name, title=title):
             return
         with self._lock:
-            self._titles[tool_name] = title
+            self._titles[tool_name] = (title, self._clock() + self._ttl_seconds)
             self._titles.move_to_end(tool_name)
             while len(self._titles) > self._max_entries:
                 self._titles.popitem(last=False)

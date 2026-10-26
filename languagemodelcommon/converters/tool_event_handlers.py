@@ -190,14 +190,14 @@ class ToolEventHandler(StreamContextMixin):
                 mapper=mapper, tool_message_content=tool_message_content
             )
         elif tool_name == MCP_DISCOVERY_CALL_TOOL_NAME:
-            learned = self._learn_title_from_call_tool_result(
+            # A call_tool *result* field is not catalog metadata (a server could
+            # put per-call text in it), so it is learned in memory only and
+            # never written to the shared store.
+            self._learn_title_from_call_tool_result(
                 mapper=mapper, tool_input=tool_input, artifact=artifact
             )
-        if self._learned_title_store is not None:
-            for learned_name, learned_title in learned:
-                await self._learned_title_store.put_title(
-                    tool_name=learned_name, title=learned_title
-                )
+        if self._learned_title_store is not None and learned:
+            await self._learned_title_store.put_titles(titles=dict(learned))
 
     @staticmethod
     def _learn_titles_from_search_tools_result(
@@ -234,14 +234,14 @@ class ToolEventHandler(StreamContextMixin):
         mapper: ToolDisplayNameMapper,
         tool_input: Optional[Dict[str, Any]],
         artifact: Optional[Any],
-    ) -> list[tuple[str, str]]:
+    ) -> None:
         if not isinstance(tool_input, dict):
-            return []
+            return
         target_name = tool_input.get("name")
         if not isinstance(target_name, str) or not target_name:
-            return []
+            return
         if not isinstance(artifact, dict):
-            return []
+            return
         structured_content = artifact.get("structured_content")
         if not isinstance(structured_content, dict):
             logger.debug(
@@ -250,12 +250,10 @@ class ToolEventHandler(StreamContextMixin):
                 target_name,
                 type(structured_content),
             )
-            return []
+            return
         title = structured_content.get("tool_title")
         if isinstance(title, str) and title:
             mapper.register_title(tool_name=target_name, title=title)
-            return [(target_name, title)]
-        return []
 
     async def _hydrate_call_tool_target_title(
         self,

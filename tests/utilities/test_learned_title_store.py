@@ -40,6 +40,11 @@ class _CountingStore(MemoryStore):
     def __init__(self) -> None:
         super().__init__()
         self.get_calls = 0
+        self.put_calls = 0
+
+    async def put(self, *args: Any, **kwargs: Any) -> Any:
+        self.put_calls += 1
+        return await super().put(*args, **kwargs)
 
     async def get(self, *args: Any, **kwargs: Any) -> Any:
         self.get_calls += 1
@@ -50,8 +55,8 @@ class TestLearnedTitleStore:
     @pytest.mark.asyncio
     async def test_round_trip_is_visible_to_a_second_store_instance(self) -> None:
         backing = MemoryStore()
-        await _make_store(store=backing).put_title(
-            tool_name="get_vitals", title="  🩺 Vitals: {vitals|all}  "
+        await _make_store(store=backing).put_titles(
+            titles={"get_vitals": "  🩺 Vitals: {vitals|all}  "}
         )
 
         title = await _make_store(store=backing).get_title(tool_name="get_vitals")
@@ -77,14 +82,14 @@ class TestLearnedTitleStore:
     ) -> None:
         store = _make_store()
 
-        await store.put_title(tool_name=tool_name, title=title)
+        await store.put_titles(titles={tool_name: title})
 
         assert await store.get_title(tool_name=tool_name) is None
 
     @pytest.mark.asyncio
     async def test_expired_entry_is_a_miss(self) -> None:
         store = _make_store(ttl_seconds=0.05)
-        await store.put_title(tool_name="get_vitals", title="🩺 Vitals")
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
 
         await asyncio.sleep(0.1)
 
@@ -95,7 +100,7 @@ class TestLearnedTitleStore:
     async def test_store_failure_or_timeout_never_raises(self, backing: Any) -> None:
         store = _make_store(store=backing, timeout_seconds=0.05)
 
-        await store.put_title(tool_name="get_vitals", title="🩺 Vitals")
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
 
         assert await store.get_title(tool_name="get_vitals") is None
 
@@ -114,6 +119,49 @@ class TestLearnedTitleStore:
         store = _make_store()
         await store.get_title(tool_name="get_vitals")
 
-        await store.put_title(tool_name="get_vitals", title="🩺 Vitals")
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
 
         assert await store.get_title(tool_name="get_vitals") == "🩺 Vitals"
+
+    @pytest.mark.asyncio
+    async def test_unchanged_title_is_not_rewritten(self) -> None:
+        backing = _CountingStore()
+        store = _make_store(store=backing)
+
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
+        await store.put_titles(titles={"get_vitals": "🩺 New title"})
+
+        assert backing.put_calls == 2
+        assert await store.get_title(tool_name="get_vitals") == "🩺 New title"
+
+    @pytest.mark.asyncio
+    async def test_batch_is_written_in_one_call(self) -> None:
+        store = _make_store()
+
+        await store.put_titles(titles={"a_tool": "🅰️ A", "b_tool": "🅱️ B"})
+
+        assert await store.get_title(tool_name="a_tool") == "🅰️ A"
+        assert await store.get_title(tool_name="b_tool") == "🅱️ B"
+
+    @pytest.mark.asyncio
+    async def test_oversized_name_never_reaches_the_store(self) -> None:
+        backing = _CountingStore()
+        store = _make_store(store=backing)
+
+        assert await store.get_title(tool_name="n" * 129) is None
+        assert backing.get_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_failure_starts_a_cooldown_that_skips_the_store(self) -> None:
+        backing = _CountingStore()
+        store = _make_store(store=backing, timeout_seconds=0.05)
+        store._store = _SlowStore()  # type: ignore[assignment]
+        await store.get_title(tool_name="get_vitals")
+        store._store = backing
+
+        assert await store.get_title(tool_name="get_vitals") is None
+        await store.put_titles(titles={"get_vitals": "🩺 Vitals"})
+
+        assert backing.get_calls == 0
+        assert backing.put_calls == 0

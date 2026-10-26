@@ -101,3 +101,15 @@ class TestLearnedTitlesSharedAcrossRequests:
             singleton.with_tools(tools=[]).get_display_name(tool_name="search")
             == "🛠️ Search"
         )
+
+
+class TestLearnedTitleCacheExpiry:
+    def test_entry_expires_after_ttl(self) -> None:
+        now = [0.0]
+        cache = LearnedTitleCache(ttl_seconds=10, clock=lambda: now[0])
+        cache.put(tool_name="get_vitals", title="🩺 Vitals")
+
+        now[0] = 9.9
+        assert cache.get(tool_name="get_vitals") == "🩺 Vitals"
+        now[0] = 10.0
+        assert cache.get(tool_name="get_vitals") is None

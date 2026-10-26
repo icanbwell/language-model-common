@@ -184,7 +184,7 @@ class TestLearnedTitleStoreWiring:
     @pytest.mark.asyncio
     async def test_static_config_wins_over_stored_title(self) -> None:
         store = _shared_store()
-        await store.put_title(tool_name="get_vitals", title="🩺 From store")
+        await store.put_titles(titles={"get_vitals": "🩺 From store"})
         handler, _ = _pod(store=store)
         configured = ToolDisplayNameMapper(
             name_to_display_name={"get_vitals": "📋 From config"}
@@ -198,3 +198,46 @@ class TestLearnedTitleStoreWiring:
         )
 
         assert line == "📋 From config"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_result_title_is_not_persisted(self) -> None:
+        store = _shared_store()
+        handler, singleton = _pod(store=store)
+        info = RequestInformation(
+            request_id="a", tool_display_name_mapper=singleton.with_tools(tools=[])
+        )
+        event = cast(
+            StandardStreamEvent,
+            {
+                "event": "on_tool_end",
+                "name": "call_tool",
+                "data": {
+                    "input": {"name": "get_vitals", "arguments": {}},
+                    "output": ToolMessage(
+                        content="ok",
+                        tool_call_id="tc1",
+                        name="call_tool",
+                        artifact={
+                            "structured_content": {"tool_title": "🩺 Per-call text"}
+                        },
+                    ),
+                },
+            },
+        )
+
+        async for _ in handler.handle_tool_end(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, _FakeChatRequestWrapper()),
+            request_information=info,
+            tool_start_times={},
+        ):
+            pass
+
+        assert await store.get_title(tool_name="get_vitals") is None
+        assert info.tool_display_name_mapper is not None
+        assert (
+            info.tool_display_name_mapper.has_title_for_call_tool_target(
+                tool_name="get_vitals"
+            )
+            is True
+        )

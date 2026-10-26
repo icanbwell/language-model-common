@@ -73,9 +73,12 @@ Option C.
 * Entries are keyed by tool name, store only the title string, and carry a TTL
   (default 24h, configurable). The same length caps as `LearnedTitleCache`
   apply before anything is written.
-* **Write-through:** when `ToolEventHandler` learns a title from a
-  `search_tools` or `call_tool` result, it also writes it to the store. A write
-  failure is logged and swallowed.
+* **Write-through:** when `ToolEventHandler` learns titles from a
+  `search_tools` listing, it writes them to the store in one concurrent batch
+  (`put_titles`). Titles from a `call_tool` *result* are learned in memory only:
+  that field comes from a tool result, so a server could put per-call text in
+  it, and it is not written to shared storage. A title already written
+  recently is not rewritten. A write failure is logged and swallowed.
 * **Read-through:** `ToolEventHandler.handle_tool_start` is async. For a
   `call_tool` start whose target is not in the request mapper or the
   in-process cache, it awaits one `get_title` under an explicit timeout and, on
@@ -95,8 +98,19 @@ Option C.
 
 * **Store outage or slowness:** bounded by the read timeout; failures degrade
   to the humanized name and never block or fail the stream.
-* **Stale titles:** the TTL bounds staleness; a fresh `search_tools` or
-  `call_tool` result overwrites the stored value.
+* **Stale titles:** in-process entries expire after 1 hour and the store TTL is
+  24h, so a changed title is picked up within about 25 hours worst case (a
+  hydrate can refill memory from a not-yet-expired stored value); a fresh
+  `search_tools` result overwrites both.
+* **Degraded store:** after any store error or timeout the store is skipped for
+  30 seconds, so an outage costs one timeout rather than one per event. Read
+  names longer than the 128-char cap never reach the store or the miss cache
+  (the `call_tool` target name is model output).
+* **Scope (open):** titles are keyed by tool name only, the same as the
+  in-process cache. If two catalogs expose the same tool name with different
+  titles they overwrite each other, and the persistent store extends that
+  across pods for 24h. Scoping the key needs a catalog or tenant identifier on
+  this path, which this repo does not currently have; tracked as a follow-up.
 * **Cross-catalog name collision:** unchanged from PR #149 — learned titles
   apply only to the `call_tool` target, never to directly bound tools.
 * **Tenant isolation:** only tool-name to title-template pairs are stored; no
