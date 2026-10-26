@@ -109,6 +109,16 @@ def _extract_structured_output(artifact: Optional[Any]) -> Optional[Dict[str, An
     }
 
 
+def _call_tool_target_name(*, tool_input: Optional[Dict[str, Any]]) -> str | None:
+    """The tool a ``call_tool`` invocation targets, or None if absent/malformed."""
+    if not isinstance(tool_input, dict):
+        return None
+    target_name = tool_input.get("name")
+    if not isinstance(target_name, str) or not target_name:
+        return None
+    return target_name
+
+
 class ToolEventHandler(StreamContextMixin):
     def __init__(
         self,
@@ -235,12 +245,8 @@ class ToolEventHandler(StreamContextMixin):
         tool_input: Optional[Dict[str, Any]],
         artifact: Optional[Any],
     ) -> None:
-        if not isinstance(tool_input, dict):
-            return
-        target_name = tool_input.get("name")
-        if not isinstance(target_name, str) or not target_name:
-            return
-        if not isinstance(artifact, dict):
+        target_name = _call_tool_target_name(tool_input=tool_input)
+        if target_name is None or not isinstance(artifact, dict):
             return
         structured_content = artifact.get("structured_content")
         if not isinstance(structured_content, dict):
@@ -271,12 +277,10 @@ class ToolEventHandler(StreamContextMixin):
         """
         if self._learned_title_store is None:
             return
-        if tool_name != MCP_DISCOVERY_CALL_TOOL_NAME or not isinstance(
-            tool_input, dict
-        ):
+        if tool_name != MCP_DISCOVERY_CALL_TOOL_NAME:
             return
-        target_name = tool_input.get("name")
-        if not isinstance(target_name, str) or not target_name:
+        target_name = _call_tool_target_name(tool_input=tool_input)
+        if target_name is None:
             return
         if mapper.has_title_for_call_tool_target(tool_name=target_name):
             return
