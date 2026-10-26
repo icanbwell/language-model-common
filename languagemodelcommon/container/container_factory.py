@@ -48,6 +48,7 @@ from languagemodelcommon.utilities.cache.model_config_cache_store import (
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
     LanguageModelCommonEnvironmentVariables,
 )
+from languagemodelcommon.utilities.learned_title_store import LearnedTitleStore
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.tool_display_name_mapper import (
     ToolDisplayNameMapper,
@@ -232,6 +233,27 @@ class LanguageModelCommonContainerFactory:
             factory=lambda c: ToolDisplayNameMapper(),
         )
 
+        def _create_learned_title_store(c: Any) -> LearnedTitleStore | None:
+            env = c.resolve(LanguageModelCommonEnvironmentVariables)
+            if not env.mongo_llm_storage_uri:
+                return None
+            return LearnedTitleStore(
+                store=create_cache_store(
+                    mongo_url=env.mongo_llm_storage_uri,
+                    mongo_db_name=env.learned_title_store_db_name,
+                    mongo_username=env.mongo_llm_storage_db_username,
+                    mongo_password=env.mongo_llm_storage_db_password,
+                    collection=env.learned_title_store_collection,
+                ),
+                collection=env.learned_title_store_collection,
+                ttl_seconds=float(env.learned_title_store_ttl_seconds),
+                timeout_seconds=env.learned_title_store_timeout_seconds,
+            )
+
+        container.singleton(
+            service_type=LearnedTitleStore, factory=_create_learned_title_store
+        )
+
         container.singleton(
             service_type=ToolEventHandler,
             factory=lambda c: ToolEventHandler(
@@ -240,6 +262,7 @@ class LanguageModelCommonContainerFactory:
                     LanguageModelCommonEnvironmentVariables
                 ),
                 tool_display_name_mapper=c.resolve(ToolDisplayNameMapper),
+                learned_title_store=c.resolve(LearnedTitleStore),
             ),
         )
 
