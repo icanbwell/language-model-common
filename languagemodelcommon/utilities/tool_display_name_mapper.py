@@ -21,6 +21,7 @@ MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 
 _LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
 _LEARNED_TITLE_MAX_CHARS = 256
+_LEARNED_TITLE_NAME_MAX_CHARS = 128
 
 
 class LearnedTitleCache:
@@ -50,7 +51,10 @@ class LearnedTitleCache:
             return title
 
     def put(self, *, tool_name: str, title: str) -> None:
-        if len(title) > _LEARNED_TITLE_MAX_CHARS:
+        if (
+            len(title) > _LEARNED_TITLE_MAX_CHARS
+            or len(tool_name) > _LEARNED_TITLE_NAME_MAX_CHARS
+        ):
             return
         with self._lock:
             self._titles[tool_name] = title
@@ -73,10 +77,18 @@ class ToolDisplayNameMapper:
             for name, display_name in (name_to_display_name or {}).items()
             if display_name is not None
         }
-        self._learned_titles: LearnedTitleCache = learned_titles or LearnedTitleCache()
+        self._learned_titles: LearnedTitleCache = (
+            learned_titles if learned_titles is not None else LearnedTitleCache()
+        )
 
-    def _configured_name(self, *, tool_name: str) -> str | None:
-        """Static config / live tool titles first, then titles learned earlier."""
+    def _call_tool_target_name(self, *, tool_name: str) -> str | None:
+        """Static config / live tool titles first, then titles learned earlier.
+
+        Only used for the ``call_tool`` target, whose title can only be learned
+        at runtime. Directly-bound tools never consult the shared cache so a
+        title learned for one catalog cannot relabel an unrelated bound tool
+        that happens to share its name.
+        """
         configured = self._name_to_display_name.get(tool_name)
         if configured is not None:
             return configured
@@ -227,7 +239,7 @@ class ToolDisplayNameMapper:
     def get_display_name(
         self, *, tool_name: str, tool_input: Dict[str, Any] | None = None
     ) -> str:
-        display_name = self._configured_name(tool_name=tool_name)
+        display_name = self._name_to_display_name.get(tool_name)
         if display_name is None:
             return "🛠️ " + Humanizer.humanize_tool_name(tool_name)
         if display_name == "":
@@ -271,7 +283,7 @@ class ToolDisplayNameMapper:
         target_tool_name = str(inputs.get("name") or "")
         if not target_tool_name:
             return "Call Tool"
-        configured = self._configured_name(tool_name=target_tool_name)
+        configured = self._call_tool_target_name(tool_name=target_tool_name)
         if configured is None:
             return Humanizer.humanize_tool_name(key=target_tool_name)
         if configured == "":

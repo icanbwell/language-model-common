@@ -84,3 +84,20 @@ class TestLearnedTitlesSharedAcrossRequests:
         cache.put(tool_name="a", title="x" * 1000)
 
         assert cache.get(tool_name="a") is None
+
+    def test_overlong_tool_name_is_not_cached(self) -> None:
+        cache = LearnedTitleCache()
+        cache.put(tool_name="n" * 1000, title="T")
+
+        assert cache.get(tool_name="n" * 1000) is None
+
+    def test_learned_title_does_not_relabel_directly_bound_tool(self) -> None:
+        singleton = ToolDisplayNameMapper()
+        singleton.with_tools(tools=[]).register_title(
+            tool_name="search", title="🔎 Catalog search"
+        )
+
+        assert (
+            singleton.with_tools(tools=[]).get_display_name(tool_name="search")
+            == "🛠️ Search"
+        )
