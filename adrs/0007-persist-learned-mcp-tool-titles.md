@@ -106,16 +106,14 @@ Option C.
   30 seconds, so an outage costs one timeout rather than one per event. Read
   names longer than the 128-char cap never reach the store or the miss cache
   (the `call_tool` target name is model output).
-* **Scope (open):** titles are keyed by tool name only, the same as the
-  in-process cache. If two catalogs expose the same tool name with different
-  titles they overwrite each other, and the persistent store extends that
-  across pods for 24h. Scoping the key needs a catalog or tenant identifier on
-  this path, which this repo does not currently have; tracked as a follow-up.
-* **Cross-catalog name collision:** unchanged from PR #149 — learned titles
-  apply only to the `call_tool` target, never to directly bound tools.
-* **Tenant isolation:** only tool-name to title-template pairs are stored; no
-  request arguments, results, or identifiers. Placeholders are substituted per
-  call from that call's own arguments.
+* **Scope (assumption):** titles are keyed by tool name only, the same as the
+  in-process cache. This relies on tool names being unique across the catalogs
+  and tenants this gateway serves (decided 2026-10-26). If two catalogs ever
+  expose the same tool name with different titles they would overwrite each
+  other, and the persistent store would carry that across pods for up to 24h.
+  Revisit if that assumption stops holding; scoping the key would need a
+  catalog or tenant identifier on the `search_tools`/`call_tool` path, which
+  this repo does not currently have.
 
 ### Consequences
 
