@@ -1,0 +1,19 @@
+name: Check diagrams
+
+on:
+  pull_request:
+    paths:
+      - "playbooks/diagrams/**"
+      - ".github/workflows/diagram-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagram-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: icanbwell/bwell-repo-wiki/.github/actions/diagram-check@diagram-check-v1
