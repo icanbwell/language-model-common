@@ -15,7 +15,7 @@ flowchart LR
     %% row: Upstream / baileyai-skills-service
     baileyai-skills-service -->|imports package, consumes public API| language-model-common
     %% row: Upstream / mcp-fhir-agent
-    mcp-fhir-agent -->|imports package, consumes public API| language-model-common
+    mcp-fhir-agent -.->|unverified, imports package; modules used not recorded| language-model-common
     %% row: Downstream / MCP servers
     language-model-common -->|HTTP, discovers and invokes tools| mcp-servers
     %% row: Downstream / MongoDB
@@ -25,13 +25,13 @@ flowchart LR
     %% row: Downstream / GitHub
     language-model-common -->|reads config and prompt directories| github
     %% row: Downstream / Model providers
-    language-model-common -->|calls chat and image models| model-providers
+    language-model-common -.->|unverified per provider, calls chat and image models| model-providers
     %% row: Downstream / oidcauthlib
     language-model-common -->|imports OAuth and OIDC primitives| oidcauthlib
     %% row: Downstream / LangChain
     language-model-common -->|imports agent graph and MCP client| langchain
     %% row: Downstream / OpenTelemetry
-    language-model-common -->|propagates trace context into MCP calls| opentelemetry
+    language-model-common -.->|unverified, propagates trace context into MCP calls| opentelemetry
 ```
 
 Legend
