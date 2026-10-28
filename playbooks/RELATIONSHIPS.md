@@ -2,6 +2,8 @@
 
 Last verified: 2026-10-16 against 6245270 by Claude
 
+Template version: 2
+
 Who depends on this repo and what it depends on, so a change here (or there) is checked against the
 right neighbors. This file is the source of truth for the repo; the bwell-repo-wiki repo page cites
 it. Every row names its evidence (a path or config key) or says `unverified`.
@@ -46,5 +48,16 @@ The bwell-repo-wiki repo page also says complaint-parser builds on this package;
 - bai-evaluator has no dependency on this package (bwell-repo-wiki `repos/language-model-common.md`). Its HTTP calls to language-model-gateway are not a relationship of this package.
 - language-model-gateway is retired: it was a consumer of this package until it was archived on GitHub on 2026-10-16, so it is not listed above. No package pin or workflow reference to it remains in `pyproject.toml` or `.github/`; the one `docs/` mention (`docs/migration-model-factory-and-reasoning.md`) is a historical migration note.
 - The `alpine-wheels` index in `pyproject.toml` is a wheel source for builds, not a runtime dependency.
+
+## Diagrams
+
+- [context.md](diagrams/context.md): who calls this repo and what does it call, one hop out?
+
+The table wins: when a diagram and a table row above disagree, the table is right and the diagram
+is corrected.
+
+A repo that records at least one upstream or downstream relationship above must have at least one
+diagram under `playbooks/diagrams/` covering it; a repo with no relationships says so above and
+needs none.
 
 Next: [REVIEW.md](REVIEW.md) (blast radius for the PR).
