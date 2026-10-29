@@ -2,6 +2,8 @@
 
 Last verified: 2026-10-11 against 8bc128d by Claude
 
+Template version: 2
+
 Operational notes for `language-model-common`, written for someone already in the repo. Standard and templates:
 bwell-repo-wiki `docs/repo-playbooks/`. Edit by PR only.
 
@@ -17,7 +19,7 @@ version bump; "monitoring" means finding this library's log lines inside a consu
 | [LOGGING.md](LOGGING.md) | adding or changing log statements |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | releasing a version or getting consumers onto it |
 | [REVIEW.md](REVIEW.md) | reviewing a PR here, or preparing one for review |
-| [RELATIONSHIPS.md](RELATIONSHIPS.md) | changing something consumers depend on, or something this repo depends on |
+| [RELATIONSHIPS.md](RELATIONSHIPS.md) | changing something consumers depend on, or something this repo depends on (the tables, and the diagrams in `diagrams/` if the repo has any) |
 
 When merging a PR, read MERGING.md, then DEPLOYMENT.md for what the merge triggers. When changing
 logging, read LOGGING.md; update MONITORING.md and TROUBLESHOOTING.md if the change affects what
