@@ -56,23 +56,29 @@ Option B. `PingRetryPolicy` gains `recovery_cooldown_seconds` (default 30 s).
 
 * within the cooldown it raises `ConnectionError` without touching the network;
 * after the cooldown it builds a fresh `AsyncMongoClient` from the store's URL
-  (injectable `client_factory`), re-points its database handle, clears the
-  collection handles that belonged to the closed client, and runs the normal
-  ping retry again.
+  (injectable `client_factory`), re-points its database handle, and runs the
+  normal ping retry again.
 
-A successful setup clears the failure record. A store constructed with its own
-`client` is never rebuilt, because its lifecycle belongs to the caller.
+A store constructed with its own `client`, or without a `url`, is never rebuilt:
+the former belongs to the caller, the latter has nothing to rebuild from.
+`create_cache_store` always passes a URL.
 
-State touched on the base store: `_client`, `_db`, `_collections_by_name`.
-Setup never completed before a rebuild, so no collection setup flags are stale
-(`setup_collection` calls `setup()` first).
+State touched on the base store: `_client` and `_db`. A rebuild only happens
+while the store's setup has never completed, and every operation goes through
+`setup()` first, so nothing from a successful setup can still hold the old
+client, and no collection handles or setup flags exist yet to go stale.
+
+The cooldown must be greater than 0. The base class closes a failed store
+after releasing its setup lock, so a zero cooldown would let a queued caller
+rebuild the client while that close is still running and then have the new
+client closed under it.
 
 ### Risks and mitigations
 
 * **The caller after the cooldown pays the retry budget again** while MongoDB
   is still down. At most one caller per cooldown window does; the others fail
-  fast. Waiters queued on the store's setup lock see the fresh failure and
-  fail fast too.
+  fast. Callers queued on the store's setup lock wait for the in-flight attempt
+  to end, then see its failure and fail fast too.
 * **Reliance on private base-class attributes:** the same ones the existing
   `ValidatingMongoDBStore` and `McpToolListStore` already use; covered by tests
   that run the real `setup()` against a fake client that is unusable once closed.
@@ -85,7 +91,13 @@ Setup never completed before a rebuild, so no collection setup flags are stale
 * Repeated failures: each rebuild waits out its own cooldown.
 * A healthy store is never rebuilt.
 * A caller-owned client is never rebuilt.
-* Negative cooldown is rejected.
-* Checked against `pymongo 4.19.0` and `py-key-value-aio 0.4.6` with a real
-  unreachable client: after a failed setup the next setups fail with a new
-  connection error, not `Cannot use AsyncMongoClient after close`.
+* Cooldown boundary: just under the cooldown fails fast; at and after it
+  rebuilds.
+* Two callers set up at once share one attempt and one failure.
+* A zero, negative or NaN cooldown is rejected.
+* Checked once, outside the test suite, against `pymongo 4.19.0` and
+  `py-key-value-aio 0.4.6` (the versions baileyai ships; this repo's own lock
+  has `pymongo 4.16.0` and `py-key-value-aio 0.4.5`, whose `setup()` code is the
+  same) with a real unreachable client: after a failed setup the next setups
+  fail with a new connection error, not `Cannot use AsyncMongoClient after close`.
+  The automated tests use a fake client that becomes unusable once closed.

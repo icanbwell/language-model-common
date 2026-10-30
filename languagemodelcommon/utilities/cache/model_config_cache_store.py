@@ -8,6 +8,7 @@ and raises ``ConnectionError`` if it is still unreachable.
 
 import asyncio
 import logging
+import math
 import random
 import time
 from collections.abc import Awaitable, Callable
@@ -37,7 +38,10 @@ class PingRetryPolicy:
     After the retries are exhausted the store builds a fresh client for its
     next setup, but not sooner than ``recovery_cooldown_seconds`` after the
     failure, so a MongoDB that is still down does not make every caller wait
-    out the full retry budget.
+    out the full retry budget. The cooldown must be positive: the base store
+    closes a failed store after releasing its setup lock, and a positive
+    cooldown keeps a queued caller from rebuilding the client while that close
+    is still running.
     """
 
     max_attempts: int = 4
@@ -55,8 +59,8 @@ class PingRetryPolicy:
             raise ValueError("base_delay_seconds must not be negative")
         if self.max_delay_seconds < self.base_delay_seconds:
             raise ValueError("max_delay_seconds must be at least base_delay_seconds")
-        if self.recovery_cooldown_seconds < 0:
-            raise ValueError("recovery_cooldown_seconds must not be negative")
+        if not self.recovery_cooldown_seconds > 0:
+            raise ValueError("recovery_cooldown_seconds must be greater than 0")
 
     def backoff_delay(self, *, attempt: int) -> float:
         """Exponential backoff with full jitter for the 1-based ``attempt``."""
@@ -83,8 +87,9 @@ class ValidatingMongoDBStore(MongoDBStore):
     If the retries are exhausted anyway, the closed client would keep the
     store unusable for the life of the process. So the next setup, once the
     policy's cooldown has passed, replaces the closed client with a new one.
-    A store given its own ``client`` is not rebuilt, since its lifecycle
-    belongs to the caller.
+    A store given its own ``client``, or built without a ``url``, is not
+    rebuilt: the former belongs to the caller, the latter has nothing to
+    rebuild from. ``create_cache_store`` always passes a URL.
 
     Args (beyond those of ``MongoDBStore``):
         ping_retry_policy: Bounds for retrying the open-time ping and for
@@ -130,15 +135,13 @@ class ValidatingMongoDBStore(MongoDBStore):
             raise ConnectionError(
                 f"Model config cache could not connect to MongoDB "
                 f"(database: {self._db.name}) and will try again in "
-                f"{remaining:.0f}s."
+                f"{math.ceil(remaining)}s."
             )
         if self._client_provided_by_user or not self._mongo_url:
             return
         db_name = self._db.name
         self._client = self._client_factory(self._mongo_url)
         self._db = self._client[db_name]
-        # Handles from the failed attempt belong to the closed client.
-        self._collections_by_name.clear()
         logger.warning(
             "Model config cache rebuilt its MongoDB client after a failed "
             "setup (db=%s)",
@@ -183,7 +186,6 @@ class ValidatingMongoDBStore(MongoDBStore):
             "Model config cache MongoDB connection validated (db=%s)",
             self._db.name,
         )
-        self._last_setup_failure_at = None
 
 
 def create_cache_store(

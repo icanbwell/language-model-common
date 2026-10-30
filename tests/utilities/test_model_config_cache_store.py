@@ -1,7 +1,7 @@
 """Tests for model config cache store factory."""
 
 import asyncio
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import pytest
 from key_value.aio.errors.store import StoreSetupError
@@ -306,7 +306,7 @@ class TestClientRecovery:
 
         def client_factory(url: str) -> AsyncMongoClient[dict[str, Any]]:
             factory_urls.append(url)
-            return replacements.pop(0)  # type: ignore[return-value]
+            return cast(AsyncMongoClient[dict[str, Any]], replacements.pop(0))
 
         async def no_sleep(delay: float) -> None:
             return None
@@ -330,8 +330,8 @@ class TestClientRecovery:
                 client_factory=client_factory,
                 monotonic=clock,
             )
-        store._client = first_client  # type: ignore[assignment]
-        store._db = first_client["test_db"]  # type: ignore[assignment]
+        store._client = cast(AsyncMongoClient[dict[str, Any]], first_client)
+        store._db = cast(Any, first_client["test_db"])
         return store, factory_urls
 
     @pytest.mark.asyncio
@@ -429,6 +429,49 @@ class TestClientRecovery:
         assert factory_urls == []
         assert first.ping_calls == 2
 
-    def test_rejects_negative_cooldown(self) -> None:
+    @pytest.mark.parametrize("cooldown", [-1.0, 0.0, float("nan")])
+    def test_rejects_non_positive_cooldown(self, cooldown: float) -> None:
         with pytest.raises(ValueError, match="recovery_cooldown_seconds"):
-            PingRetryPolicy(recovery_cooldown_seconds=-1.0)
+            PingRetryPolicy(recovery_cooldown_seconds=cooldown)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("elapsed", "still_cooling_down"),
+        [(29.9, True), (30.0, False), (30.1, False)],
+    )
+    async def test_cooldown_boundary(
+        self, elapsed: float, still_cooling_down: bool
+    ) -> None:
+        clock = _Clock()
+        first, second = _FakeClient(ping_failures=99), _FakeClient()
+        store, factory_urls = self._make_store(
+            first_client=first, replacements=[second], clock=clock
+        )
+
+        with pytest.raises(StoreSetupError):
+            await store.setup()
+        clock.now += elapsed
+        if still_cooling_down:
+            with pytest.raises(StoreSetupError, match="try again in"):
+                await store.setup()
+            assert factory_urls == []
+        else:
+            await store.setup()
+            assert len(factory_urls) == 1
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_share_one_attempt(self) -> None:
+        clock = _Clock()
+        first, second = _FakeClient(ping_failures=99), _FakeClient()
+        store, factory_urls = self._make_store(
+            first_client=first, replacements=[second], clock=clock
+        )
+
+        results = await asyncio.gather(
+            store.setup(), store.setup(), return_exceptions=True
+        )
+
+        assert all(isinstance(result, StoreSetupError) for result in results)
+        assert first.ping_calls == 1
+        assert factory_urls == []
