@@ -26,11 +26,14 @@ class PingRetryPolicy:
     """Bounds for retrying the connectivity ping on open.
 
     Worst-case time before giving up is roughly
-    ``max_attempts * ping_timeout_seconds`` plus the backoff delays.
+    ``max_attempts * ping_timeout_seconds`` plus the backoff delays. The
+    defaults keep that at or above pymongo's 30 s default server-selection
+    window, so a MongoDB that becomes reachable late is still waited out as
+    it was before retries existed.
     """
 
     max_attempts: int = 4
-    ping_timeout_seconds: float = 3.0
+    ping_timeout_seconds: float = 10.0
     base_delay_seconds: float = 0.5
     max_delay_seconds: float = 4.0
 

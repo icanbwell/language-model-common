@@ -197,6 +197,14 @@ class TestPingRetryPolicy:
         assert all(0.0 <= delay <= ceiling for delay in delays)
         assert len(set(delays)) > 1
 
+    def test_default_budget_covers_pymongo_server_selection_window(self) -> None:
+        pymongo_default_server_selection_seconds = 30.0
+        policy = PingRetryPolicy()
+
+        total_ping_budget = policy.max_attempts * policy.ping_timeout_seconds
+
+        assert total_ping_budget >= pymongo_default_server_selection_seconds
+
     def test_rejects_zero_attempts(self) -> None:
         with pytest.raises(ValueError, match="max_attempts"):
             PingRetryPolicy(max_attempts=0)

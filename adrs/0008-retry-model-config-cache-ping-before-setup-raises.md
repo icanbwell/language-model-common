@@ -58,8 +58,12 @@ Works but converts a blip into pod churn and a failed deploy.
 ## Decision Outcome
 
 Option A. `PingRetryPolicy` (frozen dataclass) bounds the retry: 4 attempts,
-3 s per ping, exponential backoff from 0.5 s capped at 4 s, full jitter.
-Worst case before giving up is about 15 s. Only `pymongo.errors.ConnectionFailure`
+10 s per ping, exponential backoff from 0.5 s capped at 4 s, full jitter.
+Worst case before giving up is about 43 s. That total must stay at or above
+pymongo's default 30 s server-selection window (the URL sets no
+`serverSelectionTimeoutMS`): before this change a single ping blocked in
+server selection for up to 30 s, so a shorter total would turn a MongoDB that
+comes up 15-30 s after start from a recovery into a permanent failure. Only `pymongo.errors.ConnectionFailure`
 (which includes `AutoReconnect` and `ServerSelectionTimeoutError`) and
 timeouts are retried; authentication and other operation errors still fail on
 the first attempt.
