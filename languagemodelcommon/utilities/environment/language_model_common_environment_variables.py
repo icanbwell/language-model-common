@@ -175,6 +175,37 @@ class LanguageModelCommonEnvironmentVariables(
         return int(os.environ.get("MODEL_CONFIG_CACHE_TTL_SECONDS", "3600"))
 
     @property
+    def model_config_override_cache_enabled(self) -> bool:
+        """Cache per-client config overrides in the shared store (BAI-1380).
+
+        Off by default; off means every request reads the override live.
+        """
+        return self.str2bool(
+            os.environ.get("MODEL_CONFIG_OVERRIDE_CACHE_ENABLED", "false")
+        )
+
+    @property
+    def model_config_override_cache_soft_ttl_seconds(self) -> int:
+        """Age after which a cached override is served stale and refreshed."""
+        return int(
+            os.environ.get("MODEL_CONFIG_OVERRIDE_CACHE_SOFT_TTL_SECONDS", "900")
+        )
+
+    @property
+    def model_config_override_cache_negative_ttl_seconds(self) -> int:
+        """TTL of a cached "client has no override" row."""
+        return int(
+            os.environ.get("MODEL_CONFIG_OVERRIDE_CACHE_NEGATIVE_TTL_SECONDS", "300")
+        )
+
+    @property
+    def model_config_override_cache_hard_ttl_seconds(self) -> int:
+        """Store TTL of an override row: the ceiling for serving stale data."""
+        return int(
+            os.environ.get("MODEL_CONFIG_OVERRIDE_CACHE_HARD_TTL_SECONDS", "86400")
+        )
+
+    @property
     def mcp_tool_cache_db_name(self) -> str:
         """MongoDB database name for MCP tool list cache.
 

@@ -9,6 +9,9 @@ from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
 from languagemodelcommon.configs.config_reader.mcp_json_fetcher import McpJsonFetcher
+from languagemodelcommon.configs.config_reader.override_config_cache import (
+    ClientOverrideConfigCache,
+)
 from languagemodelcommon.github.token_provider import (
     GitHubAppTokenProvider,
     GitHubTokenProvider,
@@ -203,6 +206,19 @@ class LanguageModelCommonContainerFactory:
             ),
         )
         container.singleton(
+            service_type=ClientOverrideConfigCache,
+            factory=lambda c: ClientOverrideConfigCache(
+                store=c.resolve(KeyValueBaseStore),
+                collection=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ).model_config_cache_collection_name,
+                schema_version=ConfigReader.SCHEMA_VERSION,
+                environment_variables=c.resolve(
+                    LanguageModelCommonEnvironmentVariables
+                ),
+            ),
+        )
+        container.singleton(
             service_type=ConfigReader,
             factory=lambda c: ConfigReader(
                 prompt_library_manager=c.resolve(PromptLibraryManager),
@@ -212,6 +228,7 @@ class LanguageModelCommonContainerFactory:
                 mcp_json_fetcher=c.resolve(McpJsonFetcher),
                 github_directory_helper=c.resolve(GitHubDirectoryHelper),
                 model_config_cache_store=c.resolve(KeyValueBaseStore),
+                override_config_cache=c.resolve(ClientOverrideConfigCache),
             ),
         )
         container.singleton(

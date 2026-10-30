@@ -136,7 +136,9 @@ async def test_resolve_github_path_github_uri(tmp_path: Path) -> None:
 
     assert result == tmp_path
     mock_download.assert_called_once_with(
-        "github://org/repo/configs?ref=main", log_diagnostics_on_not_found=True
+        "github://org/repo/configs?ref=main",
+        log_diagnostics_on_not_found=True,
+        raise_on_lock_held=False,
     )
 
 
@@ -155,7 +157,9 @@ async def test_resolve_github_path_https_url(tmp_path: Path) -> None:
 
     assert result == tmp_path
     mock_download.assert_called_once_with(
-        "github://owner/repo/configs?ref=main", log_diagnostics_on_not_found=True
+        "github://owner/repo/configs?ref=main",
+        log_diagnostics_on_not_found=True,
+        raise_on_lock_held=False,
     )
 
 
@@ -192,7 +196,9 @@ async def test_read_models_from_github_uri(tmp_path: Path, monkeypatch: Any) -> 
     assert len(models) == 1
     assert models[0].name == "Model One"
     mock_helper.resolve_github_path.assert_called_once_with(
-        "github://org/repo/configs?ref=main", log_diagnostics_on_not_found=True
+        "github://org/repo/configs?ref=main",
+        log_diagnostics_on_not_found=True,
+        raise_on_lock_held=False,
     )
 
 
@@ -227,6 +233,7 @@ async def test_read_models_from_https_github_url(
     mock_helper.resolve_github_path.assert_called_once_with(
         "https://github.com/owner/repo/tree/main/configs",
         log_diagnostics_on_not_found=True,
+        raise_on_lock_held=False,
     )
 
 

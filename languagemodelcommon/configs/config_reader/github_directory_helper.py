@@ -8,12 +8,14 @@ All GitHub access uses the fsspec-based ``github://`` URI scheme.
 ``https://github.com/`` URLs are converted to ``github://`` before download.
 """
 
+import asyncio
 import logging
 import os
 import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+import httpx
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
 from languagemodelcommon.github.token_provider import GitHubTokenProvider
@@ -49,6 +51,13 @@ class GitHubDirectoryHelper:
         self._environment_variables = environment_variables
         self._store = store
         self._token_provider = token_provider
+        # In-flight downloads by (uri, flags): concurrent same-process callers
+        # share one download. Holds tasks only, removed on completion; not a
+        # cache of data. Lives here (a long-lived singleton) because a new
+        # GithubDirectoryDownloader is built per call.
+        self._inflight_downloads: dict[
+            tuple[str, bool, bool], asyncio.Task[Path | None]
+        ] = {}
 
     # ------------------------------------------------------------------
     # Pure / static helpers — no env vars or instance state needed
@@ -132,7 +141,11 @@ class GitHubDirectoryHelper:
     # ------------------------------------------------------------------
 
     async def resolve_github_path(
-        self, path: str, *, log_diagnostics_on_not_found: bool = True
+        self,
+        path: str,
+        *,
+        log_diagnostics_on_not_found: bool = True,
+        raise_on_lock_held: bool = False,
     ) -> Path | None:
         """Resolve a GitHub path to a local directory.
 
@@ -145,25 +158,66 @@ class GitHubDirectoryHelper:
         FileNotFoundError doesn't trigger the diagnostic re-probe/ERROR log
         meant for genuine failures.
 
+        ``raise_on_lock_held`` (BAI-1380): raise ``DownloadLockHeldError`` when
+        another worker holds the download lock, instead of returning None or a
+        possibly stale on-disk copy.
+
         Returns None if another worker holds the download lock.
         """
         if self.is_github_path(path):
             return await self.download_github_directory(
                 self.to_github_uri(path),
                 log_diagnostics_on_not_found=log_diagnostics_on_not_found,
+                raise_on_lock_held=raise_on_lock_held,
             )
         return Path(path)
 
     async def download_github_directory(
-        self, github_uri: str, *, log_diagnostics_on_not_found: bool = True
+        self,
+        github_uri: str,
+        *,
+        log_diagnostics_on_not_found: bool = True,
+        raise_on_lock_held: bool = False,
     ) -> Path | None:
         """Download a ``github://`` URI to a local cache directory using fsspec.
 
         The cache directory defaults to ``{tempdir}/github_config_cache`` and can
         be overridden with ``GITHUB_CONFIG_CACHE_DIR``.
 
+        Concurrent calls in this process for the same URI share one download.
+
         Returns None if another worker holds the download lock.
         """
+        key = (github_uri, log_diagnostics_on_not_found, raise_on_lock_held)
+        task = self._inflight_downloads.get(key)
+        if task is None:
+            task = asyncio.ensure_future(
+                self._download_once(
+                    github_uri=github_uri,
+                    log_diagnostics_on_not_found=log_diagnostics_on_not_found,
+                    raise_on_lock_held=raise_on_lock_held,
+                )
+            )
+            self._inflight_downloads[key] = task
+            task.add_done_callback(lambda _t: self._inflight_downloads.pop(key, None))
+        # shield: one cancelled caller must not cancel the shared download.
+        return await asyncio.shield(task)
+
+    async def _resolve_github_token(self) -> str | None:
+        env = self._environment_variables
+        if self._token_provider is not None:
+            return await self._token_provider.get_token()
+        if env:
+            return env.github_token
+        return os.environ.get("GITHUB_TOKEN")
+
+    async def _download_once(
+        self,
+        *,
+        github_uri: str,
+        log_diagnostics_on_not_found: bool,
+        raise_on_lock_held: bool,
+    ) -> Path | None:
         from languagemodelcommon.configs.config_reader.github_directory_downloader import (
             GithubDirectoryDownloader,
         )
@@ -179,21 +233,61 @@ class GitHubDirectoryHelper:
         )
 
         cache_dir.mkdir(parents=True, exist_ok=True)
-
-        github_token: str | None = None
-        if self._token_provider is not None:
-            github_token = await self._token_provider.get_token()
-        elif env:
-            github_token = env.github_token
-        else:
-            github_token = os.environ.get("GITHUB_TOKEN")
+        github_token = await self._resolve_github_token()
 
         downloader = GithubDirectoryDownloader()
-        result = await downloader.download(
+        return await downloader.download(
             source_uri=github_uri,
             github_token=github_token,
             cache_path=cache_dir,
             store=self._store,
             log_diagnostics_on_not_found=log_diagnostics_on_not_found,
+            raise_on_lock_held=raise_on_lock_held,
         )
-        return result
+
+    async def confirm_directory_absent(self, *, github_uri: str) -> bool:
+        """Return True only if GitHub positively shows the directory is missing.
+
+        fsspec raises a bare ``FileNotFoundError`` for any non-2xx reply (bad
+        token, rate limit, private repo), so that exception alone does not prove
+        absence. This lists the parent directory with a status-checked request:
+        200 with a listing that lacks the name is real absence. Anything else
+        (non-200, error, truncated listing) returns False (unconfirmed).
+        """
+        from languagemodelcommon.configs.config_reader.github_directory_downloader import (
+            GithubDirectoryDownloader,
+        )
+
+        location = GithubDirectoryDownloader.parse_github_uri(github_uri)
+        path = location.path.strip("/")
+        parent, _, name = path.rpartition("/")
+        if not name:
+            return False
+        token = await self._resolve_github_token()
+        url = (
+            f"https://api.github.com/repos/{location.owner}/{location.repository}"
+            f"/contents/{parent}"
+        ).rstrip("/")
+        params = {"ref": location.branch} if location.branch else None
+        auth = (
+            (GithubDirectoryDownloader._github_token_username, token) if token else None
+        )
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(url, params=params, auth=auth)
+            if response.status_code != 200:
+                return False
+            entries = response.json()
+        except Exception as e:
+            logger.warning(
+                "Could not confirm absence of %s: [%s] %s",
+                github_uri,
+                type(e).__name__,
+                e,
+            )
+            return False
+        # The contents API truncates at 1000 entries; a truncated listing
+        # cannot prove absence.
+        if not isinstance(entries, list) or len(entries) >= 1000:
+            return False
+        return all(entry.get("name") != name for entry in entries)
