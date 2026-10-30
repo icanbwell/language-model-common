@@ -47,6 +47,8 @@ the first failure.
 
 ### Option C: Recreate the Mongo client when the store finds it closed
 
+_Implemented as a follow-up in BAI-1374; see ADR 0009._
+
 Recovers even after an outage longer than the retry budget. Needs to touch
 private state of `MongoDBStore` and coordinate with the base class's setup
 state, which is a larger and more fragile change.
@@ -72,7 +74,7 @@ the first attempt.
 
 * **Outage longer than the budget:** the store is still closed after the final
   failure, as before this change, so that process stays without model configs.
-  Option C is the follow-up if that proves common.
+  Option C is the follow-up (BAI-1374, ADR 0009).
 * **Slower startup when Mongo is down:** bounded by the policy above; logged at
   WARNING per retry with the exception type only.
 
