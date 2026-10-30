@@ -44,7 +44,12 @@ falls back to the SDK's own method whenever the cache cannot answer.
 
 * Good: only public API (`validate_tool_result`), documented in the SDK, same
   signature in 2.2 and 2.3.
-* Good: works for pooled sessions, one-shot sessions and `Client`-created ones.
+* Good: works for one-shot sessions, including `Client`-created ones. Pooled
+  sessions are deliberately not overridden: the SDK already keeps their schema
+  map in memory after the first list, so an override would add two store reads
+  per call for no saving.
+* Good: a cached "no schema" entry is re-checked once against a fresh listing
+  when the result carries structured content, bounding the staleness risk.
 * Good: the fallback is the unmodified SDK method, so cache miss, cache error
   and untrusted ad-hoc servers behave exactly as today.
 * Bad: re-implements the jsonschema check (about 25 lines), so it can drift from

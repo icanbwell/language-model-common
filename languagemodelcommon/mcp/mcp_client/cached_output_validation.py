@@ -198,6 +198,20 @@ class CachedOutputSchemaValidator:
             await self._fallback(name, result)
             return
         if schema.output_schema is None:
+            if result.structured_content is None:
+                return
+            # Cached "no schema" but the server now returns structured content:
+            # the entry may be stale, so re-check once against a fresh listing.
+            fresh = await self._source.refresh(session=self._session, tool_name=name)
+            if fresh is None:
+                await self._fallback(name, result)
+                return
+            if fresh.output_schema is not None:
+                check_structured_content(
+                    tool_name=name,
+                    output_schema=fresh.output_schema,
+                    result=result,
+                )
             return
         try:
             check_structured_content(

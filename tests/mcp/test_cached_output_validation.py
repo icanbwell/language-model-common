@@ -307,6 +307,22 @@ SCENARIOS = [
         flag_on_list_calls=1,
     ),
     Scenario(
+        id="stale-cached-no-schema-server-now-has-schema-refetch-passes",
+        cached=[_tool(output_schema=None)],
+        served=[_tool(output_schema=OBJ_SCHEMA)],
+        structured={"count": 1},
+        expected_error=None,
+        flag_on_list_calls=1,
+    ),
+    Scenario(
+        id="stale-cached-no-schema-server-now-has-schema-refetch-fails",
+        cached=[_tool(output_schema=None)],
+        served=[_tool(output_schema=OBJ_SCHEMA)],
+        structured={"count": "x"},
+        expected_error="Invalid structured content returned by tool get_data",
+        flag_on_list_calls=1,
+    ),
+    Scenario(
         id="cache-miss-falls-back-to-sdk-and-validates",
         cached=None,
         served=[_tool(output_schema=OBJ_SCHEMA)],
@@ -385,7 +401,8 @@ class TestFlagOnMatchesTheSdk:
         expect_failure = scenario.expected_error is not None
         assert failed == {False: expect_failure, True: expect_failure}
         assert list_calls[False] == 1  # today: one lookup per fresh session
-        assert list_calls[True] == scenario.flag_on_list_calls
+        # Pooled sessions are left to the SDK's own per-session schema map.
+        assert list_calls[True] == (1 if pooled else scenario.flag_on_list_calls)
 
     @pytest.mark.parametrize(
         "scenario",
@@ -432,7 +449,7 @@ class TestCacheMaintenance:
         assert refreshed is not None
         assert refreshed[0].output_schema == CHANGED_SCHEMA
 
-    async def test_pooled_session_pays_no_list_tools_across_many_calls(self) -> None:
+    async def test_pooled_session_lists_tools_once_across_many_calls_as_the_sdk_does(self) -> None:
         harness = await _harness(
             served=[_tool(output_schema=OBJ_SCHEMA)],
             cached=[_tool(output_schema=OBJ_SCHEMA)],
@@ -452,7 +469,7 @@ class TestCacheMaintenance:
             )
 
         assert harness.server.call_calls == 3
-        assert harness.server.list_calls == 0
+        assert harness.server.list_calls == 1
 
     async def test_cache_entry_is_looked_up_by_the_called_server_url_only(
         self,

@@ -394,12 +394,8 @@ def _make_execute_tool(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
-                _validate_output_from_tool_list_cache(
-                    session=session,
-                    enabled=validate_output_from_tool_list_cache,
-                    tool_list_cache=tool_list_cache,
-                    cache_key=cache_key,
-                )
+                # Pooled sessions keep the SDK's own per-session schema map
+                # (one list per session), so they are not overridden here.
                 if await _tool_supports_tasks(
                     session=session,
                     tool_name=request.name,
