@@ -412,6 +412,17 @@ class LanguageModelCommonEnvironmentVariables(
             return McpProtocolNegotiationMode.LEGACY
 
     @property
+    def mcp_validate_tool_output_from_cache(self) -> bool:
+        """When True, MCP tool results are validated against the output schema
+        in the shared tool-list cache instead of the SDK issuing a downstream
+        ``tools/list`` per fresh session (BAI-1388). Default False. Callers
+        pass this to ``mcp_tool_to_langchain_tool`` / ``call_mcp_tool_raw`` as
+        ``validate_output_from_tool_list_cache``."""
+        return self.str2bool(
+            os.environ.get("MCP_VALIDATE_TOOL_OUTPUT_FROM_CACHE", "false")
+        )
+
+    @property
     def emit_tool_heartbeat_in_chat_completions(self) -> bool:
         """When True, synthetic MCP tool heartbeats are emitted as content
         deltas in the Chat Completions streaming format. Separate from

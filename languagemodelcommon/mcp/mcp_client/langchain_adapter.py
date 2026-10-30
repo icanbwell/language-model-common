@@ -132,6 +132,7 @@ def mcp_tool_to_langchain_tool(
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
     negotiation_mode: McpProtocolNegotiationMode | None = None,
+    validate_output_from_tool_list_cache: bool = False,
 ) -> BaseTool:
     """Convert an MCP Tool to a LangChain BaseTool.
 
@@ -144,6 +145,10 @@ def mcp_tool_to_langchain_tool(
     ``negotiation_mode`` selects the handshake when no ``session_pool`` is
     given (default ``legacy``); pooled sessions use the pool's own mode and a
     conflicting value raises ``ValueError``.
+
+    ``validate_output_from_tool_list_cache`` (default off): validate results
+    from ``tool_list_cache`` instead of a per-session downstream ``tools/list``
+    (BAI-1388).
     """
 
     mcp_callbacks = (
@@ -160,6 +165,7 @@ def mcp_tool_to_langchain_tool(
         tool_list_cache=tool_list_cache,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
         negotiation_mode=negotiation_mode,
+        validate_output_from_tool_list_cache=validate_output_from_tool_list_cache,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors

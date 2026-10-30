@@ -16,6 +16,10 @@ from languagemodelcommon.mcp.interceptors.types import (
     MCPToolCallResult,
     ToolCallInterceptor,
 )
+from languagemodelcommon.mcp.mcp_client.cached_output_validation import (
+    ToolListCacheSchemaSource,
+    install_cached_output_validation,
+)
 from languagemodelcommon.mcp.mcp_client.negotiation_mode import (
     McpProtocolNegotiationMode,
 )
@@ -300,6 +304,24 @@ async def _execute_tool_call_with_heartbeat(
                 await call_task
 
 
+def _validate_output_from_tool_list_cache(
+    *,
+    session: Any,
+    enabled: bool,
+    tool_list_cache: ToolListCache | None,
+    cache_key: str,
+) -> None:
+    """Make ``session`` validate results from the shared tool-list cache
+    instead of issuing a downstream ``tools/list`` (BAI-1388). No-op when the
+    flag is off or there is no cache, leaving the SDK behavior untouched."""
+    if not enabled or tool_list_cache is None:
+        return
+    install_cached_output_validation(
+        session=session,
+        source=ToolListCacheSchemaSource(cache=tool_list_cache, cache_key=cache_key),
+    )
+
+
 def _make_execute_tool(
     *,
     config: MCPConnectionConfig,
@@ -308,6 +330,7 @@ def _make_execute_tool(
     tool_list_cache: ToolListCache | None = None,
     heartbeat_interval_seconds: float = 15.0,
     negotiation_mode: McpProtocolNegotiationMode | None = None,
+    validate_output_from_tool_list_cache: bool = False,
 ) -> Callable[[MCPToolCallRequest], Awaitable[MCPToolCallResult]]:
     """Create an execute_tool handler that opens a session and calls the tool.
 
@@ -328,6 +351,11 @@ def _make_execute_tool(
     sessions use the pool's own mode, so a ``negotiation_mode`` that
     conflicts with ``session_pool.negotiation_mode`` raises ``ValueError``
     here rather than being silently ignored.
+
+    ``validate_output_from_tool_list_cache`` (default off) makes the session
+    validate each result against the output schema in ``tool_list_cache``
+    rather than letting the SDK issue a ``tools/list`` per fresh session; see
+    ``cached_output_validation``. A cache miss falls back to the SDK.
     """
     if (
         session_pool is not None
@@ -366,6 +394,12 @@ def _make_execute_tool(
                 effective_config, mcp_callbacks=mcp_callbacks
             )
             try:
+                _validate_output_from_tool_list_cache(
+                    session=session,
+                    enabled=validate_output_from_tool_list_cache,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
+                )
                 if await _tool_supports_tasks(
                     session=session,
                     tool_name=request.name,
@@ -416,6 +450,12 @@ def _make_execute_tool(
         try:
             result: CallToolResult | InputRequiredResult
             try:
+                _validate_output_from_tool_list_cache(
+                    session=session,
+                    enabled=validate_output_from_tool_list_cache,
+                    tool_list_cache=tool_list_cache,
+                    cache_key=cache_key,
+                )
                 if await _tool_supports_tasks(
                     session=session,
                     tool_name=request.name,
@@ -493,6 +533,7 @@ async def call_mcp_tool_raw(
     request_state: str | None = None,
     allow_input_required: bool = False,
     negotiation_mode: McpProtocolNegotiationMode | None = None,
+    validate_output_from_tool_list_cache: bool = False,
 ) -> MCPToolCallResult:
     """Call an MCP tool and return the raw CallToolResult (or, for a
     guard-tool-gated tool, an InputRequiredResult).
@@ -514,6 +555,9 @@ async def call_mcp_tool_raw(
     sessions use the pool's own mode
     (``McpSessionPool(negotiation_mode=...)``); a conflicting value raises
     ``ValueError``.
+
+    ``validate_output_from_tool_list_cache`` is described on
+    ``_make_execute_tool``.
     """
     mcp_callbacks = (
         callbacks.to_mcp_format(
@@ -530,6 +574,7 @@ async def call_mcp_tool_raw(
         tool_list_cache=tool_list_cache,
         heartbeat_interval_seconds=heartbeat_interval_seconds,
         negotiation_mode=negotiation_mode,
+        validate_output_from_tool_list_cache=validate_output_from_tool_list_cache,
     )
     handler = build_interceptor_chain(
         base_handler=execute_tool, tool_interceptors=tool_interceptors
