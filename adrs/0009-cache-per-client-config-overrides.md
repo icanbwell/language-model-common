@@ -179,6 +179,7 @@ cleared by `/reload`.
 | Negative TTL `..._NEGATIVE_TTL_SECONDS` | 300 s |
 | Hard TTL `..._HARD_TTL_SECONDS` | 86400 s |
 | Unresolved-MCP soft TTL / failed-refresh back-off / peer wait | 60 s / 15 s / up to 3 s |
+| Cold-miss wait bound (own refresh, uncontended) | 180 s, then base config for that request (constant `_COLD_MISS_TIMEOUT_SECONDS`) |
 | Cache-key client id cap | 64 chars, cache only |
 | Cache store error | log and fall back to the live read (the override cache is an optimisation layer; the base cache still fails fast) |
 | Per-client invalidation | `ConfigReader.clear_client_override`; no baileyai `/reload <client>` target yet |

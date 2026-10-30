@@ -229,6 +229,39 @@ async def test_cold_miss_times_out_and_serves_base_config(
         task.cancel()
 
 
+@pytest.mark.parametrize("length, cached", [(63, True), (64, True), (65, False)])
+async def test_client_id_length_cap_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, length: int, cached: bool
+) -> None:
+    monkeypatch.setenv("MODEL_CONFIG_OVERRIDE_CACHE_ENABLED", "true")
+    harness = Harness(tmp_path=tmp_path, enabled=True)
+    client_id = "a" * length
+    harness.add_client(client_id, "override-x")
+
+    result = await harness.read(client_id)
+    await harness.settle()
+
+    assert [m.description for m in result] == ["override-x"]
+    assert (await harness.row(client_id) is not None) is cached
+
+
+async def test_local_config_path_is_read_live_and_never_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MODEL_CONFIG_OVERRIDE_CACHE_ENABLED", "true")
+    harness = Harness(tmp_path=tmp_path, enabled=True)
+    local_root = tmp_path / "local" / "clients"
+    _write_override(root=local_root, client_id="client-a", description="local-a")
+
+    result = await harness.reader._read_override_models_async(
+        config_path=str(tmp_path / "local"), client_id="client-a"
+    )
+
+    assert [m.description for m in result] == ["local-a"]
+    assert harness.github.calls == 0
+    assert await harness.row("client-a") is None
+
+
 async def test_flag_off_does_not_confirm_absence_or_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
