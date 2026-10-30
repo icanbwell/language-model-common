@@ -8,12 +8,15 @@ and raises ``ConnectionError`` if it is still unreachable.
 
 import asyncio
 import logging
+import math
 import random
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from key_value.aio.stores.mongodb import MongoDBStore
+from pymongo import AsyncMongoClient
 from pymongo.errors import ConnectionFailure
 
 from languagemodelcommon.utilities.mongo_url_utils import MongoUrlHelpers
@@ -23,19 +26,33 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PingRetryPolicy:
-    """Bounds for retrying the connectivity ping on open.
+    """Bounds for retrying the connectivity ping on open, and for recovering
+    after the retries are exhausted.
 
     Worst-case time before giving up is roughly
     ``max_attempts * ping_timeout_seconds`` plus the backoff delays. The
     defaults keep that at or above pymongo's 30 s default server-selection
     window, so a MongoDB that becomes reachable late is still waited out as
     it was before retries existed.
+
+    After the retries are exhausted the store builds a fresh client for its
+    next setup, but not sooner than ``recovery_cooldown_seconds`` after the
+    failure, so a MongoDB that is still down does not make every caller wait
+    out the full retry budget. That next attempt is a single probe ping with
+    ``recovery_ping_timeout_seconds``, not the full retry budget, because the
+    store's setup lock is held while it runs and every caller queues behind
+    it. The cooldown must be positive: the base store
+    closes a failed store after releasing its setup lock, and a positive
+    cooldown keeps a queued caller from rebuilding the client while that close
+    is still running.
     """
 
     max_attempts: int = 4
     ping_timeout_seconds: float = 10.0
     base_delay_seconds: float = 0.5
     max_delay_seconds: float = 4.0
+    recovery_cooldown_seconds: float = 30.0
+    recovery_ping_timeout_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -46,6 +63,10 @@ class PingRetryPolicy:
             raise ValueError("base_delay_seconds must not be negative")
         if self.max_delay_seconds < self.base_delay_seconds:
             raise ValueError("max_delay_seconds must be at least base_delay_seconds")
+        if not self.recovery_cooldown_seconds > 0:
+            raise ValueError("recovery_cooldown_seconds must be greater than 0")
+        if not self.recovery_ping_timeout_seconds > 0:
+            raise ValueError("recovery_ping_timeout_seconds must be greater than 0")
 
     def backoff_delay(self, *, attempt: int) -> float:
         """Exponential backoff with full jitter for the 1-based ``attempt``."""
@@ -69,11 +90,21 @@ class ValidatingMongoDBStore(MongoDBStore):
     later call fails with ``Cannot use AsyncMongoClient after close``. The
     retry must therefore happen before ``_setup`` raises.
 
+    If the retries are exhausted anyway, the closed client would keep the
+    store unusable for the life of the process. So the next setup, once the
+    policy's cooldown has passed, replaces the closed client with a new one.
+    A store given its own ``client``, or built without a ``url``, is not
+    rebuilt: the former belongs to the caller, the latter has nothing to
+    rebuild from. ``create_cache_store`` always passes a URL.
+
     Args (beyond those of ``MongoDBStore``):
-        ping_retry_policy: Bounds for retrying the open-time ping. Defaults
-            to ``PingRetryPolicy()``.
+        ping_retry_policy: Bounds for retrying the open-time ping and for
+            recovery after it fails. Defaults to ``PingRetryPolicy()``.
         sleep: Awaitable used to wait between retries. Injectable so tests
             do not wait in real time.
+        client_factory: Builds the replacement client from the store's URL.
+            Injectable for tests.
+        monotonic: Clock used for the recovery cooldown. Injectable for tests.
     """
 
     def __init__(
@@ -81,21 +112,66 @@ class ValidatingMongoDBStore(MongoDBStore):
         *,
         ping_retry_policy: PingRetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        client_factory: Callable[[str], AsyncMongoClient[dict[str, Any]]] = (
+            AsyncMongoClient
+        ),
+        monotonic: Callable[[], float] = time.monotonic,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._ping_retry_policy = ping_retry_policy or PingRetryPolicy()
         self._sleep = sleep
+        self._client_factory = client_factory
+        self._monotonic = monotonic
+        self._mongo_url: str | None = kwargs.get("url")
+        self._last_setup_failure_at: float | None = None
+        self._probing = False
+
+    def _recover_client_after_failed_setup(self) -> None:
+        """Replace the client that a failed setup left closed.
+
+        Called at the start of ``_setup``. Does nothing unless an earlier setup
+        failed. Within the cooldown it raises straight away instead of
+        pinging, so callers fail fast while MongoDB is still down.
+        """
+        if self._last_setup_failure_at is None:
+            return
+        cooldown = self._ping_retry_policy.recovery_cooldown_seconds
+        remaining = cooldown - (self._monotonic() - self._last_setup_failure_at)
+        if remaining > 0:
+            raise ConnectionError(
+                f"Model config cache could not connect to MongoDB "
+                f"(database: {self._db.name}) and will try again in "
+                f"{math.ceil(remaining)}s."
+            )
+        if self._client_provided_by_user or not self._mongo_url:
+            self._probing = True
+            return
+        db_name = self._db.name
+        self._client = self._client_factory(self._mongo_url)
+        self._db = self._client[db_name]
+        self._probing = True
+        logger.warning(
+            "Model config cache rebuilt its MongoDB client after a failed "
+            "setup (db=%s)",
+            db_name,
+        )
 
     async def _ping_with_retry(self) -> None:
         policy = self._ping_retry_policy
-        for attempt in range(1, policy.max_attempts + 1):
+        max_attempts = 1 if self._probing else policy.max_attempts
+        timeout = (
+            policy.recovery_ping_timeout_seconds
+            if self._probing
+            else policy.ping_timeout_seconds
+        )
+        for attempt in range(1, max_attempts + 1):
             try:
-                async with asyncio.timeout(policy.ping_timeout_seconds):
+                async with asyncio.timeout(timeout):
                     await self._db.command("ping")
                 return
             except (ConnectionFailure, TimeoutError) as e:
-                if attempt == policy.max_attempts:
+                if attempt == max_attempts:
                     raise
                 delay = policy.backoff_delay(attempt=attempt)
                 logger.warning(
@@ -104,21 +180,25 @@ class ValidatingMongoDBStore(MongoDBStore):
                     type(e).__name__,
                     delay,
                     attempt,
-                    policy.max_attempts,
+                    max_attempts,
                 )
                 await self._sleep(delay)
 
     async def _setup(self) -> None:
-        await super()._setup()
+        self._recover_client_after_failed_setup()
         try:
+            await super()._setup()
             await self._ping_with_retry()
         except Exception as e:
+            self._last_setup_failure_at = self._monotonic()
             raise ConnectionError(
                 f"Model config cache failed to connect to MongoDB "
                 f"(database: {self._db.name}). "
                 f"Verify MONGO_LLM_STORAGE_URI / MONGO_URL, credentials, "
                 f"and network access. Error: {e}"
             ) from e
+        finally:
+            self._probing = False
         logger.info(
             "Model config cache MongoDB connection validated (db=%s)",
             self._db.name,
