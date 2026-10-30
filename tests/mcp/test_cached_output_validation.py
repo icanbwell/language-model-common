@@ -449,7 +449,9 @@ class TestCacheMaintenance:
         assert refreshed is not None
         assert refreshed[0].output_schema == CHANGED_SCHEMA
 
-    async def test_pooled_session_lists_tools_once_across_many_calls_as_the_sdk_does(self) -> None:
+    async def test_pooled_session_lists_tools_once_across_many_calls_as_the_sdk_does(
+        self,
+    ) -> None:
         harness = await _harness(
             served=[_tool(output_schema=OBJ_SCHEMA)],
             cached=[_tool(output_schema=OBJ_SCHEMA)],
