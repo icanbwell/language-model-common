@@ -1,6 +1,6 @@
 # Cache per-client config overrides in the shared model-config store
 
-* Status: proposed
+* Status: proposed (a human accepts it; the cache ships behind a flag, default off)
 * Deciders: language-model-common maintainers, baileyai maintainers
 * Ticket: BAI-1380 (this design); source analysis is Finding 1 of baileyai PR #603 (`docs/latency-analysis.md`)
 * Date: 2026-10-30
@@ -44,8 +44,13 @@ is also a security boundary (`config_reader.py:517-576`, `docs/config-reader-sec
   must store `model_dump(exclude_unset=True)` so the set-fields are preserved.
 * `_read_override_models_async` collapses four different outcomes into `[]`: no override directory
   (`FileNotFoundError`), download failure (`ValueError`/other exception), a malformed override, and
-  "download lock held by another worker" (`resolved is None`, `:367-373`). Only the first is safe to
-  cache as "no override".
+  "download lock held by another worker" (`resolved is None`, `:367-373`; and `download` also returns a
+  pod-local, possibly stale on-disk copy when the lock is held, `:104-113`). Only a confirmed missing
+  directory is safe to cache as "no override".
+* fsspec raises a bare `FileNotFoundError` for any non-2xx GitHub reply (bad token, rate limit, private
+  repo), so the exception alone does not prove the override is absent. Absence is confirmed with a
+  status-checked listing of the parent directory (`GitHubDirectoryHelper.confirm_directory_absent`)
+  before `ABSENT` is written; an unconfirmed 404 is `FAILED` and never replaces a `FOUND` row.
 * `/reload` in baileyai calls `ConfigReader.clear_cache` (`:739`), which deletes every key with
   prefix `v1:`.
 
@@ -92,10 +97,13 @@ where config lives, out of scope for a latency fix.
 * Hit past soft TTL (but entry still in store): return the cached override immediately, and schedule
   one background refresh guarded by `AdvisoryLock`. A failed refresh keeps the stale entry.
 * Miss: refresh inline, guarded by `AdvisoryLock`. If another worker holds the lock, poll the cache
-  briefly and then fetch directly (duplicate fetch is idempotent). A lock-held outcome is never
-  written as "no override".
-* Failure (`ValueError`, timeout, malformed override): never cached as "absent". Serve stale if
-  present, else behave as today (return no override and log a warning).
+  (up to 3 s) and return as soon as its row appears; on timeout return no override for this request,
+  uncached (there is no "fetch directly" bypass: the downloader has its own lock). Every lock-held
+  return, including the on-disk fallback, is reported as lock-held (`raise_on_lock_held`) and is never
+  written as "no override" or as fresh data.
+* Failure (`ValueError`, timeout, malformed override, unconfirmed 404): never cached as "absent". Serve
+  stale if present (and defer the next attempt by 15 s), else behave as today (return no override and
+  log a warning).
 
 **Key and value.** Same collection as the base cache (`model_config_cache_collection_name`). One row
 per (config ref, client): key `v{SCHEMA_VERSION}:ovr:{ref_hash}:{client_id}`. `ovr` is not a 12-hex
@@ -110,8 +118,10 @@ path. Value:
 
 **Tenant isolation.**
 
-* The key is built only after `_is_valid_client_id` (allowlist `^[a-zA-Z0-9_-]+$`) passes, plus a
-  maximum length (new, see Size). An invalid id never reaches the cache or GitHub, same as today.
+* The key is built only after `_is_valid_client_id` (allowlist `^[a-zA-Z0-9_-]+$`, unchanged) passes,
+  and only for ids that also pass `_is_cacheable_client_id` (strict full match, at most 64 chars). An
+  invalid id never reaches the cache or GitHub, same as today; a valid but over-long id is read live and
+  never cached, so flag-off and flag-on behaviour match for it.
 * The key embeds `ref_hash` (hash of the config path including `?ref=`), so a pod pointed at a
   different ref never reads another ref's rows (same rule as BAI-720 for base rows).
 * Reads are point `get` by exact key (no regex), and the stored `client_id` is compared with the
@@ -128,8 +138,8 @@ directory listing (one call per ref) used to answer "no override" without writin
 
 **TTL.** Three env-configurable values (new properties on
 `LanguageModelCommonEnvironmentVariables`): positive soft TTL 900 s, negative soft TTL 300 s, hard TTL
-(store TTL, upper bound for serving stale) 86400 s. Defaults are proposals pending Imran's decision
-(see Open Questions).
+(store TTL, upper bound for serving stale) 86400 s. Defaults were chosen by the implementer on Imran's instruction to use the proposed values; a
+reviewer can change any of them (environment variables only, no code change).
 
 **Eviction.** Store-level TTL (`put(..., ttl=hard_ttl)`), the same mechanism as the base cache; no
 LRU. `/reload` deletes all `v1:` rows including overrides. `SCHEMA_VERSION` bump invalidates all.
@@ -160,14 +170,24 @@ cleared by `/reload`.
   (`:192-213`, returns `[]` otherwise). Unchanged and out of scope; noted so reviewers do not assume
   other backends clear.
 
+## Defaults chosen (change in review if needed)
+
+| Setting | Default |
+|---|---|
+| Feature flag `MODEL_CONFIG_OVERRIDE_CACHE_ENABLED` | off |
+| Positive soft TTL `..._SOFT_TTL_SECONDS` | 900 s |
+| Negative TTL `..._NEGATIVE_TTL_SECONDS` | 300 s |
+| Hard TTL `..._HARD_TTL_SECONDS` | 86400 s |
+| Unresolved-MCP soft TTL / failed-refresh back-off / peer wait | 60 s / 15 s / up to 3 s |
+| Cache-key client id cap | 64 chars, cache only |
+| Cache store error | log and fall back to the live read (the override cache is an optimisation layer; the base cache still fails fast) |
+| Per-client invalidation | `ConfigReader.clear_client_override`; no baileyai `/reload <client>` target yet |
+
 ## Open Questions
 
-1. Soft TTL defaults (900 s positive, 300 s negative). Is a 15 minute worst-case override-edit delay
-   acceptable without `/reload`?
-2. Is a per-client `/reload <client>` needed, or is full reload enough?
-3. The prod `MODEL_CONFIG_CACHE_TTL_SECONDS` of 86400 s quoted in the analysis is not the code default
-   (3600 s, `language_model_common_environment_variables.py:169-175`). Confirm the prod value in
-   `baileyai-configuration`/helm.
+1. Prod `MODEL_CONFIG_CACHE_TTL_SECONDS`: 86400 s in the analysis versus code default 3600 s
+   (`language_model_common_environment_variables.py`). Does not affect this design.
+2. Does baileyai want a per-client `/reload <client>` target?
 
 ## Related Work
 

@@ -1,7 +1,10 @@
+import asyncio
 import logging
 import os
 import shutil
+import threading
 import time
+import uuid
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -12,6 +15,10 @@ import httpx
 from key_value.aio.protocols.key_value import AsyncKeyValueProtocol
 
 from oidcauthlib.cache_gate.advisory_lock import AdvisoryLock
+
+from languagemodelcommon.configs.config_reader.override_read_result import (
+    DownloadLockHeldError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +43,14 @@ class GithubDirectoryDownloader:
     _MAX_RETRIES = 3
     _RETRY_BASE_DELAY = 2.0
     _PROBE_THROTTLE_SECONDS = 60.0
-    # _fetch_to_directory already runs synchronously on the caller's thread
-    # (called un-awaited from the async download()), so this probe blocks
-    # whatever event loop is running it too. Kept short deliberately -- this
-    # already-blocking chain must not also tie up the loop for a full 60s
-    # timeout on top of it.
+    # _fetch_to_directory (and therefore this probe) runs in a worker thread
+    # via asyncio.to_thread (BAI-1380), so it no longer blocks the event loop.
+    # Still kept short so a failing probe does not hold a pool thread long.
     _PROBE_TIMEOUT_SECONDS = 5.0
+    # Serialises only the final directory swap (a few local renames) across
+    # threads of this process. Downloads themselves run concurrently in unique
+    # staging directories. This is a mutex, not a data cache.
+    _SWAP_LOCK = threading.Lock()
 
     def __init__(self) -> None:
         self._last_probed_at: dict[str, float] = {}
@@ -55,6 +64,7 @@ class GithubDirectoryDownloader:
         store: AsyncKeyValueProtocol | None = None,
         lock_ttl_seconds: int = 300,
         log_diagnostics_on_not_found: bool = True,
+        raise_on_lock_held: bool = False,
     ) -> Path | None:
         """Download a github:// URI to a local directory.
 
@@ -107,12 +117,17 @@ class GithubDirectoryDownloader:
                         "Download lock held for %s — skipping download",
                         source_uri,
                     )
+                    if raise_on_lock_held:
+                        # BAI-1380: callers that must not treat a pod-local,
+                        # possibly stale copy as current (the override cache)
+                        # get an explicit signal instead of the disk fallback.
+                        raise DownloadLockHeldError(source_uri)
                     if target_dir.is_dir():
                         return self._resolve_content_dir(
                             target_dir=target_dir, source_path=source_path
                         )
                     return None
-                self._do_download(
+                await self._do_download(
                     git_location=git_location,
                     source_path=source_path,
                     github_token=github_token,
@@ -120,7 +135,7 @@ class GithubDirectoryDownloader:
                     log_diagnostics_on_not_found=log_diagnostics_on_not_found,
                 )
         else:
-            self._do_download(
+            await self._do_download(
                 git_location=git_location,
                 source_path=source_path,
                 github_token=github_token,
@@ -130,7 +145,7 @@ class GithubDirectoryDownloader:
 
         return self._resolve_content_dir(target_dir=target_dir, source_path=source_path)
 
-    def _do_download(
+    async def _do_download(
         self,
         *,
         git_location: GitLocation,
@@ -139,7 +154,7 @@ class GithubDirectoryDownloader:
         target_dir: Path,
         log_diagnostics_on_not_found: bool = True,
     ) -> None:
-        self._download_with_retry(
+        await self._download_with_retry(
             git_location=git_location,
             source_path=source_path,
             github_token=github_token,
@@ -161,7 +176,7 @@ class GithubDirectoryDownloader:
                 return content_dir.resolve()
         return target_dir.resolve()
 
-    def _download_with_retry(
+    async def _download_with_retry(
         self,
         *,
         git_location: GitLocation,
@@ -174,11 +189,16 @@ class GithubDirectoryDownloader:
 
         FileNotFoundError is never retried — it indicates the path does not
         exist in the repository (e.g. a missing client-override directory).
+
+        Each attempt runs in a worker thread and the backoff uses
+        ``asyncio.sleep`` so neither the blocking fsspec/HTTP work nor the
+        retry delay stalls the event loop (BAI-1380).
         """
         last_exc: Exception | None = None
         for attempt in range(self._MAX_RETRIES):
             try:
-                self._fetch_to_directory(
+                await asyncio.to_thread(
+                    self._fetch_to_directory,
                     git_location=git_location,
                     source_path=source_path,
                     github_token=github_token,
@@ -204,7 +224,7 @@ class GithubDirectoryDownloader:
                         exc_type,
                         exc,
                     )
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
         source_uri = (
             f"github://{git_location.owner}/{git_location.repository}/{source_path}"
         )
@@ -307,9 +327,12 @@ class GithubDirectoryDownloader:
         log_diagnostics_on_not_found: bool = True,
     ) -> None:
         """Download remote content into *target_dir* using atomic swap."""
-        pid = os.getpid()
-        staging_dir = target_dir.with_name(f"{target_dir.name}.staging.{pid}")
-        old_dir = target_dir.with_name(f"{target_dir.name}.old.{pid}")
+        # Unique per call: concurrent downloads of the same target in one
+        # process (possible now that this runs in worker threads) must not share
+        # a staging directory.
+        unique = f"{os.getpid()}.{uuid.uuid4().hex[:8]}"
+        staging_dir = target_dir.with_name(f"{target_dir.name}.staging.{unique}")
+        old_dir = target_dir.with_name(f"{target_dir.name}.old.{unique}")
 
         if staging_dir.exists():
             shutil.rmtree(staging_dir)
@@ -365,11 +388,12 @@ class GithubDirectoryDownloader:
             ) from exc
 
         # Atomic swap: staging → target, target → old
-        if old_dir.exists():
-            shutil.rmtree(old_dir)
-        if target_dir.exists():
-            shutil.move(str(target_dir), str(old_dir))
-        shutil.move(str(staging_dir), str(target_dir))
+        with self._SWAP_LOCK:
+            if old_dir.exists():
+                shutil.rmtree(old_dir)
+            if target_dir.exists():
+                shutil.move(str(target_dir), str(old_dir))
+            shutil.move(str(staging_dir), str(target_dir))
         if old_dir.exists():
             shutil.rmtree(old_dir, ignore_errors=True)
 

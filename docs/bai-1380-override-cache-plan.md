@@ -1,6 +1,25 @@
 # BAI-1380 implementation plan: cache per-client config overrides, move the blocking GitHub download off the event loop
 
-Status: plan only, no code changes. Decision record: `adrs/0004-cache-per-client-config-overrides.md`.
+Status: implemented in this PR (steps 1 and 2; step 3 deliberately not implemented, see below). Review
+comments on the first revision of this plan (PR #160) were validated against the code and are folded in;
+each is marked "(review)" where it changed the design. The override cache ships behind
+`MODEL_CONFIG_OVERRIDE_CACHE_ENABLED`, default off. ADR status stays Proposed.
+Decision record: `adrs/0004-cache-per-client-config-overrides.md`.
+
+## Defaults chosen (reviewer can change any of these)
+
+| Setting | Default | Env var |
+|---|---|---|
+| Positive soft TTL (serve stale after this, refresh in background) | 900 s | `MODEL_CONFIG_OVERRIDE_CACHE_SOFT_TTL_SECONDS` |
+| Negative ("no override") TTL | 300 s | `MODEL_CONFIG_OVERRIDE_CACHE_NEGATIVE_TTL_SECONDS` |
+| Hard TTL (ceiling for serving stale) | 86400 s | `MODEL_CONFIG_OVERRIDE_CACHE_HARD_TTL_SECONDS` |
+| Feature flag | off | `MODEL_CONFIG_OVERRIDE_CACHE_ENABLED` |
+| Soft TTL when override has unresolved MCP refs | 60 s | constant |
+| Back-off after a failed refresh of a stale row | 15 s | constant |
+| Peer-wait on a contended cold miss | up to 3 s | constant |
+| Cache-key client id cap (cache only, not validation) | 64 chars | constant |
+| Cache store error | log and fall back to live read | n/a |
+| Per-client invalidation | `ConfigReader.clear_client_override(client_id=...)` added; no baileyai `/reload <client>` target | n/a |
 Source: Finding 1 (and Finding 5) of baileyai PR #603, `docs/latency-analysis.md`.
 Line references are to `origin/main` of this repo at 41ed81f, verified by reading the files.
 
@@ -57,8 +76,13 @@ Files:
     (`{target}.staging.{pid}.{uuid8}`), not per pid (`:311-312`). Today concurrent same-target downloads
     in one process are impossible only because the loop is blocked. After `to_thread` two requests for
     the same client can run it concurrently, race on `rmtree(staging_dir)` and on the swap
-    (`:367-374`). Add an in-process `asyncio.Lock` per target key in `download` as well, so concurrent
-    same-process callers collapse (this lock guards a download, it is not a cache).
+    (`:367-374`). Implemented as: unique staging/old names, plus a class-level `threading.Lock` held only
+    around the final swap (a few local renames), so a nested-staging corruption is impossible.
+  * Collapsing concurrent same-process downloads lives in `GitHubDirectoryHelper` (a long-lived
+    singleton), not in the downloader: `download_github_directory` builds a new
+    `GithubDirectoryDownloader()` per call (`github_directory_helper.py`), so a lock on the downloader
+    would never be shared (review). The helper keeps an in-flight task per (uri, flags) and callers
+    share it; entries are removed on completion (tasks only, not a cache).
   * `_log_fetch_failure_diagnostics` (`:222`) mutates `self._last_probed_at` (`:260`) from worker
     threads. Plain dict set/get is safe under the GIL; note it as a diagnostic throttle, not a data
     cache, in a comment. It also uses a blocking `httpx.Client` with a 5 s timeout: fine in a thread
@@ -88,10 +112,21 @@ Add `languagemodelcommon/configs/config_reader/override_read_result.py`: a froze
 `OverrideReadResult(outcome: OverrideOutcome, models: tuple[ChatModelConfig, ...])` with
 `OverrideOutcome` = `FOUND | ABSENT | LOCK_HELD | FAILED`. Mapping from the current branches:
 
-* `FileNotFoundError` (and the `"FileNotFoundError" in str(e)` string check at `:324`) -> `ABSENT`
-* `read_models_from_path_async` returns `[]` because `resolved is None` (`:367-373`) -> `LOCK_HELD`.
-  This needs `read_models_from_path_async` to signal it (raise a typed `DownloadLockHeld` or return
-  a sentinel); today it is indistinguishable from "directory with zero models".
+* `FileNotFoundError` -> `ABSENT` only after GitHub positively confirms absence, else `FAILED`
+  (review). fsspec raises a bare `FileNotFoundError` for any non-2xx reply (bad token, rate limit,
+  private repo; `github_directory_downloader.py` docstring at `_log_fetch_failure_diagnostics`), so the
+  exception alone proves nothing. `GitHubDirectoryHelper.confirm_directory_absent` lists the parent
+  directory with a status-checked request: 200 and a listing lacking the name is absence; any other
+  status, a transport error, a non-list body or a truncated (>= 1000 entries) listing is unconfirmed.
+  An unconfirmed 404 never writes `ABSENT`, so it can never replace a good `FOUND` row; the stale row is
+  kept (and backed off, see 2.3). Confirmation runs only on the cached path, so flag-off adds no call.
+  The legacy `"FileNotFoundError" in str(e)` ValueError string match is now `FAILED` (never cached).
+* Lock held -> `LOCK_HELD`, including the on-disk fallback (review). `download` returns a pod-local,
+  possibly stale directory when the lock is held (`:104-113`), which is indistinguishable from a fresh
+  download. A new `raise_on_lock_held` flag threads from `read_models_from_path_async` through
+  `resolve_github_path` / `download_github_directory` / `download` and raises
+  `DownloadLockHeldError` on every lock-held return, before the disk fallback. Default behaviour (flag
+  absent) is unchanged for base config and prompts.
 * `ValueError` (download failed, malformed) and any other `Exception` -> `FAILED`
 * success -> `FOUND` (an empty directory is `FOUND` with zero models)
 
@@ -109,8 +144,10 @@ object. Registered in `container_factory.py`; `ConfigReader` receives it by cons
   (`utilities/ref_hash.py`, same as `_model_config_cache_key` at `:154`). Built only after
   `_resolve_override_config_path` (`:518`) has applied `_is_valid_client_id` (`:566`) and, for local
   paths, the `resolve()/relative_to()` containment check (`:553-560`). Both checks stay (see the
-  SECURITY docstring at `:523-532`). Add a length cap (64) inside `_is_valid_client_id`; an over-long id
-  is treated as invalid exactly like today's invalid id (returns no override, logs a warning).
+  SECURITY docstring at `:523-532`). `_is_valid_client_id` is unchanged, so flag-off behaviour is identical
+  (review). The 64-char cap and a strict `fullmatch` live in a new `_is_cacheable_client_id`, applied only
+  where a cache key would be built: an id that fails it is read live and never cached (it keeps its
+  override; it just does not get cached).
   The cache never accepts a raw `client_id`; it takes the validated one and the already-resolved
   override path so that key and path are derived from the same validated value.
 * Why `ovr`: the base reader scans prefix `v1:{ref_hash}:` (`:172-173`); a 12-hex hash can never equal
@@ -143,15 +180,18 @@ Modify `_read_override_models_async` (`:308`) to delegate to a new `_read_overri
    background refresh (`asyncio.create_task`, task reference kept on the reader and awaited/cancelled on
    shutdown; the task itself is not a cache). The refresh runs under `AdvisoryLock` (new lock key
    `override_refresh:<hash of cache key>`, `ttl_seconds` 60). Lock not acquired means someone else is
-   refreshing: do nothing.
+   refreshing: serve the stale content, do nothing.
 4. Miss: refresh inline under the lock. If the lock is held by another worker, poll the cache
-   (50 ms steps, max 3 s) for the winner's row; on timeout fetch directly (idempotent, bounded by
-   step 1's timeouts). Never treat `LOCK_HELD` as `ABSENT`.
+   (50 ms steps, max 3 s) for the winner's row and return as soon as it appears. There is no "fetch
+   directly" fallback (review): the downloader has its own `github_download:` lock, so a second fetch
+   could not bypass it and would only return lock-held or a stale disk copy. On timeout the result is
+   `LOCK_HELD`: no override for this request, nothing cached, same outcome as the uncached path. The
+   worst-case 3 s wait only occurs when the winner is slower than that.
 5. Refresh = call the existing read path (`read_models_from_path_async(config_path=override_path,
    log_diagnostics_on_not_found=False)`), classify into `OverrideReadResult`, write `FOUND` or `ABSENT`
-   only. On `FAILED` keep the existing row untouched (serve stale up to hard TTL) and write nothing; if no
-   row exists, return `[]` and log a warning as today (not cached, so the next request retries; add a
-   short failure back-off marker, 15 s, to avoid hammering GitHub during an outage with many requests).
+   only. On `FAILED` or `LOCK_HELD` keep the existing row's content (serve stale up to hard TTL) and
+   re-write it as fresh for 15 s (`defer_refresh`, hard expiry preserved) so an outage is not hammered;
+   if no row exists, return `[]` and log a warning as today (not cached, so the next request retries).
 6. Unresolved MCP refs: `read_models_from_path_async` ends with `_resolve_mcp_servers_async` (`:396`),
    so override models are cached after MCP resolution, like base rows. If the fresh override still has
    unresolved `mcp_server` refs (`_has_unresolved_mcp_servers`, `:464`), write it with a 60 s soft TTL,
@@ -241,7 +281,15 @@ arguments when calling production code, and use placeholder client ids (`client-
 * No cross-client config leakage (isolation tests, plus a canary check that two clients with different
   overrides resolve different model lists).
 
-## Step 3 (second step, only if step 0 confirms): reduce MCP resolution cost in the config path
+## Step 3 (NOT implemented): reduce MCP resolution cost in the config path
+
+Decision: not implemented in this PR. The code shows this repo can contribute (serial per-plugin fresh
+sessions in `McpJsonFetcher.fetch_plugins_async`, and `(None, None)` for a plugin without servers keeps a
+ref unresolved forever so `_retry_mcp_resolution` repeats), but whether it is the source of the
+per-request `get_mcp_servers_config` / `server/discover` spans cannot be confirmed from code: the retry is
+once per process unless a ref stays unresolved, and baileyai issues its own tool-catalog MCP calls.
+Needs the step 0 trace check first. The step 2 cache already removes the override-path MCP resolution
+from the request path.
 
 Finding: the premise that `_retry_mcp_resolution` is a per-request path is not accurate (see the table
 above). The MCP calls seen before the first LLM call come from some combination of:
@@ -295,8 +343,9 @@ Total about 6 to 7 engineering days, shippable in three independent PRs (step 1,
 
 ## Open questions
 
-1. TTL defaults (900 s positive, 300 s negative, 86400 s hard): acceptable?
-2. Per-client `/reload <client>` needed?
-3. Confirm prod `MODEL_CONFIG_CACHE_TTL_SECONDS` (86400 per the analysis versus code default 3600).
-4. Store failure on the override cache: fail fast like the base cache, or fall back to the live read?
-5. Add the `client_id` length cap (64)? It is a small additive tightening of validation.
+All five questions from the first revision were answered by "use the proposed defaults" (see "Defaults
+chosen" at the top); the choices are listed there so a reviewer can change them. Still open:
+
+1. Confirm the prod value of `MODEL_CONFIG_CACHE_TTL_SECONDS` (86400 per the analysis versus code default
+   3600); not needed for this change, only for the analysis numbers.
+2. Whether baileyai wants a `/reload <client>` target (library method `clear_client_override` exists).

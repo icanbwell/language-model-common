@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import time
 
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, List, Optional, cast
 from uuid import UUID, uuid4
@@ -11,7 +13,17 @@ from languagemodelcommon.configs.config_reader.file_config_reader import (
 from languagemodelcommon.configs.config_reader.github_directory_helper import (
     GitHubDirectoryHelper,
 )
+from languagemodelcommon.configs.config_reader.override_config_cache import (
+    CachedOverride,
+    ClientOverrideConfigCache,
+)
+from languagemodelcommon.configs.config_reader.override_read_result import (
+    DownloadLockHeldError,
+    OverrideOutcome,
+    OverrideReadResult,
+)
 from languagemodelcommon.configs.config_reader.s3_config_reader import S3ConfigReader
+from oidcauthlib.cache_gate.advisory_lock import AdvisoryLock
 from languagemodelcommon.configs.schemas.config_schema import (
     ChatModelConfig,
     PromptConfig,
@@ -34,6 +46,12 @@ from languagemodelcommon.configs.config_reader.mcp_json_reader import (
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
+_MAX_CLIENT_ID_LENGTH = 64
+_OVERRIDE_PEER_POLL_INTERVAL_SECONDS = 0.05
+_OVERRIDE_PEER_POLL_TIMEOUT_SECONDS = 3.0
+_OVERRIDE_REFRESH_LOCK_TTL_SECONDS = 60
+_OVERRIDE_REFRESH_RETRY_AFTER_SECONDS = 15.0
+
 
 class ConfigReader:
     SCHEMA_VERSION = 1
@@ -48,6 +66,7 @@ class ConfigReader:
         model_config_cache_store: BaseStore | None = None,
         file_config_reader: FileConfigReader | None = None,
         s3_config_reader: S3ConfigReader | None = None,
+        override_config_cache: ClientOverrideConfigCache | None = None,
     ) -> None:
         self._identifier: UUID = uuid4()
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -65,6 +84,13 @@ class ConfigReader:
         self._model_config_cache_collection = (
             self._environment_variables.model_config_cache_collection_name
         )
+        self._override_config_cache = override_config_cache
+        # In-flight override refreshes by cache key, so concurrent requests in
+        # this process share one refresh. Holds tasks only, removed on completion;
+        # it is not a cache of config data.
+        self._inflight_override_refreshes: dict[
+            str, asyncio.Task[OverrideReadResult]
+        ] = {}
 
     async def read_model_configs_async(
         self, *, client_id: str | None = None
@@ -316,12 +342,76 @@ class ConfigReader:
         )
         if override_path is None:
             return []
-        try:
-            return await self.read_models_from_path_async(
-                config_path=override_path, log_diagnostics_on_not_found=False
+        cache = self._override_config_cache
+        if (
+            cache is None
+            or not self._environment_variables.model_config_override_cache_enabled
+            or not self._is_remote_config_path(config_path)
+            or not self._is_cacheable_client_id(client_id)
+        ):
+            # Flag off, no store, local path, or an id that must not become a
+            # cache key: read live exactly as before the cache existed.
+            result = await self._fetch_override_result(
+                override_path=override_path, confirm_absent=False
             )
-        except (FileNotFoundError, ValueError) as e:
-            if "FileNotFoundError" in str(e) or isinstance(e, FileNotFoundError):
+            return list(result.models)
+        return await self._read_override_models_cached(
+            cache=cache,
+            config_path=config_path,
+            override_path=override_path,
+            client_id=client_id,
+        )
+
+    @staticmethod
+    def _is_cacheable_client_id(client_id: str) -> bool:
+        """Stricter than ``_is_valid_client_id``: applies only where a cache key
+        is built, so flag-off behaviour for existing ids is unchanged."""
+        import re
+
+        return len(client_id) <= _MAX_CLIENT_ID_LENGTH and bool(
+            re.fullmatch(r"[a-zA-Z0-9_-]+", client_id)
+        )
+
+    @staticmethod
+    def _is_remote_config_path(config_path: str) -> bool:
+        return GitHubDirectoryHelper.is_github_path(
+            config_path
+        ) or config_path.startswith("s3")
+
+    async def _fetch_override_result(
+        self, *, override_path: str, confirm_absent: bool
+    ) -> OverrideReadResult:
+        """Read one override from its source and classify the outcome.
+
+        A bare ``FileNotFoundError`` is ambiguous (fsspec raises it for any
+        non-2xx reply, e.g. a bad token or rate limit). With ``confirm_absent``
+        it is classified ``ABSENT`` only after GitHub positively shows the
+        directory is missing; otherwise ``FAILED``.
+        """
+        try:
+            models = await self.read_models_from_path_async(
+                config_path=override_path,
+                log_diagnostics_on_not_found=False,
+                raise_on_lock_held=True,
+            )
+        except DownloadLockHeldError:
+            logger.info(
+                "ConfigReader with id: %s override download lock held for %s",
+                self._identifier,
+                override_path,
+            )
+            return OverrideReadResult(outcome=OverrideOutcome.LOCK_HELD)
+        except FileNotFoundError:
+            logger.debug(
+                "No client overrides found at %s (path does not exist)", override_path
+            )
+            if confirm_absent and not await self._confirm_override_absent(
+                override_path=override_path
+            ):
+                return OverrideReadResult(outcome=OverrideOutcome.FAILED)
+            return OverrideReadResult(outcome=OverrideOutcome.ABSENT)
+        except ValueError as e:
+            if "FileNotFoundError" in str(e):
                 logger.debug(
                     "No client overrides found at %s (path does not exist)",
                     override_path,
@@ -330,12 +420,273 @@ class ConfigReader:
                 logger.warning(
                     "Failed to load client overrides from %s: %s", override_path, e
                 )
-            return []
+            return OverrideReadResult(outcome=OverrideOutcome.FAILED)
         except Exception as e:
             logger.warning(
                 "Failed to load client overrides from %s: %s", override_path, e
             )
-            return []
+            return OverrideReadResult(outcome=OverrideOutcome.FAILED)
+        return OverrideReadResult(
+            outcome=OverrideOutcome.FOUND,
+            models=tuple(models),
+            has_unresolved_mcp=self._has_unresolved_mcp_servers(models),
+        )
+
+    async def _confirm_override_absent(self, *, override_path: str) -> bool:
+        if not GitHubDirectoryHelper.is_github_path(override_path):
+            return False
+        return await self._github_directory_helper.confirm_directory_absent(
+            github_uri=GitHubDirectoryHelper.to_github_uri(override_path)
+        )
+
+    async def _read_override_models_cached(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        config_path: str,
+        override_path: str,
+        client_id: str,
+    ) -> List[ChatModelConfig]:
+        """Read-through, stale-while-revalidate read of one client's override."""
+        started = time.monotonic()
+        cached = await self._safe_override_cache_get(
+            cache=cache, config_path=config_path, client_id=client_id
+        )
+        if cached is not None:
+            if cached.is_fresh:
+                outcome = (
+                    "hit"
+                    if cached.result.outcome == OverrideOutcome.FOUND
+                    else "absent_hit"
+                )
+            else:
+                outcome = "stale"
+                self._start_override_refresh(
+                    cache=cache,
+                    config_path=config_path,
+                    override_path=override_path,
+                    client_id=client_id,
+                    stale=cached,
+                )
+            self._log_override_read(
+                outcome=outcome,
+                client_id=client_id,
+                age=cached.age_seconds,
+                started=started,
+            )
+            return list(cached.result.models)
+
+        task = self._start_override_refresh(
+            cache=cache,
+            config_path=config_path,
+            override_path=override_path,
+            client_id=client_id,
+            stale=None,
+        )
+        # shield: a cancelled request must not cancel a refresh others share.
+        result = await asyncio.shield(task)
+        self._log_override_read(
+            outcome="miss", client_id=client_id, age=0.0, started=started
+        )
+        return list(result.models)
+
+    def _start_override_refresh(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        config_path: str,
+        override_path: str,
+        client_id: str,
+        stale: CachedOverride | None,
+    ) -> "asyncio.Task[OverrideReadResult]":
+        key = cache.build_key(config_path=config_path, client_id=client_id)
+        existing = self._inflight_override_refreshes.get(key)
+        if existing is not None:
+            return existing
+        task = asyncio.ensure_future(
+            self._refresh_override(
+                cache=cache,
+                key=key,
+                config_path=config_path,
+                override_path=override_path,
+                client_id=client_id,
+                stale=stale,
+            )
+        )
+        self._inflight_override_refreshes[key] = task
+        task.add_done_callback(
+            lambda _t: self._inflight_override_refreshes.pop(key, None)
+        )
+        return task
+
+    async def _refresh_override(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        key: str,
+        config_path: str,
+        override_path: str,
+        client_id: str,
+        stale: CachedOverride | None,
+    ) -> OverrideReadResult:
+        """Refresh one override under a cross-worker advisory lock.
+
+        Never raises: a failure keeps stale data (if any) and returns the
+        classified result. LOCK_HELD and FAILED are never written to the cache.
+        """
+        try:
+            lock_name = (
+                f"override_refresh:{sha256(key.encode('utf-8')).hexdigest()[:16]}"
+            )
+            async with AdvisoryLock(
+                cache.store,
+                lock_name,
+                ttl_seconds=_OVERRIDE_REFRESH_LOCK_TTL_SECONDS,
+            ) as acquired:
+                if not acquired:
+                    # Another worker is refreshing. Serve stale if we have it;
+                    # else wait (bounded) for its row. There is no "fetch
+                    # directly" bypass: the downloader has its own lock, so it
+                    # would only return lock-held anyway. On timeout, return
+                    # LOCK_HELD (no override for this request, nothing cached),
+                    # the same outcome the uncached path gives.
+                    if stale is not None:
+                        return stale.result
+                    peer = await self._await_peer_override(
+                        cache=cache, config_path=config_path, client_id=client_id
+                    )
+                    if peer is not None:
+                        return peer.result
+                    return OverrideReadResult(outcome=OverrideOutcome.LOCK_HELD)
+                return await self._fetch_and_store_override(
+                    cache=cache,
+                    config_path=config_path,
+                    override_path=override_path,
+                    client_id=client_id,
+                    stale=stale,
+                )
+        except Exception as e:
+            logger.warning(
+                "override_refresh unexpected error for client %s: [%s] %s",
+                client_id,
+                type(e).__name__,
+                e,
+            )
+            if stale is not None:
+                return stale.result
+            return OverrideReadResult(outcome=OverrideOutcome.FAILED)
+
+    async def _await_peer_override(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        config_path: str,
+        client_id: str,
+    ) -> CachedOverride | None:
+        """Poll briefly for the lock holder's row; None if it never appears."""
+        deadline = time.monotonic() + _OVERRIDE_PEER_POLL_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(_OVERRIDE_PEER_POLL_INTERVAL_SECONDS)
+            peer = await self._safe_override_cache_get(
+                cache=cache, config_path=config_path, client_id=client_id
+            )
+            if peer is not None:
+                return peer
+        return None
+
+    async def _fetch_and_store_override(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        config_path: str,
+        override_path: str,
+        client_id: str,
+        stale: CachedOverride | None,
+    ) -> OverrideReadResult:
+        started = time.monotonic()
+        result = await self._fetch_override_result(
+            override_path=override_path, confirm_absent=True
+        )
+        duration_ms = int((time.monotonic() - started) * 1000)
+        served_stale = False
+        try:
+            if result.outcome in (OverrideOutcome.FOUND, OverrideOutcome.ABSENT):
+                await cache.put(
+                    config_path=config_path, client_id=client_id, result=result
+                )
+            elif stale is not None:
+                served_stale = True
+                await cache.defer_refresh(
+                    config_path=config_path,
+                    client_id=client_id,
+                    cached=stale,
+                    retry_after_seconds=_OVERRIDE_REFRESH_RETRY_AFTER_SECONDS,
+                )
+        except Exception as e:
+            logger.warning(
+                "override_cache write failed for client %s: [%s] %s",
+                client_id,
+                type(e).__name__,
+                e,
+            )
+        logger.info(
+            "override_refresh result=%s download_ms=%d served_stale=%s client_id=%s",
+            result.outcome.value,
+            duration_ms,
+            served_stale,
+            client_id,
+        )
+        if stale is not None and result.outcome in (
+            OverrideOutcome.FAILED,
+            OverrideOutcome.LOCK_HELD,
+        ):
+            return stale.result
+        return result
+
+    async def _safe_override_cache_get(
+        self,
+        *,
+        cache: ClientOverrideConfigCache,
+        config_path: str,
+        client_id: str,
+    ) -> CachedOverride | None:
+        """Cache read that degrades to a live read if the store errors.
+
+        The override cache is an optimisation layer, so a store or row
+        deserialisation error is logged and treated as a miss (unlike the base
+        model-config cache, which fails fast).
+        """
+        try:
+            return await cache.get(config_path=config_path, client_id=client_id)
+        except Exception as e:
+            logger.warning(
+                "override_cache read failed for client %s, using live read: [%s] %s",
+                client_id,
+                type(e).__name__,
+                e,
+            )
+            return None
+
+    def _log_override_read(
+        self, *, outcome: str, client_id: str, age: float, started: float
+    ) -> None:
+        logger.info(
+            "override_cache outcome=%s age_s=%.1f duration_ms=%d client_id=%s",
+            outcome,
+            age,
+            int((time.monotonic() - started) * 1000),
+            client_id,
+        )
+
+    async def clear_client_override(self, *, client_id: str) -> None:
+        """Drop one client's cached override so the next request re-reads it."""
+        cache = self._override_config_cache
+        if cache is None or not self._is_valid_client_id(client_id):
+            return
+        await cache.delete(
+            config_path=self._environment_variables.models_official_path,
+            client_id=client_id,
+        )
 
     async def read_models_from_path_async(
         self,
@@ -343,8 +694,13 @@ class ConfigReader:
         config_path: str,
         exclude_dirs: set[str] | None = None,
         log_diagnostics_on_not_found: bool = True,
+        raise_on_lock_held: bool = False,
     ) -> List[ChatModelConfig]:
         """
+        raise_on_lock_held (BAI-1380): when the GitHub download lock is held by
+        another worker, raise ``DownloadLockHeldError`` instead of returning
+        ``[]``, so callers can tell "nothing read" from "no models".
+
         log_diagnostics_on_not_found (BAI-941): pass ``False`` when a missing
         ``config_path`` is an expected, benign outcome for this caller (e.g.
         an optional per-client override) rather than a genuine failure worth
@@ -363,8 +719,11 @@ class ConfigReader:
             resolved = await self._github_directory_helper.resolve_github_path(
                 config_path,
                 log_diagnostics_on_not_found=log_diagnostics_on_not_found,
+                raise_on_lock_held=raise_on_lock_held,
             )
             if resolved is None:
+                if raise_on_lock_held:
+                    raise DownloadLockHeldError(config_path)
                 logger.info(
                     "ConfigReader with id: %s download lock held for %s — using cache",
                     self._identifier,
@@ -372,7 +731,8 @@ class ConfigReader:
                 )
                 return []
             local_config_path = str(resolved)
-            models = self._file_config_reader.read_model_configs(
+            models = await asyncio.to_thread(
+                self._file_config_reader.read_model_configs,
                 config_path=local_config_path,
                 exclude_dirs=exclude_dirs,
             )
@@ -382,7 +742,8 @@ class ConfigReader:
                 len(models),
             )
         else:
-            models = self._file_config_reader.read_model_configs(
+            models = await asyncio.to_thread(
+                self._file_config_reader.read_model_configs,
                 config_path=config_path,
                 exclude_dirs=exclude_dirs,
             )

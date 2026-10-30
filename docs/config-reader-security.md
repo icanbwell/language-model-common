@@ -32,3 +32,7 @@ The containment check is defense in depth — the allowlist alone should already
 The original GitHub config downloader extracted a repository ZIP archive to a local directory (`GitHubConfigZipDownloader`, later `GithubConfigRepoManager`). This code has been deleted; GitHub config downloads now go through `GithubDirectoryDownloader` (`github_directory_downloader.py`), which uses `fsspec`'s GitHub filesystem to fetch individual files/directories directly — there is no ZIP extraction step anywhere in the current download path. The zip-slip bug class doesn't just have a fix here; its attack surface no longer exists in this codebase.
 
 `GithubDirectoryDownloader` still validates that its resolved cache-directory path stays within the configured cache root, following the same "resolve and check containment" pattern as the `client_id` check above.
+
+## Override cache keys (BAI-1380)
+
+When `MODEL_CONFIG_OVERRIDE_CACHE_ENABLED` is on, a client override is cached under `v{N}:ovr:{ref_hash}:{client_id}`. The key is built only after `_is_valid_client_id` passes and only for ids that also pass `_is_cacheable_client_id` (full match of `[a-zA-Z0-9_-]+`, at most 64 characters); other valid ids are read live and never cached. Rows are read by exact key (no regex), and a row whose stored `client_id` differs from the requested one is ignored. The `ovr` namespace cannot match the base reader's `v{N}:{ref_hash}:` prefix scan. See `adrs/0004-cache-per-client-config-overrides.md`.
