@@ -4,7 +4,7 @@ Status: implemented in this PR (steps 1 and 2; step 3 deliberately not implement
 comments on the first revision of this plan (PR #160) were validated against the code and are folded in;
 each is marked "(review)" where it changed the design. The override cache ships behind
 `MODEL_CONFIG_OVERRIDE_CACHE_ENABLED`, default off. ADR status stays Proposed.
-Decision record: `adrs/0004-cache-per-client-config-overrides.md`.
+Decision record: `adrs/0009-cache-per-client-config-overrides.md`.
 
 ## Defaults chosen (reviewer can change any of these)
 
@@ -336,7 +336,7 @@ Total about 6 to 7 engineering days, shippable in three independent PRs (step 1,
 
 ## Governing artifacts and review
 
-* ADR `adrs/0004-cache-per-client-config-overrides.md` (this PR, status proposed). New cache pattern, so
+* ADR `adrs/0009-cache-per-client-config-overrides.md` (this PR, status proposed). New cache pattern, so
   EA is informed through the PR architecture review workflow; no new technology (existing Mongo store),
   so no approved-tech registry proposal, no FDR (no FHIR), no public API change.
 * Update `docs/config-reader-security.md` in the step 2 PR with the new key rules and length cap.

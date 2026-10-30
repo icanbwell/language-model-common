@@ -1,4 +1,4 @@
-"""Tests for the per-client override config cache (BAI-1380, ADR 0004).
+"""Tests for the per-client override config cache (BAI-1380, ADR 0009).
 
 The GitHub helper is the external boundary and is replaced by ``FakeGitHub``.
 Everything else (ConfigReader, the cache, the file reader, the key-value store
