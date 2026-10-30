@@ -1775,6 +1775,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "fsspec" },
     { name = "httpx", extra = ["http2"] },
+    { name = "jsonschema" },
     { name = "langchain" },
     { name = "langchain-aws", extra = ["anthropic"] },
     { name = "langchain-community" },
@@ -1792,6 +1793,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pypdf" },
+    { name = "referencing" },
     { name = "simple-container" },
     { name = "tiktoken" },
 ]
@@ -1833,6 +1835,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.8" },
     { name = "fsspec", specifier = ">=2026.2.0" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27.2" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain", specifier = ">=1.0.0" },
     { name = "langchain-aws", extras = ["anthropic"], specifier = ">=1.2.0" },
     { name = "langchain-community", specifier = ">=0.4" },
@@ -1850,6 +1853,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0,<3.0.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.14.0" },
     { name = "pypdf", specifier = ">=6.6.0" },
+    { name = "referencing", specifier = ">=0.37.0" },
     { name = "simple-container", specifier = ">=1.0.2" },
     { name = "tiktoken", specifier = ">=0.12.0" },
 ]
