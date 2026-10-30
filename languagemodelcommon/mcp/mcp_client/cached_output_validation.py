@@ -193,6 +193,7 @@ class CachedOutputSchemaValidator:
 
     # Positional parameters: the SDK calls ``self.validate_tool_result(name, result)``.
     async def __call__(self, name: str, result: CallToolResult) -> None:
+        """Validate ``result`` for tool ``name``; raise ``RuntimeError`` as the SDK does."""
         schema = await self._source.lookup(tool_name=name)
         if schema is None:
             await self._fallback(name, result)
@@ -220,11 +221,12 @@ class CachedOutputSchemaValidator:
                 result=result,
             )
             return
-        except RuntimeError:
+        except RuntimeError as e:
             logger.info(
                 "Result failed validation against the cached output schema; "
-                "refetching the tool list once (tool=%s)",
+                "refetching the tool list once (tool=%s, error=%s)",
                 name,
+                type(e).__name__,
             )
         fresh = await self._source.refresh(session=self._session, tool_name=name)
         if fresh is None:

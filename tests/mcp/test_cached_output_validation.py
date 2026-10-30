@@ -9,7 +9,7 @@ trip through the store's serialization is exercised too.
 """
 
 import importlib.metadata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -134,7 +134,7 @@ class _FakePool:
 
     def __init__(self, *, session: ClientSession) -> None:
         self._session = session
-        self.evict = AsyncMock()
+        self.evict = AsyncMock()  # awaited by the invocation path on errors
 
     async def get_session(self, config: Any, *, mcp_callbacks: Any) -> ClientSession:
         return self._session
@@ -144,7 +144,6 @@ class _FakePool:
 class Harness:
     server: FakeToolServer
     cache: ToolListCache
-    sessions: list[_TransportFakedSession] = field(default_factory=list)
 
     async def call(
         self,
@@ -155,9 +154,7 @@ class Harness:
         tool_name: str = "get_data",
     ) -> CallToolResult:
         def new_session() -> _TransportFakedSession:
-            session = _TransportFakedSession(server=self.server)
-            self.sessions.append(session)
-            return session
+            return _TransportFakedSession(server=self.server)
 
         config = MCPConnectionConfig(url=URL, transport="streamable_http")
         kwargs: dict[str, Any] = {
@@ -321,6 +318,22 @@ SCENARIOS = [
         structured={"count": "x"},
         expected_error="Invalid structured content returned by tool get_data",
         flag_on_list_calls=1,
+    ),
+    Scenario(
+        id="stale-schema-refetch-lacks-tool-falls-back-to-sdk",
+        cached=[_tool(output_schema=OBJ_SCHEMA)],
+        served=[_tool(name="other", output_schema=None)],
+        structured={"count": "x"},
+        expected_error=None,
+        flag_on_list_calls=2,
+    ),
+    Scenario(
+        id="stale-no-schema-refetch-lacks-tool-falls-back-to-sdk",
+        cached=[_tool(output_schema=None)],
+        served=[_tool(name="other", output_schema=None)],
+        structured={"count": 1},
+        expected_error=None,
+        flag_on_list_calls=2,
     ),
     Scenario(
         id="cache-miss-falls-back-to-sdk-and-validates",
