@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 
 from hashlib import sha256
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.CONFIG)
 
 _MAX_CLIENT_ID_LENGTH = 64
+_COLD_MISS_TIMEOUT_SECONDS = 180.0
 _OVERRIDE_PEER_POLL_INTERVAL_SECONDS = 0.05
 _OVERRIDE_PEER_POLL_TIMEOUT_SECONDS = 3.0
 _OVERRIDE_REFRESH_LOCK_TTL_SECONDS = 60
@@ -346,8 +348,8 @@ class ConfigReader:
         if (
             cache is None
             or not self._environment_variables.model_config_override_cache_enabled
-            or not self._is_remote_config_path(config_path)
-            or not self._is_cacheable_client_id(client_id)
+            or not self._is_remote_config_path(config_path=config_path)
+            or not self._is_cacheable_client_id(client_id=client_id)
         ):
             # Flag off, no store, local path, or an id that must not become a
             # cache key: read live exactly as before the cache existed.
@@ -363,17 +365,15 @@ class ConfigReader:
         )
 
     @staticmethod
-    def _is_cacheable_client_id(client_id: str) -> bool:
+    def _is_cacheable_client_id(*, client_id: str) -> bool:
         """Stricter than ``_is_valid_client_id``: applies only where a cache key
         is built, so flag-off behaviour for existing ids is unchanged."""
-        import re
-
         return len(client_id) <= _MAX_CLIENT_ID_LENGTH and bool(
             re.fullmatch(r"[a-zA-Z0-9_-]+", client_id)
         )
 
     @staticmethod
-    def _is_remote_config_path(config_path: str) -> bool:
+    def _is_remote_config_path(*, config_path: str) -> bool:
         return GitHubDirectoryHelper.is_github_path(
             config_path
         ) or config_path.startswith("s3")
@@ -392,7 +392,9 @@ class ConfigReader:
             models = await self.read_models_from_path_async(
                 config_path=override_path,
                 log_diagnostics_on_not_found=False,
-                raise_on_lock_held=True,
+                # Strict only on the cached path; flag-off keeps the pre-cache
+                # fallback to the pod-local copy when the lock is held.
+                raise_on_lock_held=confirm_absent,
             )
         except DownloadLockHeldError:
             logger.info(
@@ -484,7 +486,19 @@ class ConfigReader:
             stale=None,
         )
         # shield: a cancelled request must not cancel a refresh others share.
-        result = await asyncio.shield(task)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(task), timeout=_COLD_MISS_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "ConfigReader with id: %s override refresh for client %s exceeded %.0fs; "
+                "serving base config for this request",
+                self._identifier,
+                client_id,
+                _COLD_MISS_TIMEOUT_SECONDS,
+            )
+            return []
         self._log_override_read(
             outcome="miss", client_id=client_id, age=0.0, started=started
         )

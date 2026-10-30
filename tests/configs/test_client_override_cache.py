@@ -62,6 +62,7 @@ class FakeGitHub:
         self.calls = 0
         self.absent_confirmed = True
         self.delay = 0.0
+        self.lock_strictness: list[bool] = []
 
     @staticmethod
     def _client_of(path: str) -> str:
@@ -75,6 +76,7 @@ class FakeGitHub:
         raise_on_lock_held: bool = False,
     ) -> Path | None:
         self.calls += 1
+        self.lock_strictness.append(raise_on_lock_held)
         if self.delay:
             await asyncio.sleep(self.delay)
         client = self._client_of(path)
@@ -192,6 +194,39 @@ async def test_disabled_reads_live_every_time(
     assert [m.description for m in second] == ["override-a"]
     assert harness.github.calls == 2
     assert await harness.row("client-a") is None
+
+
+async def test_flag_off_keeps_pre_cache_lock_held_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MODEL_CONFIG_OVERRIDE_CACHE_ENABLED", "false")
+    harness = Harness(tmp_path=tmp_path, enabled=True)
+    harness.add_client("client-a", "override-a")
+
+    await harness.read("client-a")
+
+    # Flag off must not ask the downloader to raise on a held lock, so the
+    # downloader's pod-local fallback still applies as before the cache.
+    assert harness.github.lock_strictness == [False]
+
+
+async def test_cold_miss_times_out_and_serves_base_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MODEL_CONFIG_OVERRIDE_CACHE_ENABLED", "true")
+    monkeypatch.setattr(
+        "languagemodelcommon.configs.config_reader.config_reader."
+        "_COLD_MISS_TIMEOUT_SECONDS",
+        0.05,
+    )
+    harness = Harness(tmp_path=tmp_path, enabled=True)
+    harness.add_client("client-a", "override-a")
+    harness.github.delay = 5.0
+
+    assert await harness.read("client-a") == []
+
+    for task in list(harness.reader._inflight_override_refreshes.values()):
+        task.cancel()
 
 
 async def test_flag_off_does_not_confirm_absence_or_cache(
