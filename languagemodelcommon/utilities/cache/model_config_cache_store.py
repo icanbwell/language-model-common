@@ -38,7 +38,10 @@ class PingRetryPolicy:
     After the retries are exhausted the store builds a fresh client for its
     next setup, but not sooner than ``recovery_cooldown_seconds`` after the
     failure, so a MongoDB that is still down does not make every caller wait
-    out the full retry budget. The cooldown must be positive: the base store
+    out the full retry budget. That next attempt is a single probe ping with
+    ``recovery_ping_timeout_seconds``, not the full retry budget, because the
+    store's setup lock is held while it runs and every caller queues behind
+    it. The cooldown must be positive: the base store
     closes a failed store after releasing its setup lock, and a positive
     cooldown keeps a queued caller from rebuilding the client while that close
     is still running.
@@ -49,6 +52,7 @@ class PingRetryPolicy:
     base_delay_seconds: float = 0.5
     max_delay_seconds: float = 4.0
     recovery_cooldown_seconds: float = 30.0
+    recovery_ping_timeout_seconds: float = 5.0
 
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
@@ -61,6 +65,8 @@ class PingRetryPolicy:
             raise ValueError("max_delay_seconds must be at least base_delay_seconds")
         if not self.recovery_cooldown_seconds > 0:
             raise ValueError("recovery_cooldown_seconds must be greater than 0")
+        if not self.recovery_ping_timeout_seconds > 0:
+            raise ValueError("recovery_ping_timeout_seconds must be greater than 0")
 
     def backoff_delay(self, *, attempt: int) -> float:
         """Exponential backoff with full jitter for the 1-based ``attempt``."""
@@ -119,6 +125,7 @@ class ValidatingMongoDBStore(MongoDBStore):
         self._monotonic = monotonic
         self._mongo_url: str | None = kwargs.get("url")
         self._last_setup_failure_at: float | None = None
+        self._probing = False
 
     def _recover_client_after_failed_setup(self) -> None:
         """Replace the client that a failed setup left closed.
@@ -138,10 +145,12 @@ class ValidatingMongoDBStore(MongoDBStore):
                 f"{math.ceil(remaining)}s."
             )
         if self._client_provided_by_user or not self._mongo_url:
+            self._probing = True
             return
         db_name = self._db.name
         self._client = self._client_factory(self._mongo_url)
         self._db = self._client[db_name]
+        self._probing = True
         logger.warning(
             "Model config cache rebuilt its MongoDB client after a failed "
             "setup (db=%s)",
@@ -150,13 +159,19 @@ class ValidatingMongoDBStore(MongoDBStore):
 
     async def _ping_with_retry(self) -> None:
         policy = self._ping_retry_policy
-        for attempt in range(1, policy.max_attempts + 1):
+        max_attempts = 1 if self._probing else policy.max_attempts
+        timeout = (
+            policy.recovery_ping_timeout_seconds
+            if self._probing
+            else policy.ping_timeout_seconds
+        )
+        for attempt in range(1, max_attempts + 1):
             try:
-                async with asyncio.timeout(policy.ping_timeout_seconds):
+                async with asyncio.timeout(timeout):
                     await self._db.command("ping")
                 return
             except (ConnectionFailure, TimeoutError) as e:
-                if attempt == policy.max_attempts:
+                if attempt == max_attempts:
                     raise
                 delay = policy.backoff_delay(attempt=attempt)
                 logger.warning(
@@ -165,14 +180,14 @@ class ValidatingMongoDBStore(MongoDBStore):
                     type(e).__name__,
                     delay,
                     attempt,
-                    policy.max_attempts,
+                    max_attempts,
                 )
                 await self._sleep(delay)
 
     async def _setup(self) -> None:
         self._recover_client_after_failed_setup()
-        await super()._setup()
         try:
+            await super()._setup()
             await self._ping_with_retry()
         except Exception as e:
             self._last_setup_failure_at = self._monotonic()
@@ -182,6 +197,8 @@ class ValidatingMongoDBStore(MongoDBStore):
                 f"Verify MONGO_LLM_STORAGE_URI / MONGO_URL, credentials, "
                 f"and network access. Error: {e}"
             ) from e
+        finally:
+            self._probing = False
         logger.info(
             "Model config cache MongoDB connection validated (db=%s)",
             self._db.name,

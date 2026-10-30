@@ -252,12 +252,15 @@ class TestCreateCacheStoreRetryPolicy:
 class _FakeClient:
     """Mimics AsyncMongoClient: unusable once closed, like the real driver."""
 
-    def __init__(self, *, ping_failures: int = 0) -> None:
+    def __init__(self, *, ping_failures: int = 0, fail_on_enter: bool = False) -> None:
         self.closed = False
         self._ping_failures = ping_failures
+        self._fail_on_enter = fail_on_enter
         self.ping_calls = 0
 
     async def __aenter__(self) -> Self:
+        if self._fail_on_enter:
+            raise AutoReconnect("could not connect")
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -301,6 +304,7 @@ class TestClientRecovery:
         clock: _Clock,
         cooldown: float = 30.0,
         use_own_client: bool = False,
+        max_attempts: int = 1,
     ) -> tuple[ValidatingMongoDBStore, list[str]]:
         factory_urls: list[str] = []
 
@@ -311,7 +315,9 @@ class TestClientRecovery:
         async def no_sleep(delay: float) -> None:
             return None
 
-        policy = PingRetryPolicy(max_attempts=1, recovery_cooldown_seconds=cooldown)
+        policy = PingRetryPolicy(
+            max_attempts=max_attempts, recovery_cooldown_seconds=cooldown
+        )
         if use_own_client:
             store = ValidatingMongoDBStore(
                 client=AsyncMongoClient("mongodb://localhost:27017"),
@@ -433,6 +439,54 @@ class TestClientRecovery:
     def test_rejects_non_positive_cooldown(self, cooldown: float) -> None:
         with pytest.raises(ValueError, match="recovery_cooldown_seconds"):
             PingRetryPolicy(recovery_cooldown_seconds=cooldown)
+
+    @pytest.mark.parametrize("timeout", [-1.0, 0.0, float("nan")])
+    def test_rejects_non_positive_recovery_ping_timeout(self, timeout: float) -> None:
+        with pytest.raises(ValueError, match="recovery_ping_timeout_seconds"):
+            PingRetryPolicy(recovery_ping_timeout_seconds=timeout)
+
+    @pytest.mark.asyncio
+    async def test_recovery_is_a_single_probe_not_the_full_retry_budget(self) -> None:
+        clock = _Clock()
+        first = _FakeClient(ping_failures=99)
+        second, third = _FakeClient(ping_failures=99), _FakeClient()
+        store, _ = self._make_store(
+            first_client=first,
+            replacements=[second, third],
+            clock=clock,
+            max_attempts=3,
+        )
+
+        with pytest.raises(StoreSetupError):
+            await store.setup()
+        assert first.ping_calls == 3
+        clock.now += 31.0
+        with pytest.raises(StoreSetupError):
+            await store.setup()
+
+        assert second.ping_calls == 1
+        clock.now += 31.0
+        await store.setup()
+        assert third.ping_calls == 1
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_failure_before_the_ping_still_leads_to_a_rebuild(self) -> None:
+        clock = _Clock()
+        first = _FakeClient(fail_on_enter=True)
+        second = _FakeClient()
+        store, factory_urls = self._make_store(
+            first_client=first, replacements=[second], clock=clock
+        )
+
+        with pytest.raises(StoreSetupError):
+            await store.setup()
+        clock.now += 31.0
+        await store.setup()
+
+        assert len(factory_urls) == 1
+        assert second.ping_calls == 1
+        await store.close()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

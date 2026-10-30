@@ -56,8 +56,10 @@ Option B. `PingRetryPolicy` gains `recovery_cooldown_seconds` (default 30 s).
 
 * within the cooldown it raises `ConnectionError` without touching the network;
 * after the cooldown it builds a fresh `AsyncMongoClient` from the store's URL
-  (injectable `client_factory`), re-points its database handle, and runs the
-  normal ping retry again.
+  (injectable `client_factory`), re-points its database handle, and runs a
+  single probe ping with `recovery_ping_timeout_seconds` (default 5 s), not
+  the full retry budget. The store's setup lock is held while it runs and every
+  caller queues behind it, so the probe must be short.
 
 A store constructed with its own `client`, or without a `url`, is never rebuilt:
 the former belongs to the caller, the latter has nothing to rebuild from.
@@ -73,12 +75,17 @@ after releasing its setup lock, so a zero cooldown would let a queued caller
 rebuild the client while that close is still running and then have the new
 client closed under it.
 
+Any exception raised while opening the store, including from the client's own
+connect step (for example an SRV DNS failure before the ping), is recorded as a
+failed setup, so every failed setup leads to a rebuild.
+
 ### Risks and mitigations
 
-* **The caller after the cooldown pays the retry budget again** while MongoDB
-  is still down. At most one caller per cooldown window does; the others fail
-  fast. Callers queued on the store's setup lock wait for the in-flight attempt
-  to end, then see its failure and fail fast too.
+* **Callers stall during each recovery probe** while MongoDB is still down:
+  with the defaults, up to 5 s in every 35 s (30 s cooldown plus the probe).
+  Callers queued on the store's setup lock wait for the probe, then see its
+  failure and fail fast. Using the full retry budget for each recovery attempt
+  was rejected because it would stall callers for about 43 s of every 73 s.
 * **Reliance on private base-class attributes:** the same ones the existing
   `ValidatingMongoDBStore` and `McpToolListStore` already use; covered by tests
   that run the real `setup()` against a fake client that is unusable once closed.
@@ -89,12 +96,15 @@ client closed under it.
   store's URL and setup succeeds; the old client stays closed.
 * Within the cooldown, setup raises without building a client or pinging.
 * Repeated failures: each rebuild waits out its own cooldown.
+* A recovery attempt is one ping, even when the policy allows several.
+* A failure before the ping (the client's own connect step) still leads to a
+  rebuild.
 * A healthy store is never rebuilt.
 * A caller-owned client is never rebuilt.
 * Cooldown boundary: just under the cooldown fails fast; at and after it
   rebuilds.
 * Two callers set up at once share one attempt and one failure.
-* A zero, negative or NaN cooldown is rejected.
+* A zero, negative or NaN cooldown or recovery ping timeout is rejected.
 * Checked once, outside the test suite, against `pymongo 4.19.0` and
   `py-key-value-aio 0.4.6` (the versions baileyai ships; this repo's own lock
   has `pymongo 4.16.0` and `py-key-value-aio 0.4.5`, whose `setup()` code is the
