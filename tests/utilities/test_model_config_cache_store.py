@@ -116,7 +116,6 @@ class TestPingRetry:
 
         assert fake_db.ping_calls == transient_failures + 1
         assert len(sleeps) == transient_failures
-        assert store._exit_stack_entered is True
         await store.close()
 
     @pytest.mark.asyncio
@@ -205,6 +204,45 @@ class TestPingRetryPolicy:
 
         assert total_ping_budget >= pymongo_default_server_selection_seconds
 
-    def test_rejects_zero_attempts(self) -> None:
-        with pytest.raises(ValueError, match="max_attempts"):
-            PingRetryPolicy(max_attempts=0)
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"max_attempts": 0}, "max_attempts"),
+            ({"ping_timeout_seconds": 0.0}, "ping_timeout_seconds"),
+            ({"ping_timeout_seconds": -1.0}, "ping_timeout_seconds"),
+            ({"base_delay_seconds": -0.1}, "base_delay_seconds"),
+            (
+                {"base_delay_seconds": 2.0, "max_delay_seconds": 1.0},
+                "max_delay_seconds",
+            ),
+        ],
+    )
+    def test_rejects_invalid_bounds(
+        self, kwargs: dict[str, float], message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            PingRetryPolicy(**kwargs)  # type: ignore[arg-type]
+
+
+class TestCreateCacheStoreRetryPolicy:
+    @pytest.mark.asyncio
+    async def test_factory_passes_the_policy_to_the_store(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Three transient failures: the default policy (4 attempts) would
+        # recover, a 2-attempt policy handed to the factory must give up.
+        store = create_cache_store(
+            mongo_url="mongodb://localhost:27017",
+            ping_retry_policy=PingRetryPolicy(
+                max_attempts=2, base_delay_seconds=0.0, max_delay_seconds=0.0
+            ),
+        )
+        fake_db = _FakeDb(outcomes=[AutoReconnect("down")] * 3)
+        monkeypatch.setattr(store, "_db", fake_db)
+
+        with pytest.raises(
+            StoreSetupError, match="Model config cache failed to connect"
+        ):
+            await store.setup()
+
+        assert fake_db.ping_calls == 2

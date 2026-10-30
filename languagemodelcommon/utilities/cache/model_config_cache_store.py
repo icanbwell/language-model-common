@@ -40,6 +40,12 @@ class PingRetryPolicy:
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        if self.ping_timeout_seconds <= 0:
+            raise ValueError("ping_timeout_seconds must be greater than 0")
+        if self.base_delay_seconds < 0:
+            raise ValueError("base_delay_seconds must not be negative")
+        if self.max_delay_seconds < self.base_delay_seconds:
+            raise ValueError("max_delay_seconds must be at least base_delay_seconds")
 
     def backoff_delay(self, *, attempt: int) -> float:
         """Exponential backoff with full jitter for the 1-based ``attempt``."""
@@ -62,6 +68,12 @@ class ValidatingMongoDBStore(MongoDBStore):
     raises, and ``setup`` is then re-run on that closed client, so every
     later call fails with ``Cannot use AsyncMongoClient after close``. The
     retry must therefore happen before ``_setup`` raises.
+
+    Args (beyond those of ``MongoDBStore``):
+        ping_retry_policy: Bounds for retrying the open-time ping. Defaults
+            to ``PingRetryPolicy()``.
+        sleep: Awaitable used to wait between retries. Injectable so tests
+            do not wait in real time.
     """
 
     def __init__(
