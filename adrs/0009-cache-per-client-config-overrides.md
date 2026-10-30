@@ -131,8 +131,9 @@ path. Value:
 
 **Size limit.** Positive rows: one per client that has an override directory (small; tens). Negative
 rows: bounded by TTL times request rate, because any well-formed id creates a row. Controls: negative
-soft TTL of 300 s and hard TTL equal to it, a client id length cap (64), and a metric on negative
-writes. The id is attacker-controlled input today (each unknown id already costs a GitHub call per
+soft TTL of 300 s and hard TTL equal to it, a client id length cap (64). Negative writes are not
+metered in this change: the count is available from the `override_refresh result=absent` log line, and
+a metric (and any alert on it) is deferred to BAI-1379. The id is attacker-controlled input today (each unknown id already costs a GitHub call per
 request, so this is strictly better), but if abuse shows up the follow-up is a cached `clients/`
 directory listing (one call per ref) used to answer "no override" without writing a row per id.
 
