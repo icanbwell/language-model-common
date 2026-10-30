@@ -130,8 +130,8 @@ def check_structured_content(
     ``structuredContent: null`` is validated as a value (so a schema that
     allows null accepts it); mcp 2.2 rejects it as missing.
     """
-    # jsonschema is a transitive dependency of mcp (the SDK imports it lazily the
-    # same way) and ships no type stubs.
+    # jsonschema and referencing are declared direct dependencies in pyproject.toml
+    # (also pulled in by mcp). jsonschema ships no type stubs.
     from jsonschema import SchemaError  # type: ignore[import-untyped]
     from jsonschema import exceptions as jsonschema_exceptions
     from jsonschema.validators import validator_for  # type: ignore[import-untyped]
