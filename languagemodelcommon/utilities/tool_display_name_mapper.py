@@ -23,7 +23,8 @@ MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 _LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
 # Default cap on one substituted placeholder value; sized to fit a list such as
 # "Problem List, Results Summary, History of Procedures, Vital Signs, ...".
-DEFAULT_MAX_SUBSTITUTED_VALUE_LENGTH = 128
+_DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS = 128
+_ELLIPSIS = "…"
 _LEARNED_TITLE_MAX_CHARS = 256
 _LEARNED_TITLE_NAME_MAX_CHARS = 128
 _LEARNED_TITLE_TTL_SECONDS = 3600.0
@@ -97,7 +98,7 @@ class ToolDisplayNameMapper:
         *,
         name_to_display_name: Dict[str, str] | None = None,
         learned_titles: LearnedTitleCache | None = None,
-        max_substituted_value_length: int = DEFAULT_MAX_SUBSTITUTED_VALUE_LENGTH,
+        max_substituted_value_length: int = _DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS,
     ) -> None:
         self._max_substituted_value_length = max_substituted_value_length
         self._name_to_display_name: Dict[str, str] = {
@@ -260,7 +261,7 @@ class ToolDisplayNameMapper:
             limit = self._max_substituted_value_length
             if len(text) <= limit:
                 return text
-            return text[: limit - 1].rstrip() + "…"
+            return text[: limit - len(_ELLIPSIS)].rstrip() + _ELLIPSIS
 
         def _format_value(value: Any) -> str | None:
             if isinstance(value, list):
