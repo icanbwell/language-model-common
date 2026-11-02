@@ -335,6 +335,14 @@ class LanguageModelCommonEnvironmentVariables(
         return float(os.environ.get("RATE_LIMIT_MAX_BACKOFF_SECONDS", "60"))
 
     @property
+    def tool_title_max_param_length(self) -> int:
+        """Longest a value substituted into an MCP tool title may be, in characters.
+
+        Longer values are truncated with an ellipsis. Defaults to 128.
+        """
+        return int(os.environ.get("TOOL_TITLE_MAX_PARAM_LENGTH", "128"))
+
+    @property
     def learned_title_store_db_name(self) -> str:
         """MongoDB database name for the learned MCP tool title store.
 

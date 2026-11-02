@@ -129,6 +129,74 @@ class TestParameterSubstitution:
         )
         assert result == "🩺 Checking your blood_pressure"
 
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("a" * 20, "a" * 20),
+            ("a" * 21, "a" * 19 + "…"),
+            ("blood pressure trends over time", "blood pressure tren…"),
+            ("a" * 18 + " bcdefg", "a" * 18 + "…"),
+        ],
+    )
+    def test_long_value_truncated_with_ellipsis(
+        self, value: str, expected: str
+    ) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🔍 Searching skills: {query}"},
+            max_substituted_value_length=20,
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool", tool_input={"query": value}
+        )
+        assert result == f"🔍 Searching skills: {expected}"
+
+    def test_list_value_truncated_as_a_whole(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"},
+            max_substituted_value_length=20,
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool",
+            tool_input={"vitals": ["a" * 25, "heart_rate"]},
+        )
+        assert result == f"🩺 Checking your ({'a' * 19}…)"
+
+    def test_default_limit_fits_long_section_list(self) -> None:
+        sections = [
+            "Problem List",
+            "Results Summary",
+            "History of Procedures",
+            "Vital Signs",
+            "Social History",
+            "History of Past Illness",
+            "Immunizations",
+        ]
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "📋 Reading {sections}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool", tool_input={"sections": sections}
+        )
+        assert result == f"📋 Reading ({', '.join(sections)})"
+
+    def test_with_tools_keeps_configured_limit(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🔍 Searching: {query}"},
+            max_substituted_value_length=10,
+        ).with_tools(tools=[])
+        result = mapper.get_display_name(
+            tool_name="my_tool", tool_input={"query": "a" * 30}
+        )
+        assert result == "🔍 Searching: " + "a" * 9 + "…"
+
+    def test_default_is_not_truncated(self) -> None:
+        default = "d" * 30
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": f"🧠 Skill {{missing|{default}}}"}
+        )
+        result = mapper.get_display_name(tool_name="my_tool", tool_input={"x": "y"})
+        assert result == f"🧠 Skill {default}"
+
     def test_empty_list_uses_default(self) -> None:
         mapper = ToolDisplayNameMapper(
             name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}

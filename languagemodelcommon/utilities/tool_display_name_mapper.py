@@ -21,6 +21,10 @@ MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 
 
 _LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
+# Default cap on one substituted placeholder value; sized to fit a list such as
+# "Problem List, Results Summary, History of Procedures, Vital Signs, ...".
+_DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS = 128
+_ELLIPSIS = "…"
 _LEARNED_TITLE_MAX_CHARS = 256
 _LEARNED_TITLE_NAME_MAX_CHARS = 128
 _LEARNED_TITLE_TTL_SECONDS = 3600.0
@@ -94,7 +98,9 @@ class ToolDisplayNameMapper:
         *,
         name_to_display_name: Dict[str, str] | None = None,
         learned_titles: LearnedTitleCache | None = None,
+        max_substituted_value_length: int = _DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS,
     ) -> None:
+        self._max_substituted_value_length = max_substituted_value_length
         self._name_to_display_name: Dict[str, str] = {
             name: display_name
             for name, display_name in (name_to_display_name or {}).items()
@@ -222,6 +228,7 @@ class ToolDisplayNameMapper:
         merged = ToolDisplayNameMapper(
             name_to_display_name=dict(self._name_to_display_name),
             learned_titles=self._learned_titles,
+            max_substituted_value_length=self._max_substituted_value_length,
         )
         merged.register_from_tools(tools)
         return merged
@@ -236,25 +243,35 @@ class ToolDisplayNameMapper:
 
     _PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
 
-    @classmethod
-    def _substitute_params(cls, *, template: str, params: Dict[str, Any]) -> str:
+    def _substitute_params(self, *, template: str, params: Dict[str, Any]) -> str:
         """Replace {param} or {param|default} placeholders with values from params.
 
         Supports: {name}, {name|fallback text}
         If a param is missing and no default is specified, the placeholder is left as-is.
+        Each substituted value (the joined items, for list values) is truncated to
+        ``max_substituted_value_length`` characters, ellipsis included, so free-text
+        arguments such as search queries cannot blow up a streamed progress line.
+        Defaults are template text and are not truncated.
         """
         if "{" not in template:
             return template
+
+        def _truncate(value: Any) -> str:
+            text = str(value)
+            limit = self._max_substituted_value_length
+            if len(text) <= limit:
+                return text
+            return text[: limit - len(_ELLIPSIS)].rstrip() + _ELLIPSIS
 
         def _format_value(value: Any) -> str | None:
             if isinstance(value, list):
                 if not value:
                     return None
-                joined = ", ".join(str(item) for item in value)
+                joined = _truncate(", ".join(str(item) for item in value))
                 if len(value) > 1:
                     return f"({joined})"
                 return joined
-            return str(value)
+            return _truncate(value)
 
         def _replace(match: re.Match[str]) -> str:
             token = match.group(1)
@@ -271,7 +288,7 @@ class ToolDisplayNameMapper:
                 return default
             return match.group(0)
 
-        return cls._PLACEHOLDER_RE.sub(_replace, template)
+        return self._PLACEHOLDER_RE.sub(_replace, template)
 
     def get_display_name(
         self, *, tool_name: str, tool_input: Dict[str, Any] | None = None

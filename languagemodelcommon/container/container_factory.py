@@ -247,7 +247,13 @@ class LanguageModelCommonContainerFactory:
 
         container.singleton(
             service_type=ToolDisplayNameMapper,
-            factory=lambda c: ToolDisplayNameMapper(),
+            factory=lambda c: ToolDisplayNameMapper(
+                max_substituted_value_length=(
+                    c.resolve(
+                        LanguageModelCommonEnvironmentVariables
+                    ).tool_title_max_param_length
+                )
+            ),
         )
 
         def _create_learned_title_store(c: Any) -> LearnedTitleStore | None:
