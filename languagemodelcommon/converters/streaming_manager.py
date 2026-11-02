@@ -21,6 +21,7 @@ See Also:
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import (
     Any,
     AsyncGenerator,
@@ -368,17 +369,22 @@ class LangGraphStreamingManager(StreamContextMixin):
         # no guaranteed whitespace against what was already streamed -- see
         # StreamBufferManager.mark_new_invocation_boundary.
         self._stream_buffer_manager.mark_new_invocation_boundary()
+        self._stream_debug_output_manager.start_streamed_output(
+            event_name="on_chat_model_start",
+            start_time=datetime.now(tz=timezone.utc),
+        )
 
-        if not chat_request_wrapper.enable_debug_logging:
-            return
-
-        # Gated by enable_debug_logging so a debugging UI can show every
-        # individual model invocation in a turn, not just the turn-level
-        # response.created/completed pair (BAI-882).
-        input_messages = _extract_input_messages(event)
+        # The item is always emitted so a client can show how long each model
+        # call took; the request messages (prompt content) ride along only
+        # when enable_debug_logging is on (BAI-882, BAI-1440).
+        request_messages: list[Dict[str, Any]] | None = (
+            _serialize_messages_for_llm_call(_extract_input_messages(event))
+            if chat_request_wrapper.enable_debug_logging
+            else None
+        )
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
-            request_messages=_serialize_messages_for_llm_call(input_messages),
+            request_messages=request_messages,
         )
 
     async def _handle_on_chat_model_end(
@@ -388,7 +394,6 @@ class LangGraphStreamingManager(StreamContextMixin):
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        input_messages = _extract_input_messages(event)
         # pop_streamed_output must run every turn regardless of debug mode --
         # append_fragment in _handle_on_chat_model_stream runs unconditionally,
         # so skipping this pop when debug is off would leak buffered
@@ -402,17 +407,28 @@ class LangGraphStreamingManager(StreamContextMixin):
             else None
         )
 
+        runtime_seconds: float | None = (
+            (
+                datetime.now(tz=timezone.utc) - streamed_output_record.start_time
+            ).total_seconds()
+            if streamed_output_record
+            else None
+        )
+        # Always emitted, pairing with the llm_call start event above. The
+        # model's response text is included only when enable_debug_logging is
+        # on; runtime_seconds is always included (BAI-882, BAI-1440).
+        yield chat_request_wrapper.create_llm_call_end_sse_event(
+            request_id=request_information.request_id,
+            response_text=(streamed_output or "")
+            if chat_request_wrapper.enable_debug_logging
+            else None,
+            runtime_seconds=runtime_seconds,
+        )
+
         if not chat_request_wrapper.enable_debug_logging:
             return
 
-        # Gated by enable_debug_logging, pairing with the llm_call start event
-        # above -- this single invocation's own response text, not the
-        # turn's accumulated output (BAI-882).
-        yield chat_request_wrapper.create_llm_call_end_sse_event(
-            request_id=request_information.request_id,
-            response_text=streamed_output,
-        )
-
+        input_messages = _extract_input_messages(event)
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""

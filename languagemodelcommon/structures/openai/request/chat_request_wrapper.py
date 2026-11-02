@@ -406,7 +406,7 @@ class ChatRequestWrapper(abc.ABC):
         self,
         *,
         request_id: str,
-        request_messages: list[dict[str, Any]],
+        request_messages: list[dict[str, Any]] | None,
     ) -> str | None:
         """Emit an SSE event when the model begins one individual invocation.
 
@@ -414,7 +414,9 @@ class ChatRequestWrapper(abc.ABC):
         call, a tool call, then a follow-up call with the tool result) --
         this fires once per invocation, not once per turn, so a debugging UI
         can show each call distinctly. ``request_messages`` is the exact
-        message list sent to the model for this invocation.
+        message list sent to the model for this invocation, or ``None`` when
+        prompt content must not be sent (debug logging off); the item itself
+        is still emitted so clients can time the call.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit
@@ -427,12 +429,15 @@ class ChatRequestWrapper(abc.ABC):
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
     ) -> str | None:
         """Emit an SSE event when one individual model invocation finishes.
 
         Pairs with ``create_llm_call_start_sse_event``. ``response_text`` is
         the model's own streamed output text for that single invocation, not
-        the accumulated text across the whole turn.
+        the accumulated text across the whole turn, or ``None`` when response
+        content must not be sent (debug logging off). ``runtime_seconds`` is
+        the wall-clock duration of the invocation.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit

@@ -469,7 +469,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         self,
         *,
         request_id: str,
-        request_messages: List[Dict[str, Any]],
+        request_messages: List[Dict[str, Any]] | None,
     ) -> str | None:
         """Emit a ``response.output_item.added`` event with an ``llm_call`` item.
 
@@ -488,9 +488,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "type": "llm_call",
                 "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
                 "status": "in_progress",
-                "request": request_messages,
             },
         }
+        # Prompt content is only sent when the caller opts in (debug logging).
+        if request_messages is not None:
+            event["item"]["request"] = request_messages
         return f"data: {json.dumps(event)}\n\n"
 
     @override
@@ -499,6 +501,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
 
@@ -514,9 +517,12 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
                 "type": "llm_call",
                 "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
                 "status": "completed",
-                "output": response_text or "",
+                "runtime_seconds": runtime_seconds,
             },
         }
+        # Response text is only sent when the caller opts in (debug logging).
+        if response_text is not None:
+            event["item"]["output"] = response_text
         return f"data: {json.dumps(event)}\n\n"
 
     @override
