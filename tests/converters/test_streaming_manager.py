@@ -1,6 +1,9 @@
+import json
+import logging
+import time
 from collections.abc import Callable
 from typing import Any, Optional, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -10,11 +13,18 @@ from languagemodelcommon.converters.stream_buffer import StreamBufferManager
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
-from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
+from languagemodelcommon.converters.streaming_manager import (
+    LLM_CALLS_ABANDONED_EVENT,
+    LangGraphStreamingManager,
+)
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
+)
+from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
+    ResponsesApiRequestWrapper,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -78,7 +88,8 @@ class _FakeChatRequestWrapper:
         self,
         *,
         request_id: str,
-        request_messages: list[dict[str, Any]],
+        request_messages: list[dict[str, Any]] | None,
+        invocation_id: str | None = None,
     ) -> str | None:
         return None
 
@@ -87,6 +98,8 @@ class _FakeChatRequestWrapper:
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         return None
 
@@ -519,14 +532,16 @@ class _RecordingLlmCallChatRequestWrapper(_FakeChatRequestWrapper):
 
     def __init__(self, *, enable_debug_logging: bool) -> None:
         super().__init__(enable_debug_logging=enable_debug_logging)
-        self.llm_call_start_calls: list[list[dict[str, Any]]] = []
+        self.llm_call_start_calls: list[list[dict[str, Any]] | None] = []
         self.llm_call_end_calls: list[str | None] = []
+        self.llm_call_end_runtimes: list[float | None] = []
 
     def create_llm_call_start_sse_event(
         self,
         *,
         request_id: str,
-        request_messages: list[dict[str, Any]],
+        request_messages: list[dict[str, Any]] | None,
+        invocation_id: str | None = None,
     ) -> str | None:
         self.llm_call_start_calls.append(request_messages)
         return f"llm_call_start:{len(self.llm_call_start_calls)}"
@@ -536,8 +551,11 @@ class _RecordingLlmCallChatRequestWrapper(_FakeChatRequestWrapper):
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         self.llm_call_end_calls.append(response_text)
+        self.llm_call_end_runtimes.append(runtime_seconds)
         return f"llm_call_end:{len(self.llm_call_end_calls)}"
 
 
@@ -658,83 +676,512 @@ async def test_chat_model_end_yields_llm_call_end_when_debug_logging_enabled(
     assert chat_request_wrapper.llm_call_end_calls == ["Hi there!"]
 
 
-@pytest.mark.asyncio
-async def test_chat_model_start_yields_nothing_when_debug_logging_disabled(
-    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
-) -> None:
-    manager = streaming_manager_factory()
-    request_information = RequestInformation(request_id="req-1")
-    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
-        enable_debug_logging=False
-    )
-
-    event: StandardStreamEvent | CustomStreamEvent = cast(
+async def _run_llm_call(
+    *,
+    manager: LangGraphStreamingManager,
+    chat_request_wrapper: _RecordingLlmCallChatRequestWrapper,
+    request_information: RequestInformation,
+    prompt_text: str,
+    response_text: str,
+) -> tuple[list[str | None], list[str | None]]:
+    """Drives one model invocation (start, stream, end) and returns the chunks
+    yielded by the start and end handlers."""
+    wrapper = cast(ChatRequestWrapper, chat_request_wrapper)
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
         StandardStreamEvent,
         {
             "event": "on_chat_model_start",
-            "data": {"input": {"messages": [[HumanMessage(content="Hello")]]}},
+            "run_id": "run-1",
+            "data": {"input": {"messages": [[HumanMessage(content=prompt_text)]]}},
         },
     )
-
-    chunks = [
+    start_chunks = [
         chunk
         async for chunk in manager._handle_on_chat_model_start(
-            event=event,
-            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            event=start_event,
+            chat_request_wrapper=wrapper,
             request_information=request_information,
         )
     ]
-
-    assert chunks == []
-    assert chat_request_wrapper.llm_call_start_calls == []
-
-
-@pytest.mark.asyncio
-async def test_chat_model_end_does_not_yield_llm_call_end_when_debug_logging_disabled(
-    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
-) -> None:
-    manager = streaming_manager_factory()
-    request_information = RequestInformation(request_id="req-1")
-    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
-        enable_debug_logging=False
-    )
-
-    start_event: StandardStreamEvent | CustomStreamEvent = cast(
-        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
-    )
-    async for _ in manager._handle_on_chat_model_start(
-        event=start_event,
-        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
-        request_information=request_information,
-    ):
-        pass
-
     stream_event: StandardStreamEvent | CustomStreamEvent = cast(
         StandardStreamEvent,
         {
             "event": "on_chat_model_stream",
-            "data": {"chunk": AIMessageChunk(content="Hi there!")},
+            "data": {"chunk": AIMessageChunk(content=response_text)},
         },
     )
     async for _ in manager._handle_on_chat_model_stream(
         event=stream_event,
-        chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+        chat_request_wrapper=wrapper,
         request_information=request_information,
     ):
         pass
-
     end_event: StandardStreamEvent | CustomStreamEvent = cast(
         StandardStreamEvent,
-        {"event": "on_chat_model_end", "data": {"input": {"messages": []}}},
+        {
+            "event": "on_chat_model_end",
+            "run_id": "run-1",
+            "data": {"input": {"messages": [[HumanMessage(content=prompt_text)]]}},
+        },
     )
-    chunks = [
+    end_chunks = [
         chunk
         async for chunk in manager._handle_on_chat_model_end(
             event=end_event,
-            chat_request_wrapper=cast(ChatRequestWrapper, chat_request_wrapper),
+            chat_request_wrapper=wrapper,
+            request_information=request_information,
+        )
+    ]
+    return start_chunks, end_chunks
+
+
+@pytest.mark.asyncio
+async def test_llm_call_items_emitted_without_content_when_debug_logging_disabled(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BAI-1440: the llm_call start/done items are always emitted so clients
+    can show model-call timing, but prompt and response text (potential PHI)
+    must not reach the wrapper when debug logging is off."""
+    clock = iter([100.0, 102.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=False
+    )
+
+    start_chunks, end_chunks = await _run_llm_call(
+        manager=manager,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=RequestInformation(request_id="req-1"),
+        prompt_text="synthetic prompt text",
+        response_text="synthetic response text",
+    )
+
+    assert start_chunks == ["llm_call_start:1"]
+    assert end_chunks == ["llm_call_end:1"]
+    assert chat_request_wrapper.llm_call_start_calls == [None]
+    assert chat_request_wrapper.llm_call_end_calls == [None]
+    assert chat_request_wrapper.llm_call_end_runtimes == [2.5]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_end_includes_runtime_when_debug_logging_enabled(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter([100.0, 102.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
+        enable_debug_logging=True
+    )
+
+    await _run_llm_call(
+        manager=manager,
+        chat_request_wrapper=chat_request_wrapper,
+        request_information=RequestInformation(request_id="req-1"),
+        prompt_text="synthetic prompt text",
+        response_text="synthetic response text",
+    )
+
+    assert chat_request_wrapper.llm_call_end_runtimes == [2.5]
+    assert chat_request_wrapper.llm_call_end_calls == ["synthetic response text"]
+
+
+class _PrepareRecordingChatRequestWrapper(_FakeChatRequestWrapper):
+    """Records the order of create_prepare/llm_call_start events so tests can
+    assert the prepare item is emitted once, ahead of the first llm_call."""
+
+    def __init__(self, *, enable_debug_logging: bool = False) -> None:
+        super().__init__(enable_debug_logging=enable_debug_logging)
+        self.calls: list[str] = []
+        self.prepare_runtimes: list[float] = []
+
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        self.calls.append("prepare")
+        self.prepare_runtimes.append(runtime_seconds)
+        return "prepare"
+
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]] | None,
+        invocation_id: str | None = None,
+    ) -> str | None:
+        self.calls.append("llm_call_start")
+        return "llm_call_start"
+
+
+async def _model_start_chunks(
+    *,
+    manager: LangGraphStreamingManager,
+    wrapper: _PrepareRecordingChatRequestWrapper,
+    request_information: RequestInformation,
+) -> list[str | None]:
+    event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    return [
+        chunk
+        async for chunk in manager._handle_on_chat_model_start(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
             request_information=request_information,
         )
     ]
 
-    assert chunks == []
-    assert chat_request_wrapper.llm_call_end_calls == []
+
+@pytest.mark.asyncio
+async def test_prepare_emitted_once_before_first_llm_call_start(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+    request_information = RequestInformation(
+        request_id="req-1", request_started_at=time.perf_counter() - 2.0
+    )
+
+    first = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+    second = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+    third = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+
+    assert first == ["prepare", "llm_call_start"]
+    assert second == ["llm_call_start"]
+    assert third == ["llm_call_start"]
+    assert wrapper.calls == [
+        "prepare",
+        "llm_call_start",
+        "llm_call_start",
+        "llm_call_start",
+    ]
+    (runtime_seconds,) = wrapper.prepare_runtimes
+    assert runtime_seconds >= 2.0
+
+
+@pytest.mark.asyncio
+async def test_prepare_not_emitted_when_request_started_at_is_none(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    chunks = await _model_start_chunks(
+        manager=manager,
+        wrapper=wrapper,
+        request_information=RequestInformation(request_id="req-1"),
+    )
+
+    assert chunks == ["llm_call_start"]
+    assert wrapper.prepare_runtimes == []
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_clamped_to_zero_for_future_start(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    await _model_start_chunks(
+        manager=manager,
+        wrapper=wrapper,
+        request_information=RequestInformation(
+            request_id="req-1", request_started_at=time.perf_counter() + 1000.0
+        ),
+    )
+
+    assert wrapper.prepare_runtimes == [0.0]
+
+
+@pytest.mark.asyncio
+async def test_prepare_state_is_per_request(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """The once-per-turn flag must not leak across requests sharing a manager."""
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    for request_id in ("req-1", "req-2"):
+        await _model_start_chunks(
+            manager=manager,
+            wrapper=wrapper,
+            request_information=RequestInformation(
+                request_id=request_id, request_started_at=time.perf_counter()
+            ),
+        )
+
+    assert wrapper.calls == ["prepare", "llm_call_start", "prepare", "llm_call_start"]
+
+
+class _LlmCallIdRecordingChatRequestWrapper(_FakeChatRequestWrapper):
+    def __init__(self) -> None:
+        super().__init__(enable_debug_logging=False)
+        self.start_ids: list[str | None] = []
+        self.end_calls: list[tuple[str | None, float | None]] = []
+
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]] | None,
+        invocation_id: str | None = None,
+    ) -> str | None:
+        self.start_ids.append(invocation_id)
+        return "start"
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
+    ) -> str | None:
+        self.end_calls.append((invocation_id, runtime_seconds))
+        return "end"
+
+
+@pytest.mark.asyncio
+async def test_overlapping_llm_calls_are_timed_and_paired_by_run_id(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parallel model invocations must not share one timing slot: each end
+    event pairs with its own start via the run id and gets its own runtime."""
+    clock = iter([0.0, 10.0, 15.0, 40.0])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    wrapper = _LlmCallIdRecordingChatRequestWrapper()
+    request_information = RequestInformation(request_id="req-1")
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+
+    async def _run(*, event_name: str, run_id: str) -> None:
+        event: StandardStreamEvent | CustomStreamEvent = cast(
+            StandardStreamEvent,
+            {"event": event_name, "run_id": run_id, "data": {}},
+        )
+        handler = (
+            manager._handle_on_chat_model_start
+            if event_name == "on_chat_model_start"
+            else manager._handle_on_chat_model_end
+        )
+        async for _ in handler(
+            event=event,
+            chat_request_wrapper=cast_wrapper,
+            request_information=request_information,
+        ):
+            pass
+
+    await _run(event_name="on_chat_model_start", run_id="run-a")  # t=0
+    await _run(event_name="on_chat_model_start", run_id="run-b")  # t=10
+    await _run(event_name="on_chat_model_end", run_id="run-b")  # t=15
+    await _run(event_name="on_chat_model_end", run_id="run-a")  # t=40
+
+    assert wrapper.start_ids == ["run-a", "run-b"]
+    assert wrapper.end_calls == [("run-b", 5.0), ("run-a", 40.0)]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_end_without_matching_start_has_no_runtime(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _LlmCallIdRecordingChatRequestWrapper()
+    event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {"event": "on_chat_model_end", "run_id": "never-started", "data": {}},
+    )
+
+    async for _ in manager._handle_on_chat_model_end(
+        event=event,
+        chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
+        request_information=RequestInformation(request_id="req-1"),
+    ):
+        pass
+
+    assert wrapper.end_calls == [("never-started", None)]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_without_run_id_skips_timing_and_warns(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _LlmCallIdRecordingChatRequestWrapper()
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+    request_information = RequestInformation(request_id="req-1")
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_end", "data": {}}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        async for _ in manager._handle_on_chat_model_start(
+            event=start_event,
+            chat_request_wrapper=cast_wrapper,
+            request_information=request_information,
+        ):
+            pass
+    async for _ in manager._handle_on_chat_model_end(
+        event=end_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        pass
+
+    assert wrapper.start_ids == [None]
+    assert wrapper.end_calls == [(None, None)]
+    assert "no run_id" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_manager_with_real_responses_wrapper_pairs_items_and_times_them(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wires the streaming manager to the real ResponsesApiRequestWrapper and
+    parses the SSE frames: prepare once ahead of the first llm_call, start and
+    done items sharing an id, runtime on the done item, and no prompt or
+    response text with debug logging off."""
+    clock = iter([5.0, 7.0, 9.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    environment_variables = MagicMock()
+    environment_variables.debug_prefixes = ("DEBUG:", "/debug ")
+    wrapper = ResponsesApiRequestWrapper(
+        chat_request=ResponsesRequest(model="gpt-4", input="hello", stream=True),
+        enable_debug_logging=False,
+        environment_variables=environment_variables,
+    )
+    request_information = RequestInformation(request_id="req-1", request_started_at=1.0)
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+
+    frames: list[str | None] = []
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_start",
+            "run_id": "run-a",
+            "data": {"input": {"messages": [[HumanMessage(content="secret prompt")]]}},
+        },
+    )
+    async for chunk in manager._handle_on_chat_model_start(
+        event=start_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        frames.append(chunk)
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="secret response")},
+        },
+    )
+    async for _ in manager._handle_on_chat_model_stream(
+        event=stream_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        pass
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {"event": "on_chat_model_end", "run_id": "run-a", "data": {}},
+    )
+    async for chunk in manager._handle_on_chat_model_end(
+        event=end_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        frames.append(chunk)
+
+    events = [json.loads(f[len("data: ") :]) for f in frames if f]
+    prepare, llm_start, llm_done = (e["item"] for e in events)
+    assert prepare == {
+        "type": "prepare",
+        "id": "prepare_req-1",
+        "status": "completed",
+        "runtime_seconds": 4.0,
+    }
+    assert llm_start["type"] == llm_done["type"] == "llm_call"
+    assert llm_start["id"] == llm_done["id"]
+    assert llm_done["runtime_seconds"] == 2.5
+    assert "request" not in llm_start
+    assert "output" not in llm_done
+    assert "secret" not in "".join(f for f in frames if f)
+
+
+class _StatusRecordingChatRequestWrapper(_FakeChatRequestWrapper):
+    def __init__(self) -> None:
+        super().__init__(enable_debug_logging=False)
+        self.end_calls: list[tuple[str | None, float | None, str]] = []
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
+        status: str = "completed",
+    ) -> str | None:
+        self.end_calls.append((invocation_id, runtime_seconds, status))
+        return f"end:{invocation_id}:{status}"
+
+
+@pytest.mark.asyncio
+async def test_abandoned_event_closes_only_open_llm_calls_as_failed(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed or retried attempt must not leave llm_call items in_progress:
+    calls that already ended are untouched, open ones are closed as failed."""
+    clock = iter([0.0, 1.0, 2.0, 12.0])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    wrapper = _StatusRecordingChatRequestWrapper()
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+    request_information = RequestInformation(request_id="req-1")
+
+    async def _send(*, event_name: str, run_id: str) -> list[str]:
+        event: StandardStreamEvent | CustomStreamEvent = cast(
+            StandardStreamEvent,
+            {"event": event_name, "run_id": run_id, "data": {}},
+        )
+        return [
+            chunk
+            async for chunk in manager.handle_langchain_event(
+                event=event,
+                chat_request_wrapper=cast_wrapper,
+                request_information=request_information,
+                tool_start_times={},
+                user_id=None,
+            )
+        ]
+
+    await _send(event_name="on_chat_model_start", run_id="run-a")  # t=0
+    await _send(event_name="on_chat_model_start", run_id="run-b")  # t=1
+    ended = await _send(event_name="on_chat_model_end", run_id="run-a")  # t=2
+    abandoned = await _send(event_name=LLM_CALLS_ABANDONED_EVENT, run_id="")  # t=12
+    again = await _send(event_name=LLM_CALLS_ABANDONED_EVENT, run_id="")
+
+    assert ended == ["end:run-a:completed"]
+    assert abandoned == ["end:run-b:failed"]
+    assert again == []
+    assert wrapper.end_calls[-1] == ("run-b", 11.0, "failed")

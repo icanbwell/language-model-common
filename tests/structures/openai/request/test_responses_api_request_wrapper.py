@@ -653,15 +653,109 @@ class TestCreateLlmCallSseEvents:
         assert item["status"] == "completed"
         assert item["output"] == "Hi there!"
 
-    def test_end_event_defaults_output_to_empty_string(self) -> None:
+    def test_start_event_omits_request_when_messages_none(self) -> None:
+        wrapper = _make_wrapper()
+        raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1",
+            request_messages=None,
+        )
+        assert raw is not None
+        item = json.loads(raw[len("data: ") :])["item"]
+        assert item["type"] == "llm_call"
+        assert item["status"] == "in_progress"
+        assert "request" not in item
+
+    @pytest.mark.parametrize(
+        ("response_text", "runtime_seconds", "expected_output", "expected_runtime"),
+        [
+            ("Hi there!", 1.5, "Hi there!", 1.5),
+            ("Hi there!", None, "Hi there!", None),
+            (None, 2.25, None, 2.25),
+            (None, None, None, None),
+            ("", 0.0, "", 0.0),
+        ],
+    )
+    def test_end_event_output_and_runtime(
+        self,
+        response_text: str | None,
+        runtime_seconds: float | None,
+        expected_output: str | None,
+        expected_runtime: float | None,
+    ) -> None:
         wrapper = _make_wrapper()
         raw = wrapper.create_llm_call_end_sse_event(
             request_id="req-1",
-            response_text=None,
+            response_text=response_text,
+            runtime_seconds=runtime_seconds,
         )
         assert raw is not None
-        event = json.loads(raw[len("data: ") :])
-        assert event["item"]["output"] == ""
+        item = json.loads(raw[len("data: ") :])["item"]
+        if expected_runtime is None:
+            assert "runtime_seconds" not in item
+        else:
+            assert item["runtime_seconds"] == expected_runtime
+        if expected_output is None:
+            assert "output" not in item
+        else:
+            assert item["output"] == expected_output
+
+    def test_end_event_status_defaults_to_completed_and_can_be_failed(self) -> None:
+        wrapper = _make_wrapper()
+        completed_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1", response_text=None
+        )
+        failed_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+            runtime_seconds=3.0,
+            invocation_id="run-a",
+            status="failed",
+        )
+        assert completed_raw is not None and failed_raw is not None
+        assert (
+            json.loads(completed_raw[len("data: ") :])["item"]["status"] == "completed"
+        )
+        failed_item = json.loads(failed_raw[len("data: ") :])["item"]
+        assert failed_item["status"] == "failed"
+        assert failed_item["runtime_seconds"] == 3.0
+
+    def test_start_and_done_share_item_id_when_invocation_id_given(self) -> None:
+        wrapper = _make_wrapper()
+        start_raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1", request_messages=None, invocation_id="run-a"
+        )
+        other_raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1", request_messages=None, invocation_id="run-b"
+        )
+        end_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+            runtime_seconds=0.5,
+            invocation_id="run-a",
+        )
+        assert start_raw is not None and other_raw is not None and end_raw is not None
+        start_id = json.loads(start_raw[len("data: ") :])["item"]["id"]
+        other_id = json.loads(other_raw[len("data: ") :])["item"]["id"]
+        end_id = json.loads(end_raw[len("data: ") :])["item"]["id"]
+        assert start_id == end_id
+        assert start_id != other_id
+
+    def test_items_carry_no_content_when_text_withheld(self) -> None:
+        wrapper = _make_wrapper()
+        start_raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1",
+            request_messages=None,
+        )
+        end_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+            runtime_seconds=0.5,
+        )
+        assert start_raw is not None and end_raw is not None
+        start_item = json.loads(start_raw[len("data: ") :])["item"]
+        end_item = json.loads(end_raw[len("data: ") :])["item"]
+        assert set(start_item) == {"type", "id", "status"}
+        assert set(end_item) == {"type", "id", "status", "runtime_seconds"}
 
 
 class TestCreateImageOutputSseEvent:

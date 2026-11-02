@@ -42,6 +42,7 @@ from languagemodelcommon.converters.stream_context_mixin import StreamContextMix
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
     StreamedOutput,
+    elapsed_seconds_since,
 )
 from languagemodelcommon.converters.streaming_formatters import (
     extract_reasoning_text,
@@ -65,6 +66,26 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
+
+# Synthetic event the converter emits when a graph attempt fails, so the
+# streaming manager can close llm_call items that never got an end event.
+LLM_CALLS_ABANDONED_EVENT = "llm_calls_abandoned"
+
+
+def create_llm_calls_abandoned_event() -> CustomStreamEvent:
+    """Build the synthetic event that closes llm_call items left open by a failed attempt."""
+    return cast(
+        CustomStreamEvent,
+        {
+            "event": LLM_CALLS_ABANDONED_EVENT,
+            "name": LLM_CALLS_ABANDONED_EVENT,
+            "run_id": "",
+            "tags": [],
+            "metadata": {},
+            "data": {},
+        },
+    )
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
@@ -238,6 +259,13 @@ class LangGraphStreamingManager(StreamContextMixin):
                     ):
                         if chunk:
                             yield chunk
+                case _ if event_type == LLM_CALLS_ABANDONED_EVENT:
+                    async for chunk in self._handle_llm_calls_abandoned(
+                        chat_request_wrapper=chat_request_wrapper,
+                        request_information=request_information,
+                    ):
+                        if chunk:
+                            yield chunk
                 case "on_custom_event":
                     async for chunk in self._handle_on_custom_event(
                         event=event,
@@ -356,6 +384,33 @@ class LangGraphStreamingManager(StreamContextMixin):
             )
         self._stream_debug_output_manager.clear()
 
+    async def _handle_llm_calls_abandoned(
+        self,
+        *,
+        chat_request_wrapper: ChatRequestWrapper,
+        request_information: RequestInformation,
+    ) -> AsyncGenerator[str | None, None]:
+        # An attempt raised or is being retried, so these invocations will
+        # never see on_chat_model_end: close each open llm_call item as failed
+        # instead of leaving it in_progress for the client (BAI-1440).
+        open_runtimes = self._stream_debug_output_manager.pop_open_llm_call_runtimes()
+        for run_id, runtime_seconds in open_runtimes.items():
+            logger.info(
+                "Closing llm_call item as failed: attempt raised or was retried",
+                extra={
+                    "request_id": request_information.request_id,
+                    "invocation_id": run_id,
+                    "runtime_seconds": runtime_seconds,
+                },
+            )
+            yield chat_request_wrapper.create_llm_call_end_sse_event(
+                request_id=request_information.request_id,
+                response_text=None,
+                runtime_seconds=runtime_seconds,
+                invocation_id=run_id,
+                status="failed",
+            )
+
     async def _handle_on_chat_model_start(
         self,
         *,
@@ -369,16 +424,42 @@ class LangGraphStreamingManager(StreamContextMixin):
         # StreamBufferManager.mark_new_invocation_boundary.
         self._stream_buffer_manager.mark_new_invocation_boundary()
 
-        if not chat_request_wrapper.enable_debug_logging:
-            return
+        # One "prepare" item per turn, ahead of the first llm_call: the time
+        # from request receipt to the first model call (BAI-1440). The flag
+        # lives on the per-request RequestInformation, not on this singleton.
+        if (
+            request_information.request_started_at is not None
+            and not request_information.prepare_event_emitted
+        ):
+            request_information.prepare_event_emitted = True
+            yield chat_request_wrapper.create_prepare_sse_event(
+                request_id=request_information.request_id,
+                runtime_seconds=elapsed_seconds_since(
+                    started=request_information.request_started_at
+                ),
+            )
 
-        # Gated by enable_debug_logging so a debugging UI can show every
-        # individual model invocation in a turn, not just the turn-level
-        # response.created/completed pair (BAI-882).
-        input_messages = _extract_input_messages(event)
+        run_id: str | None = event.get("run_id")
+        if run_id:
+            self._stream_debug_output_manager.record_llm_call_start(run_id=run_id)
+        else:
+            logger.warning(
+                "on_chat_model_start event has no run_id; skipping llm_call timing",
+                extra={"request_id": request_information.request_id},
+            )
+
+        # The item is always emitted so a client can show how long each model
+        # call took; the request messages (prompt content) ride along only
+        # when enable_debug_logging is on (BAI-882, BAI-1440).
+        request_messages: list[Dict[str, Any]] | None = (
+            _serialize_messages_for_llm_call(_extract_input_messages(event))
+            if chat_request_wrapper.enable_debug_logging
+            else None
+        )
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
-            request_messages=_serialize_messages_for_llm_call(input_messages),
+            request_messages=request_messages,
+            invocation_id=run_id or None,
         )
 
     async def _handle_on_chat_model_end(
@@ -388,7 +469,6 @@ class LangGraphStreamingManager(StreamContextMixin):
         chat_request_wrapper: ChatRequestWrapper,
         request_information: RequestInformation,
     ) -> AsyncGenerator[str | None, None]:
-        input_messages = _extract_input_messages(event)
         # pop_streamed_output must run every turn regardless of debug mode --
         # append_fragment in _handle_on_chat_model_stream runs unconditionally,
         # so skipping this pop when debug is off would leak buffered
@@ -402,17 +482,38 @@ class LangGraphStreamingManager(StreamContextMixin):
             else None
         )
 
+        run_id: str | None = event.get("run_id")
+        runtime_seconds: float | None = (
+            self._stream_debug_output_manager.pop_llm_call_runtime_seconds(
+                run_id=run_id
+            )
+            if run_id
+            else None
+        )
+        logger.debug(
+            "llm_call finished",
+            extra={
+                "request_id": request_information.request_id,
+                "invocation_id": run_id,
+                "runtime_seconds": runtime_seconds,
+            },
+        )
+        # Always emitted, pairing with the llm_call start event above. The
+        # model's response text is included only when enable_debug_logging is
+        # on; runtime_seconds is always included (BAI-882, BAI-1440).
+        yield chat_request_wrapper.create_llm_call_end_sse_event(
+            request_id=request_information.request_id,
+            response_text=(streamed_output or "")
+            if chat_request_wrapper.enable_debug_logging
+            else None,
+            runtime_seconds=runtime_seconds,
+            invocation_id=run_id or None,
+        )
+
         if not chat_request_wrapper.enable_debug_logging:
             return
 
-        # Gated by enable_debug_logging, pairing with the llm_call start event
-        # above -- this single invocation's own response text, not the
-        # turn's accumulated output (BAI-882).
-        yield chat_request_wrapper.create_llm_call_end_sse_event(
-            request_id=request_information.request_id,
-            response_text=streamed_output,
-        )
-
+        input_messages = _extract_input_messages(event)
         content_text = ""
         for message_number, input_message in enumerate(input_messages):
             name_suffix = f" ({input_message.name})" if input_message.name else ""

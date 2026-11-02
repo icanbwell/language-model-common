@@ -1,5 +1,19 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
+import time
 from datetime import datetime, timezone
+
+
+def elapsed_seconds_since(
+    *, started: float, clock: Callable[[], float] | None = None
+) -> float:
+    """Seconds since a ``time.perf_counter()`` reading, never negative.
+
+    ``clock`` defaults to ``time.perf_counter``; pass another monotonic clock to
+    make the reading deterministic.
+    """
+    now = clock() if clock is not None else time.perf_counter()
+    return max(0.0, now - started)
 
 
 @dataclass
@@ -10,8 +24,44 @@ class StreamedOutput:
 
 
 class StreamDebugOutputManager:
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] | None = None) -> None:
+        # None means time.perf_counter, looked up at call time.
+        self._clock = clock
         self._streamed_output: StreamedOutput | None = None
+        # Start times of in-flight model invocations, keyed by run id, so
+        # overlapping invocations time independently. Monotonic clock: a wall
+        # clock step must not produce a negative duration. Deliberately not
+        # reset by clear(), which fires on every nested chain end.
+        self._llm_call_started: dict[str, float] = {}
+
+    def record_llm_call_start(self, *, run_id: str) -> None:
+        """Remember when the model invocation identified by ``run_id`` began."""
+        self._llm_call_started[run_id] = (
+            self._clock() if self._clock is not None else time.perf_counter()
+        )
+
+    def pop_llm_call_runtime_seconds(self, *, run_id: str) -> float | None:
+        """Return the seconds since ``run_id`` started and forget it.
+
+        Consumes the entry; returns ``None`` when no start was recorded.
+        """
+        started = self._llm_call_started.pop(run_id, None)
+        if started is None:
+            return None
+        return elapsed_seconds_since(started=started, clock=self._clock)
+
+    def pop_open_llm_call_runtimes(self) -> dict[str, float]:
+        """Return the seconds each still-open invocation has run, then forget them.
+
+        Used when an attempt fails or is retried and the open invocations will
+        never see an ``on_chat_model_end``.
+        """
+        open_runtimes = {
+            run_id: elapsed_seconds_since(started=started, clock=self._clock)
+            for run_id, started in self._llm_call_started.items()
+        }
+        self._llm_call_started.clear()
+        return open_runtimes
 
     def start_streamed_output(self, *, event_name: str, start_time: datetime) -> None:
         self._streamed_output = StreamedOutput(

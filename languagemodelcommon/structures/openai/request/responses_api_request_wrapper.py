@@ -65,6 +65,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
+# Wire discriminators for the timing items (BAI-1440).
+_LLM_CALL_ITEM_TYPE = "llm_call"
+_PREPARE_ITEM_TYPE = "prepare"
+
+
 class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def __init__(
         self,
@@ -464,12 +469,29 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             event["item"]["display_name"] = display_name
         return f"data: {json.dumps(event)}\n\n"
 
+    def _output_item_done_frame(self, *, item: Dict[str, Any]) -> str:
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": item,
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    def _llm_call_item_id(self, *, request_id: str, invocation_id: str | None) -> str:
+        # A run id pairs start/done items even when invocations overlap; the
+        # counter fallback only pairs sequential invocations.
+        if invocation_id is not None:
+            return f"llm_{request_id}_{invocation_id}"
+        return f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}"
+
     @override
     def create_llm_call_start_sse_event(
         self,
         *,
         request_id: str,
-        request_messages: List[Dict[str, Any]],
+        request_messages: List[Dict[str, Any]] | None,
+        invocation_id: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.added`` event with an ``llm_call`` item.
 
@@ -480,17 +502,22 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ``create_tool_start_sse_event`` already uses for tool calls.
         """
         self._llm_call_counter += 1
+        item_id = self._llm_call_item_id(
+            request_id=request_id, invocation_id=invocation_id
+        )
         event: Dict[str, Any] = {
             "type": "response.output_item.added",
             "output_index": 0,
             "sequence_number": len(self._messages),
             "item": {
-                "type": "llm_call",
-                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
+                "type": _LLM_CALL_ITEM_TYPE,
+                "id": item_id,
                 "status": "in_progress",
-                "request": request_messages,
             },
         }
+        # Prompt content is only sent when the caller opts in (debug logging).
+        if request_messages is not None:
+            event["item"]["request"] = request_messages
         return f"data: {json.dumps(event)}\n\n"
 
     @override
@@ -499,6 +526,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
+        status: str = "completed",
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
 
@@ -506,18 +536,41 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ``id`` counter value so a client can match the pair up the same way
         it already matches ``function_call`` start/end items.
         """
-        event: Dict[str, Any] = {
-            "type": "response.output_item.done",
-            "output_index": 0,
-            "sequence_number": len(self._messages),
-            "item": {
-                "type": "llm_call",
-                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
-                "status": "completed",
-                "output": response_text or "",
-            },
+        item: Dict[str, Any] = {
+            "type": _LLM_CALL_ITEM_TYPE,
+            "id": self._llm_call_item_id(
+                request_id=request_id, invocation_id=invocation_id
+            ),
+            "status": status,
         }
-        return f"data: {json.dumps(event)}\n\n"
+        if runtime_seconds is not None:
+            item["runtime_seconds"] = runtime_seconds
+        # Response text is only sent when the caller opts in (debug logging).
+        if response_text is not None:
+            item["output"] = response_text
+        return self._output_item_done_frame(item=item)
+
+    @override
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with a ``prepare`` item.
+
+        Done only, with no matching ``added`` event: the client back-dates the
+        item by ``runtime_seconds``, the same way it handles a tool end with
+        no start. The item carries timing only, no content.
+        """
+        return self._output_item_done_frame(
+            item={
+                "type": _PREPARE_ITEM_TYPE,
+                "id": f"prepare_{request_id}",
+                "status": "completed",
+                "runtime_seconds": runtime_seconds,
+            }
+        )
 
     @override
     def create_image_output_sse_event(

@@ -406,7 +406,8 @@ class ChatRequestWrapper(abc.ABC):
         self,
         *,
         request_id: str,
-        request_messages: list[dict[str, Any]],
+        request_messages: list[dict[str, Any]] | None,
+        invocation_id: str | None = None,
     ) -> str | None:
         """Emit an SSE event when the model begins one individual invocation.
 
@@ -414,11 +415,16 @@ class ChatRequestWrapper(abc.ABC):
         call, a tool call, then a follow-up call with the tool result) --
         this fires once per invocation, not once per turn, so a debugging UI
         can show each call distinctly. ``request_messages`` is the exact
-        message list sent to the model for this invocation.
+        message list sent to the model for this invocation, or ``None`` when
+        prompt content must not be sent (debug logging off); the item itself
+        is still emitted so clients can time the call. ``invocation_id`` is a
+        stable identifier for the invocation (the LangChain run id) so the
+        start and done items pair up even when invocations overlap.
 
-        The default implementation returns None (no-op).  Subclasses that
-        support structured events (e.g. Responses API) override this to emit
-        a typed SSE frame the client can use for debugging.
+        An invocation whose attempt fails or is retried is closed with a done
+        item whose status is ``"failed"``.
+
+        No-op by default; the Responses API wrapper overrides it.
         """
         return None
 
@@ -427,16 +433,40 @@ class ChatRequestWrapper(abc.ABC):
         *,
         request_id: str,
         response_text: str | None,
+        runtime_seconds: float | None = None,
+        invocation_id: str | None = None,
+        status: str = "completed",
     ) -> str | None:
         """Emit an SSE event when one individual model invocation finishes.
 
         Pairs with ``create_llm_call_start_sse_event``. ``response_text`` is
         the model's own streamed output text for that single invocation, not
-        the accumulated text across the whole turn.
+        the accumulated text across the whole turn, or ``None`` when response
+        content must not be sent (debug logging off). ``runtime_seconds`` is
+        the duration of the invocation, or ``None`` when it is unknown.
+        ``invocation_id`` matches the value passed to the start event.
+        ``status`` is ``"completed"`` normally, or ``"failed"`` when the
+        invocation was abandoned because its attempt raised or was retried.
 
-        The default implementation returns None (no-op).  Subclasses that
-        support structured events (e.g. Responses API) override this to emit
-        a typed SSE frame the client can use for debugging.
+        No-op by default; the Responses API wrapper overrides it.
+        """
+        return None
+
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        """Emit an SSE event for the preparation phase of a turn.
+
+        Fires once per turn, before the first model invocation.
+        ``runtime_seconds`` is the wall-clock time from request receipt to the
+        first model call (config resolution, tool catalog fetch, pipeline
+        setup). The event carries no content. Use one ``RequestInformation``
+        per turn: the once-per-turn guard lives on that object.
+
+        No-op by default; the Responses API wrapper overrides it.
         """
         return None
 

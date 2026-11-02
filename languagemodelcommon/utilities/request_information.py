@@ -66,6 +66,27 @@ class RequestInformation(BaseModel):
         description="Optional mapper for friendly tool display names in streaming output.",
     )
 
+    request_started_at: float | None = Field(
+        default=None,
+        description=(
+            "A time.perf_counter() reading taken by the caller (same process) "
+            "when the request arrived. When set, the Responses API stream "
+            "emits one prepare item with the elapsed time before the first "
+            "model call (BAI-1440)."
+        ),
+    )
+
+    prepare_event_emitted: bool = Field(
+        default=False,
+        description=(
+            "Whether the prepare stream item has already been emitted for "
+            "this request. Scoped to this per-request RequestInformation "
+            "instance so only the first model call of a turn emits it; use "
+            "one RequestInformation per turn, since a reused instance "
+            "suppresses the item on later turns."
+        ),
+    )
+
     compaction_notice_shown: bool = Field(
         default=False,
         description=(
