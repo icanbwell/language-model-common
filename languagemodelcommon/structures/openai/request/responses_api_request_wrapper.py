@@ -464,12 +464,20 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             event["item"]["display_name"] = display_name
         return f"data: {json.dumps(event)}\n\n"
 
+    def _llm_call_item_id(self, *, request_id: str, llm_call_id: str | None) -> str:
+        # A run id pairs start/done items even when invocations overlap; the
+        # counter fallback only pairs sequential invocations.
+        if llm_call_id is not None:
+            return f"llm_{request_id}_{llm_call_id}"
+        return f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}"
+
     @override
     def create_llm_call_start_sse_event(
         self,
         *,
         request_id: str,
         request_messages: List[Dict[str, Any]] | None,
+        llm_call_id: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.added`` event with an ``llm_call`` item.
 
@@ -480,13 +488,14 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ``create_tool_start_sse_event`` already uses for tool calls.
         """
         self._llm_call_counter += 1
+        item_id = self._llm_call_item_id(request_id=request_id, llm_call_id=llm_call_id)
         event: Dict[str, Any] = {
             "type": "response.output_item.added",
             "output_index": 0,
             "sequence_number": len(self._messages),
             "item": {
                 "type": "llm_call",
-                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
+                "id": item_id,
                 "status": "in_progress",
             },
         }
@@ -502,6 +511,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
+        llm_call_id: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
 
@@ -515,11 +525,14 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             "sequence_number": len(self._messages),
             "item": {
                 "type": "llm_call",
-                "id": f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}",
+                "id": self._llm_call_item_id(
+                    request_id=request_id, llm_call_id=llm_call_id
+                ),
                 "status": "completed",
-                "runtime_seconds": runtime_seconds,
             },
         }
+        if runtime_seconds is not None:
+            event["item"]["runtime_seconds"] = runtime_seconds
         # Response text is only sent when the caller opts in (debug logging).
         if response_text is not None:
             event["item"]["output"] = response_text

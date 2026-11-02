@@ -22,7 +22,6 @@ See Also:
 import json
 import logging
 import time
-from datetime import datetime, timezone
 from typing import (
     Any,
     AsyncGenerator,
@@ -386,10 +385,8 @@ class LangGraphStreamingManager(StreamContextMixin):
                 ),
             )
 
-        self._stream_debug_output_manager.start_streamed_output(
-            event_name="on_chat_model_start",
-            start_time=datetime.now(tz=timezone.utc),
-        )
+        run_id: str = event.get("run_id") or ""
+        self._stream_debug_output_manager.record_llm_call_start(run_id=run_id)
 
         # The item is always emitted so a client can show how long each model
         # call took; the request messages (prompt content) ride along only
@@ -402,6 +399,7 @@ class LangGraphStreamingManager(StreamContextMixin):
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
             request_messages=request_messages,
+            llm_call_id=run_id or None,
         )
 
     async def _handle_on_chat_model_end(
@@ -424,12 +422,11 @@ class LangGraphStreamingManager(StreamContextMixin):
             else None
         )
 
+        run_id: str = event.get("run_id") or ""
         runtime_seconds: float | None = (
-            (
-                datetime.now(tz=timezone.utc) - streamed_output_record.start_time
-            ).total_seconds()
-            if streamed_output_record
-            else None
+            self._stream_debug_output_manager.pop_llm_call_runtime_seconds(
+                run_id=run_id
+            )
         )
         # Always emitted, pairing with the llm_call start event above. The
         # model's response text is included only when enable_debug_logging is
@@ -440,6 +437,7 @@ class LangGraphStreamingManager(StreamContextMixin):
             if chat_request_wrapper.enable_debug_logging
             else None,
             runtime_seconds=runtime_seconds,
+            llm_call_id=run_id or None,
         )
 
         if not chat_request_wrapper.enable_debug_logging:

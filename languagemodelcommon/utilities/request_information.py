@@ -81,7 +81,9 @@ class RequestInformation(BaseModel):
         description=(
             "Whether the prepare stream item has already been emitted for "
             "this request. Scoped to this per-request RequestInformation "
-            "instance so only the first model call of a turn emits it."
+            "instance so only the first model call of a turn emits it; use "
+            "one RequestInformation per turn, since a reused instance "
+            "suppresses the item on later turns."
         ),
     )
 

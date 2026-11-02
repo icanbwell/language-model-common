@@ -407,6 +407,7 @@ class ChatRequestWrapper(abc.ABC):
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
+        llm_call_id: str | None = None,
     ) -> str | None:
         """Emit an SSE event when the model begins one individual invocation.
 
@@ -416,7 +417,13 @@ class ChatRequestWrapper(abc.ABC):
         can show each call distinctly. ``request_messages`` is the exact
         message list sent to the model for this invocation, or ``None`` when
         prompt content must not be sent (debug logging off); the item itself
-        is still emitted so clients can time the call.
+        is still emitted so clients can time the call. ``llm_call_id`` is a
+        stable identifier for the invocation (the LangChain run id) so the
+        start and done items pair up even when invocations overlap.
+
+        A start item with no matching done item means the invocation did not
+        complete (for example the provider call failed); clients should close
+        any open item on the terminal response event.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit
@@ -430,6 +437,7 @@ class ChatRequestWrapper(abc.ABC):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
+        llm_call_id: str | None = None,
     ) -> str | None:
         """Emit an SSE event when one individual model invocation finishes.
 
@@ -437,7 +445,8 @@ class ChatRequestWrapper(abc.ABC):
         the model's own streamed output text for that single invocation, not
         the accumulated text across the whole turn, or ``None`` when response
         content must not be sent (debug logging off). ``runtime_seconds`` is
-        the wall-clock duration of the invocation.
+        the duration of the invocation, or ``None`` when it is unknown.
+        ``llm_call_id`` matches the value passed to the start event.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit
@@ -456,7 +465,8 @@ class ChatRequestWrapper(abc.ABC):
         Fires once per turn, before the first model invocation.
         ``runtime_seconds`` is the wall-clock time from request receipt to the
         first model call (config resolution, tool catalog fetch, pipeline
-        setup). The event carries no content.
+        setup). The event carries no content. Use one ``RequestInformation``
+        per turn: the once-per-turn guard lives on that object.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit

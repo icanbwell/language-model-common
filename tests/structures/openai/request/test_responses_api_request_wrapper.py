@@ -690,11 +690,35 @@ class TestCreateLlmCallSseEvents:
         )
         assert raw is not None
         item = json.loads(raw[len("data: ") :])["item"]
-        assert item["runtime_seconds"] == expected_runtime
+        if expected_runtime is None:
+            assert "runtime_seconds" not in item
+        else:
+            assert item["runtime_seconds"] == expected_runtime
         if expected_output is None:
             assert "output" not in item
         else:
             assert item["output"] == expected_output
+
+    def test_start_and_done_share_item_id_when_llm_call_id_given(self) -> None:
+        wrapper = _make_wrapper()
+        start_raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1", request_messages=None, llm_call_id="run-a"
+        )
+        other_raw = wrapper.create_llm_call_start_sse_event(
+            request_id="req-1", request_messages=None, llm_call_id="run-b"
+        )
+        end_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+            runtime_seconds=0.5,
+            llm_call_id="run-a",
+        )
+        assert start_raw is not None and other_raw is not None and end_raw is not None
+        start_id = json.loads(start_raw[len("data: ") :])["item"]["id"]
+        other_id = json.loads(other_raw[len("data: ") :])["item"]["id"]
+        end_id = json.loads(end_raw[len("data: ") :])["item"]["id"]
+        assert start_id == end_id
+        assert start_id != other_id
 
     def test_items_carry_no_content_when_text_withheld(self) -> None:
         wrapper = _make_wrapper()
