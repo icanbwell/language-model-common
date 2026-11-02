@@ -3,6 +3,11 @@ import time
 from datetime import datetime, timezone
 
 
+def elapsed_seconds_since(*, started: float) -> float:
+    """Seconds since a ``time.perf_counter()`` reading, never negative."""
+    return max(0.0, time.perf_counter() - started)
+
+
 @dataclass
 class StreamedOutput:
     event_name: str
@@ -20,13 +25,18 @@ class StreamDebugOutputManager:
         self._llm_call_started: dict[str, float] = {}
 
     def record_llm_call_start(self, *, run_id: str) -> None:
+        """Remember when the model invocation identified by ``run_id`` began."""
         self._llm_call_started[run_id] = time.perf_counter()
 
     def pop_llm_call_runtime_seconds(self, *, run_id: str) -> float | None:
+        """Return the seconds since ``run_id`` started and forget it.
+
+        Consumes the entry; returns ``None`` when no start was recorded.
+        """
         started = self._llm_call_started.pop(run_id, None)
         if started is None:
             return None
-        return max(0.0, time.perf_counter() - started)
+        return elapsed_seconds_since(started=started)
 
     def start_streamed_output(self, *, event_name: str, start_time: datetime) -> None:
         self._streamed_output = StreamedOutput(

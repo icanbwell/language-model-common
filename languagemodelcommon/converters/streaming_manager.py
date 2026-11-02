@@ -21,7 +21,6 @@ See Also:
 
 import json
 import logging
-import time
 from typing import (
     Any,
     AsyncGenerator,
@@ -43,6 +42,7 @@ from languagemodelcommon.converters.stream_context_mixin import StreamContextMix
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
     StreamedOutput,
+    elapsed_seconds_since,
 )
 from languagemodelcommon.converters.streaming_formatters import (
     extract_reasoning_text,
@@ -380,13 +380,19 @@ class LangGraphStreamingManager(StreamContextMixin):
             request_information.prepare_event_emitted = True
             yield chat_request_wrapper.create_prepare_sse_event(
                 request_id=request_information.request_id,
-                runtime_seconds=max(
-                    0.0, time.perf_counter() - request_information.request_started_at
+                runtime_seconds=elapsed_seconds_since(
+                    started=request_information.request_started_at
                 ),
             )
 
-        run_id: str = event.get("run_id") or ""
-        self._stream_debug_output_manager.record_llm_call_start(run_id=run_id)
+        run_id: str | None = event.get("run_id")
+        if run_id:
+            self._stream_debug_output_manager.record_llm_call_start(run_id=run_id)
+        else:
+            logger.warning(
+                "on_chat_model_start event has no run_id; skipping llm_call timing",
+                extra={"request_id": request_information.request_id},
+            )
 
         # The item is always emitted so a client can show how long each model
         # call took; the request messages (prompt content) ride along only
@@ -422,11 +428,13 @@ class LangGraphStreamingManager(StreamContextMixin):
             else None
         )
 
-        run_id: str = event.get("run_id") or ""
+        run_id: str | None = event.get("run_id")
         runtime_seconds: float | None = (
             self._stream_debug_output_manager.pop_llm_call_runtime_seconds(
                 run_id=run_id
             )
+            if run_id
+            else None
         )
         # Always emitted, pairing with the llm_call start event above. The
         # model's response text is included only when enable_debug_logging is

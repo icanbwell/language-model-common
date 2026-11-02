@@ -1,7 +1,9 @@
+import json
+import logging
 import time
 from collections.abc import Callable
 from typing import Any, Optional, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -14,8 +16,12 @@ from languagemodelcommon.converters.stream_debug_output_manager import (
 from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
+from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
     ChatRequestWrapper,
+)
+from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
+    ResponsesApiRequestWrapper,
 )
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.environment.language_model_common_environment_variables import (
@@ -682,6 +688,7 @@ async def _run_llm_call(
         StandardStreamEvent,
         {
             "event": "on_chat_model_start",
+            "run_id": "run-1",
             "data": {"input": {"messages": [[HumanMessage(content=prompt_text)]]}},
         },
     )
@@ -710,6 +717,7 @@ async def _run_llm_call(
         StandardStreamEvent,
         {
             "event": "on_chat_model_end",
+            "run_id": "run-1",
             "data": {"input": {"messages": [[HumanMessage(content=prompt_text)]]}},
         },
     )
@@ -727,10 +735,13 @@ async def _run_llm_call(
 @pytest.mark.asyncio
 async def test_llm_call_items_emitted_without_content_when_debug_logging_disabled(
     streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """BAI-1440: the llm_call start/done items are always emitted so clients
     can show model-call timing, but prompt and response text (potential PHI)
     must not reach the wrapper when debug logging is off."""
+    clock = iter([100.0, 102.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
     manager = streaming_manager_factory()
     chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
         enable_debug_logging=False
@@ -748,15 +759,16 @@ async def test_llm_call_items_emitted_without_content_when_debug_logging_disable
     assert end_chunks == ["llm_call_end:1"]
     assert chat_request_wrapper.llm_call_start_calls == [None]
     assert chat_request_wrapper.llm_call_end_calls == [None]
-    (runtime_seconds,) = chat_request_wrapper.llm_call_end_runtimes
-    assert runtime_seconds is not None
-    assert runtime_seconds >= 0
+    assert chat_request_wrapper.llm_call_end_runtimes == [2.5]
 
 
 @pytest.mark.asyncio
 async def test_llm_call_end_includes_runtime_when_debug_logging_enabled(
     streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    clock = iter([100.0, 102.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
     manager = streaming_manager_factory()
     chat_request_wrapper = _RecordingLlmCallChatRequestWrapper(
         enable_debug_logging=True
@@ -770,9 +782,7 @@ async def test_llm_call_end_includes_runtime_when_debug_logging_enabled(
         response_text="synthetic response text",
     )
 
-    (runtime_seconds,) = chat_request_wrapper.llm_call_end_runtimes
-    assert runtime_seconds is not None
-    assert runtime_seconds >= 0
+    assert chat_request_wrapper.llm_call_end_runtimes == [2.5]
     assert chat_request_wrapper.llm_call_end_calls == ["synthetic response text"]
 
 
@@ -944,15 +954,18 @@ class _LlmCallIdRecordingChatRequestWrapper(_FakeChatRequestWrapper):
 @pytest.mark.asyncio
 async def test_overlapping_llm_calls_are_timed_and_paired_by_run_id(
     streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Parallel model invocations must not share one timing slot: each end
     event pairs with its own start via the run id and gets its own runtime."""
+    clock = iter([0.0, 10.0, 15.0, 40.0])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
     manager = streaming_manager_factory()
     wrapper = _LlmCallIdRecordingChatRequestWrapper()
     request_information = RequestInformation(request_id="req-1")
     cast_wrapper = cast(ChatRequestWrapper, wrapper)
 
-    async def _run(event_name: str, run_id: str) -> None:
+    async def _run(*, event_name: str, run_id: str) -> None:
         event: StandardStreamEvent | CustomStreamEvent = cast(
             StandardStreamEvent,
             {"event": event_name, "run_id": run_id, "data": {}},
@@ -969,14 +982,13 @@ async def test_overlapping_llm_calls_are_timed_and_paired_by_run_id(
         ):
             pass
 
-    await _run("on_chat_model_start", "run-a")
-    await _run("on_chat_model_start", "run-b")
-    await _run("on_chat_model_end", "run-b")
-    await _run("on_chat_model_end", "run-a")
+    await _run(event_name="on_chat_model_start", run_id="run-a")  # t=0
+    await _run(event_name="on_chat_model_start", run_id="run-b")  # t=10
+    await _run(event_name="on_chat_model_end", run_id="run-b")  # t=15
+    await _run(event_name="on_chat_model_end", run_id="run-a")  # t=40
 
     assert wrapper.start_ids == ["run-a", "run-b"]
-    assert [call_id for call_id, _ in wrapper.end_calls] == ["run-b", "run-a"]
-    assert all(runtime is not None and runtime >= 0 for _, runtime in wrapper.end_calls)
+    assert wrapper.end_calls == [("run-b", 5.0), ("run-a", 40.0)]
 
 
 @pytest.mark.asyncio
@@ -998,3 +1010,115 @@ async def test_llm_call_end_without_matching_start_has_no_runtime(
         pass
 
     assert wrapper.end_calls == [("never-started", None)]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_without_run_id_skips_timing_and_warns(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _LlmCallIdRecordingChatRequestWrapper()
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+    request_information = RequestInformation(request_id="req-1")
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_end", "data": {}}
+    )
+
+    with caplog.at_level(logging.WARNING):
+        async for _ in manager._handle_on_chat_model_start(
+            event=start_event,
+            chat_request_wrapper=cast_wrapper,
+            request_information=request_information,
+        ):
+            pass
+    async for _ in manager._handle_on_chat_model_end(
+        event=end_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        pass
+
+    assert wrapper.start_ids == [None]
+    assert wrapper.end_calls == [(None, None)]
+    assert "no run_id" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_manager_with_real_responses_wrapper_pairs_items_and_times_them(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wires the streaming manager to the real ResponsesApiRequestWrapper and
+    parses the SSE frames: prepare once ahead of the first llm_call, start and
+    done items sharing an id, runtime on the done item, and no prompt or
+    response text with debug logging off."""
+    clock = iter([5.0, 7.0, 9.5])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    environment_variables = MagicMock()
+    environment_variables.debug_prefixes = ("DEBUG:", "/debug ")
+    wrapper = ResponsesApiRequestWrapper(
+        chat_request=ResponsesRequest(model="gpt-4", input="hello", stream=True),
+        enable_debug_logging=False,
+        environment_variables=environment_variables,
+    )
+    request_information = RequestInformation(request_id="req-1", request_started_at=1.0)
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+
+    frames: list[str | None] = []
+    start_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_start",
+            "run_id": "run-a",
+            "data": {"input": {"messages": [[HumanMessage(content="secret prompt")]]}},
+        },
+    )
+    async for chunk in manager._handle_on_chat_model_start(
+        event=start_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        frames.append(chunk)
+    stream_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {
+            "event": "on_chat_model_stream",
+            "data": {"chunk": AIMessageChunk(content="secret response")},
+        },
+    )
+    async for _ in manager._handle_on_chat_model_stream(
+        event=stream_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        pass
+    end_event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent,
+        {"event": "on_chat_model_end", "run_id": "run-a", "data": {}},
+    )
+    async for chunk in manager._handle_on_chat_model_end(
+        event=end_event,
+        chat_request_wrapper=cast_wrapper,
+        request_information=request_information,
+    ):
+        frames.append(chunk)
+
+    events = [json.loads(f[len("data: ") :]) for f in frames if f]
+    prepare, llm_start, llm_done = (e["item"] for e in events)
+    assert prepare == {
+        "type": "prepare",
+        "id": "prepare_req-1",
+        "status": "completed",
+        "runtime_seconds": 4.0,
+    }
+    assert llm_start["type"] == llm_done["type"] == "llm_call"
+    assert llm_start["id"] == llm_done["id"]
+    assert llm_done["runtime_seconds"] == 2.5
+    assert "request" not in llm_start
+    assert "output" not in llm_done
+    assert "secret" not in "".join(f for f in frames if f)

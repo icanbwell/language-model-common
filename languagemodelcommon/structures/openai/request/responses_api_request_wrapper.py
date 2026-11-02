@@ -464,6 +464,15 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             event["item"]["display_name"] = display_name
         return f"data: {json.dumps(event)}\n\n"
 
+    def _output_item_done_frame(self, *, item: Dict[str, Any]) -> str:
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": item,
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
     def _llm_call_item_id(self, *, request_id: str, llm_call_id: str | None) -> str:
         # A run id pairs start/done items even when invocations overlap; the
         # counter fallback only pairs sequential invocations.
@@ -519,24 +528,19 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ``id`` counter value so a client can match the pair up the same way
         it already matches ``function_call`` start/end items.
         """
-        event: Dict[str, Any] = {
-            "type": "response.output_item.done",
-            "output_index": 0,
-            "sequence_number": len(self._messages),
-            "item": {
-                "type": "llm_call",
-                "id": self._llm_call_item_id(
-                    request_id=request_id, llm_call_id=llm_call_id
-                ),
-                "status": "completed",
-            },
+        item: Dict[str, Any] = {
+            "type": "llm_call",
+            "id": self._llm_call_item_id(
+                request_id=request_id, llm_call_id=llm_call_id
+            ),
+            "status": "completed",
         }
         if runtime_seconds is not None:
-            event["item"]["runtime_seconds"] = runtime_seconds
+            item["runtime_seconds"] = runtime_seconds
         # Response text is only sent when the caller opts in (debug logging).
         if response_text is not None:
-            event["item"]["output"] = response_text
-        return f"data: {json.dumps(event)}\n\n"
+            item["output"] = response_text
+        return self._output_item_done_frame(item=item)
 
     @override
     def create_prepare_sse_event(
@@ -551,18 +555,14 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         item by ``runtime_seconds``, the same way it handles a tool end with
         no start. The item carries timing only, no content.
         """
-        event: Dict[str, Any] = {
-            "type": "response.output_item.done",
-            "output_index": 0,
-            "sequence_number": len(self._messages),
-            "item": {
+        return self._output_item_done_frame(
+            item={
                 "type": "prepare",
                 "id": f"prepare_{request_id}",
                 "status": "completed",
                 "runtime_seconds": runtime_seconds,
-            },
-        }
-        return f"data: {json.dumps(event)}\n\n"
+            }
+        )
 
     @override
     def create_image_output_sse_event(
