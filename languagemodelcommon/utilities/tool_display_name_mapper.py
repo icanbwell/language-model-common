@@ -236,25 +236,38 @@ class ToolDisplayNameMapper:
 
     _PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
 
+    # Longest a single substituted value may be (ellipsis included), so free-text
+    # arguments such as search queries cannot blow up a streamed progress line.
+    MAX_SUBSTITUTED_VALUE_LENGTH = 20
+
     @classmethod
     def _substitute_params(cls, *, template: str, params: Dict[str, Any]) -> str:
         """Replace {param} or {param|default} placeholders with values from params.
 
         Supports: {name}, {name|fallback text}
         If a param is missing and no default is specified, the placeholder is left as-is.
+        Each substituted value (each item, for list values) is truncated to
+        ``MAX_SUBSTITUTED_VALUE_LENGTH`` characters; defaults are template text and are not.
         """
         if "{" not in template:
             return template
+
+        def _truncate(value: Any) -> str:
+            text = str(value)
+            limit = cls.MAX_SUBSTITUTED_VALUE_LENGTH
+            if len(text) <= limit:
+                return text
+            return text[: limit - 1].rstrip() + "…"
 
         def _format_value(value: Any) -> str | None:
             if isinstance(value, list):
                 if not value:
                     return None
-                joined = ", ".join(str(item) for item in value)
+                joined = ", ".join(_truncate(item) for item in value)
                 if len(value) > 1:
                     return f"({joined})"
                 return joined
-            return str(value)
+            return _truncate(value)
 
         def _replace(match: re.Match[str]) -> str:
             token = match.group(1)

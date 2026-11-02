@@ -129,6 +129,43 @@ class TestParameterSubstitution:
         )
         assert result == "🩺 Checking your blood_pressure"
 
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("a" * 20, "a" * 20),
+            ("a" * 21, "a" * 19 + "…"),
+            ("blood pressure trends over time", "blood pressure tren…"),
+        ],
+    )
+    def test_long_value_truncated_with_ellipsis(
+        self, value: str, expected: str
+    ) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🔍 Searching skills: {query}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool", tool_input={"query": value}
+        )
+        assert result == f"🔍 Searching skills: {expected}"
+
+    def test_list_items_truncated_individually(self) -> None:
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}
+        )
+        result = mapper.get_display_name(
+            tool_name="my_tool",
+            tool_input={"vitals": ["a" * 25, "heart_rate"]},
+        )
+        assert result == f"🩺 Checking your ({'a' * 19}…, heart_rate)"
+
+    def test_default_is_not_truncated(self) -> None:
+        default = "d" * 30
+        mapper = ToolDisplayNameMapper(
+            name_to_display_name={"my_tool": f"🧠 Skill {{missing|{default}}}"}
+        )
+        result = mapper.get_display_name(tool_name="my_tool", tool_input={"x": "y"})
+        assert result == f"🧠 Skill {default}"
+
     def test_empty_list_uses_default(self) -> None:
         mapper = ToolDisplayNameMapper(
             name_to_display_name={"my_tool": "🩺 Checking your {vitals|vitals}"}
