@@ -407,7 +407,7 @@ class ChatRequestWrapper(abc.ABC):
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         """Emit an SSE event when the model begins one individual invocation.
 
@@ -417,16 +417,14 @@ class ChatRequestWrapper(abc.ABC):
         can show each call distinctly. ``request_messages`` is the exact
         message list sent to the model for this invocation, or ``None`` when
         prompt content must not be sent (debug logging off); the item itself
-        is still emitted so clients can time the call. ``llm_call_id`` is a
+        is still emitted so clients can time the call. ``invocation_id`` is a
         stable identifier for the invocation (the LangChain run id) so the
         start and done items pair up even when invocations overlap.
 
         An invocation whose attempt fails or is retried is closed with a done
         item whose status is ``"failed"``.
 
-        The default implementation returns None (no-op).  Subclasses that
-        support structured events (e.g. Responses API) override this to emit
-        a typed SSE frame the client can use for debugging.
+        No-op by default; the Responses API wrapper overrides it.
         """
         return None
 
@@ -436,7 +434,7 @@ class ChatRequestWrapper(abc.ABC):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
         status: str = "completed",
     ) -> str | None:
         """Emit an SSE event when one individual model invocation finishes.
@@ -446,13 +444,11 @@ class ChatRequestWrapper(abc.ABC):
         the accumulated text across the whole turn, or ``None`` when response
         content must not be sent (debug logging off). ``runtime_seconds`` is
         the duration of the invocation, or ``None`` when it is unknown.
-        ``llm_call_id`` matches the value passed to the start event.
+        ``invocation_id`` matches the value passed to the start event.
         ``status`` is ``"completed"`` normally, or ``"failed"`` when the
         invocation was abandoned because its attempt raised or was retried.
 
-        The default implementation returns None (no-op).  Subclasses that
-        support structured events (e.g. Responses API) override this to emit
-        a typed SSE frame the client can use for debugging.
+        No-op by default; the Responses API wrapper overrides it.
         """
         return None
 
@@ -470,9 +466,7 @@ class ChatRequestWrapper(abc.ABC):
         setup). The event carries no content. Use one ``RequestInformation``
         per turn: the once-per-turn guard lives on that object.
 
-        The default implementation returns None (no-op).  Subclasses that
-        support structured events (e.g. Responses API) override this to emit
-        a typed SSE frame the client can use to show a "Preparing" row.
+        No-op by default; the Responses API wrapper overrides it.
         """
         return None
 

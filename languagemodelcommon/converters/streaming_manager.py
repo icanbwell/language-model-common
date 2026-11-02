@@ -395,11 +395,19 @@ class LangGraphStreamingManager(StreamContextMixin):
         # instead of leaving it in_progress for the client (BAI-1440).
         open_runtimes = self._stream_debug_output_manager.pop_open_llm_call_runtimes()
         for run_id, runtime_seconds in open_runtimes.items():
+            logger.info(
+                "Closing llm_call item as failed: attempt raised or was retried",
+                extra={
+                    "request_id": request_information.request_id,
+                    "invocation_id": run_id,
+                    "runtime_seconds": runtime_seconds,
+                },
+            )
             yield chat_request_wrapper.create_llm_call_end_sse_event(
                 request_id=request_information.request_id,
                 response_text=None,
                 runtime_seconds=runtime_seconds,
-                llm_call_id=run_id,
+                invocation_id=run_id,
                 status="failed",
             )
 
@@ -451,7 +459,7 @@ class LangGraphStreamingManager(StreamContextMixin):
         yield chat_request_wrapper.create_llm_call_start_sse_event(
             request_id=request_information.request_id,
             request_messages=request_messages,
-            llm_call_id=run_id or None,
+            invocation_id=run_id or None,
         )
 
     async def _handle_on_chat_model_end(
@@ -482,6 +490,14 @@ class LangGraphStreamingManager(StreamContextMixin):
             if run_id
             else None
         )
+        logger.debug(
+            "llm_call finished",
+            extra={
+                "request_id": request_information.request_id,
+                "invocation_id": run_id,
+                "runtime_seconds": runtime_seconds,
+            },
+        )
         # Always emitted, pairing with the llm_call start event above. The
         # model's response text is included only when enable_debug_logging is
         # on; runtime_seconds is always included (BAI-882, BAI-1440).
@@ -491,7 +507,7 @@ class LangGraphStreamingManager(StreamContextMixin):
             if chat_request_wrapper.enable_debug_logging
             else None,
             runtime_seconds=runtime_seconds,
-            llm_call_id=run_id or None,
+            invocation_id=run_id or None,
         )
 
         if not chat_request_wrapper.enable_debug_logging:

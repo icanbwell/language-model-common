@@ -89,7 +89,7 @@ class _FakeChatRequestWrapper:
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         return None
 
@@ -99,7 +99,7 @@ class _FakeChatRequestWrapper:
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         return None
 
@@ -541,7 +541,7 @@ class _RecordingLlmCallChatRequestWrapper(_FakeChatRequestWrapper):
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         self.llm_call_start_calls.append(request_messages)
         return f"llm_call_start:{len(self.llm_call_start_calls)}"
@@ -552,7 +552,7 @@ class _RecordingLlmCallChatRequestWrapper(_FakeChatRequestWrapper):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         self.llm_call_end_calls.append(response_text)
         self.llm_call_end_runtimes.append(runtime_seconds)
@@ -813,7 +813,7 @@ class _PrepareRecordingChatRequestWrapper(_FakeChatRequestWrapper):
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         self.calls.append("llm_call_start")
         return "llm_call_start"
@@ -937,9 +937,9 @@ class _LlmCallIdRecordingChatRequestWrapper(_FakeChatRequestWrapper):
         *,
         request_id: str,
         request_messages: list[dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
-        self.start_ids.append(llm_call_id)
+        self.start_ids.append(invocation_id)
         return "start"
 
     def create_llm_call_end_sse_event(
@@ -948,9 +948,9 @@ class _LlmCallIdRecordingChatRequestWrapper(_FakeChatRequestWrapper):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
-        self.end_calls.append((llm_call_id, runtime_seconds))
+        self.end_calls.append((invocation_id, runtime_seconds))
         return "end"
 
 
@@ -1138,11 +1138,11 @@ class _StatusRecordingChatRequestWrapper(_FakeChatRequestWrapper):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
         status: str = "completed",
     ) -> str | None:
-        self.end_calls.append((llm_call_id, runtime_seconds, status))
-        return f"end:{llm_call_id}:{status}"
+        self.end_calls.append((invocation_id, runtime_seconds, status))
+        return f"end:{invocation_id}:{status}"
 
 
 @pytest.mark.asyncio

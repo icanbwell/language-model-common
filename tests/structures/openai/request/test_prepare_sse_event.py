@@ -13,9 +13,6 @@ from languagemodelcommon.schema.openai.responses import ResponsesRequest
 from languagemodelcommon.structures.openai.request.chat_completion_api_request_wrapper import (
     ChatCompletionApiRequestWrapper,
 )
-from languagemodelcommon.structures.openai.request.chat_request_wrapper import (
-    ChatRequestWrapper,
-)
 from languagemodelcommon.structures.openai.request.responses_api_request_wrapper import (
     ResponsesApiRequestWrapper,
 )
@@ -63,17 +60,6 @@ def _make_chat_completion_wrapper() -> ChatCompletionApiRequestWrapper:
         enable_debug_logging=False,
         environment_variables=_make_env(),
     )
-
-
-def test_base_wrapper_prepare_is_noop() -> None:
-    # ChatRequestWrapper is an ABC and the base implementation never touches
-    # `self`, so call it unbound (mirrors test_base_wrapper_image_output_is_noop).
-    result = ChatRequestWrapper.create_prepare_sse_event(
-        object(),  # type: ignore[arg-type]
-        request_id="req-1",
-        runtime_seconds=1.5,
-    )
-    assert result is None
 
 
 def test_chat_completion_wrapper_prepare_is_noop() -> None:

@@ -70,6 +70,13 @@ class TestLlmCallTiming:
         assert open_runtimes == {"run-a": 25.0, "run-b": 15.0}
         assert manager.pop_open_llm_call_runtimes() == {}
 
+    def test_injected_clock_times_llm_calls(self) -> None:
+        clock = iter([100.0, 107.5])
+        manager = StreamDebugOutputManager(clock=lambda: next(clock))
+        manager.record_llm_call_start(run_id="run-a")
+
+        assert manager.pop_llm_call_runtime_seconds(run_id="run-a") == 7.5
+
     def test_clear_does_not_drop_in_flight_llm_calls(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -708,7 +708,7 @@ class TestCreateLlmCallSseEvents:
             request_id="req-1",
             response_text=None,
             runtime_seconds=3.0,
-            llm_call_id="run-a",
+            invocation_id="run-a",
             status="failed",
         )
         assert completed_raw is not None and failed_raw is not None
@@ -719,19 +719,19 @@ class TestCreateLlmCallSseEvents:
         assert failed_item["status"] == "failed"
         assert failed_item["runtime_seconds"] == 3.0
 
-    def test_start_and_done_share_item_id_when_llm_call_id_given(self) -> None:
+    def test_start_and_done_share_item_id_when_invocation_id_given(self) -> None:
         wrapper = _make_wrapper()
         start_raw = wrapper.create_llm_call_start_sse_event(
-            request_id="req-1", request_messages=None, llm_call_id="run-a"
+            request_id="req-1", request_messages=None, invocation_id="run-a"
         )
         other_raw = wrapper.create_llm_call_start_sse_event(
-            request_id="req-1", request_messages=None, llm_call_id="run-b"
+            request_id="req-1", request_messages=None, invocation_id="run-b"
         )
         end_raw = wrapper.create_llm_call_end_sse_event(
             request_id="req-1",
             response_text=None,
             runtime_seconds=0.5,
-            llm_call_id="run-a",
+            invocation_id="run-a",
         )
         assert start_raw is not None and other_raw is not None and end_raw is not None
         start_id = json.loads(start_raw[len("data: ") :])["item"]["id"]

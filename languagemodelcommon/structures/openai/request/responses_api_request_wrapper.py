@@ -65,6 +65,11 @@ logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
 
+# Wire discriminators for the timing items (BAI-1440).
+_LLM_CALL_ITEM_TYPE = "llm_call"
+_PREPARE_ITEM_TYPE = "prepare"
+
+
 class ResponsesApiRequestWrapper(ChatRequestWrapper):
     def __init__(
         self,
@@ -473,11 +478,11 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         }
         return f"data: {json.dumps(event)}\n\n"
 
-    def _llm_call_item_id(self, *, request_id: str, llm_call_id: str | None) -> str:
+    def _llm_call_item_id(self, *, request_id: str, invocation_id: str | None) -> str:
         # A run id pairs start/done items even when invocations overlap; the
         # counter fallback only pairs sequential invocations.
-        if llm_call_id is not None:
-            return f"llm_{request_id}_{llm_call_id}"
+        if invocation_id is not None:
+            return f"llm_{request_id}_{invocation_id}"
         return f"llm_{request_id}_{len(self._messages)}_{self._llm_call_counter}"
 
     @override
@@ -486,7 +491,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         *,
         request_id: str,
         request_messages: List[Dict[str, Any]] | None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
     ) -> str | None:
         """Emit a ``response.output_item.added`` event with an ``llm_call`` item.
 
@@ -497,13 +502,15 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         ``create_tool_start_sse_event`` already uses for tool calls.
         """
         self._llm_call_counter += 1
-        item_id = self._llm_call_item_id(request_id=request_id, llm_call_id=llm_call_id)
+        item_id = self._llm_call_item_id(
+            request_id=request_id, invocation_id=invocation_id
+        )
         event: Dict[str, Any] = {
             "type": "response.output_item.added",
             "output_index": 0,
             "sequence_number": len(self._messages),
             "item": {
-                "type": "llm_call",
+                "type": _LLM_CALL_ITEM_TYPE,
                 "id": item_id,
                 "status": "in_progress",
             },
@@ -520,7 +527,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         request_id: str,
         response_text: str | None,
         runtime_seconds: float | None = None,
-        llm_call_id: str | None = None,
+        invocation_id: str | None = None,
         status: str = "completed",
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
@@ -530,9 +537,9 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         it already matches ``function_call`` start/end items.
         """
         item: Dict[str, Any] = {
-            "type": "llm_call",
+            "type": _LLM_CALL_ITEM_TYPE,
             "id": self._llm_call_item_id(
-                request_id=request_id, llm_call_id=llm_call_id
+                request_id=request_id, invocation_id=invocation_id
             ),
             "status": status,
         }
@@ -558,7 +565,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         """
         return self._output_item_done_frame(
             item={
-                "type": "prepare",
+                "type": _PREPARE_ITEM_TYPE,
                 "id": f"prepare_{request_id}",
                 "status": "completed",
                 "runtime_seconds": runtime_seconds,
