@@ -445,6 +445,25 @@ class ChatRequestWrapper(abc.ABC):
         """
         return None
 
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        """Emit an SSE event for the preparation phase of a turn.
+
+        Fires once per turn, before the first model invocation.
+        ``runtime_seconds`` is the wall-clock time from request receipt to the
+        first model call (config resolution, tool catalog fetch, pipeline
+        setup). The event carries no content.
+
+        The default implementation returns None (no-op).  Subclasses that
+        support structured events (e.g. Responses API) override this to emit
+        a typed SSE frame the client can use to show a "Preparing" row.
+        """
+        return None
+
     def create_image_output_sse_event(
         self,
         *,

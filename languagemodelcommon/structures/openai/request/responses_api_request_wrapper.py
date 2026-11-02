@@ -526,6 +526,32 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         return f"data: {json.dumps(event)}\n\n"
 
     @override
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        """Emit a ``response.output_item.done`` event with a ``prepare`` item.
+
+        Done only, with no matching ``added`` event: the client back-dates the
+        item by ``runtime_seconds``, the same way it handles a tool end with
+        no start. The item carries timing only, no content.
+        """
+        event: Dict[str, Any] = {
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": len(self._messages),
+            "item": {
+                "type": "prepare",
+                "id": f"prepare_{request_id}",
+                "status": "completed",
+                "runtime_seconds": runtime_seconds,
+            },
+        }
+        return f"data: {json.dumps(event)}\n\n"
+
+    @override
     def create_image_output_sse_event(
         self,
         *,

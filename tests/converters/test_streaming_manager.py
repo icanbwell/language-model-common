@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from typing import Any, Optional, cast
 from unittest.mock import AsyncMock
@@ -769,3 +770,139 @@ async def test_llm_call_end_includes_runtime_when_debug_logging_enabled(
     assert runtime_seconds is not None
     assert runtime_seconds >= 0
     assert chat_request_wrapper.llm_call_end_calls == ["synthetic response text"]
+
+
+class _PrepareRecordingChatRequestWrapper(_FakeChatRequestWrapper):
+    """Records the order of create_prepare/llm_call_start events so tests can
+    assert the prepare item is emitted once, ahead of the first llm_call."""
+
+    def __init__(self, *, enable_debug_logging: bool = False) -> None:
+        super().__init__(enable_debug_logging=enable_debug_logging)
+        self.calls: list[str] = []
+        self.prepare_runtimes: list[float] = []
+
+    def create_prepare_sse_event(
+        self,
+        *,
+        request_id: str,
+        runtime_seconds: float,
+    ) -> str | None:
+        self.calls.append("prepare")
+        self.prepare_runtimes.append(runtime_seconds)
+        return "prepare"
+
+    def create_llm_call_start_sse_event(
+        self,
+        *,
+        request_id: str,
+        request_messages: list[dict[str, Any]] | None,
+    ) -> str | None:
+        self.calls.append("llm_call_start")
+        return "llm_call_start"
+
+
+async def _model_start_chunks(
+    *,
+    manager: LangGraphStreamingManager,
+    wrapper: _PrepareRecordingChatRequestWrapper,
+    request_information: RequestInformation,
+) -> list[str | None]:
+    event: StandardStreamEvent | CustomStreamEvent = cast(
+        StandardStreamEvent, {"event": "on_chat_model_start", "data": {}}
+    )
+    return [
+        chunk
+        async for chunk in manager._handle_on_chat_model_start(
+            event=event,
+            chat_request_wrapper=cast(ChatRequestWrapper, wrapper),
+            request_information=request_information,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_emitted_once_before_first_llm_call_start(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+    request_information = RequestInformation(
+        request_id="req-1", request_started_at=time.perf_counter() - 2.0
+    )
+
+    first = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+    second = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+    third = await _model_start_chunks(
+        manager=manager, wrapper=wrapper, request_information=request_information
+    )
+
+    assert first == ["prepare", "llm_call_start"]
+    assert second == ["llm_call_start"]
+    assert third == ["llm_call_start"]
+    assert wrapper.calls == [
+        "prepare",
+        "llm_call_start",
+        "llm_call_start",
+        "llm_call_start",
+    ]
+    (runtime_seconds,) = wrapper.prepare_runtimes
+    assert runtime_seconds >= 2.0
+
+
+@pytest.mark.asyncio
+async def test_prepare_not_emitted_when_request_started_at_is_none(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    chunks = await _model_start_chunks(
+        manager=manager,
+        wrapper=wrapper,
+        request_information=RequestInformation(request_id="req-1"),
+    )
+
+    assert chunks == ["llm_call_start"]
+    assert wrapper.prepare_runtimes == []
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_clamped_to_zero_for_future_start(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    await _model_start_chunks(
+        manager=manager,
+        wrapper=wrapper,
+        request_information=RequestInformation(
+            request_id="req-1", request_started_at=time.perf_counter() + 1000.0
+        ),
+    )
+
+    assert wrapper.prepare_runtimes == [0.0]
+
+
+@pytest.mark.asyncio
+async def test_prepare_state_is_per_request(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+) -> None:
+    """The once-per-turn flag must not leak across requests sharing a manager."""
+    manager = streaming_manager_factory()
+    wrapper = _PrepareRecordingChatRequestWrapper()
+
+    for request_id in ("req-1", "req-2"):
+        await _model_start_chunks(
+            manager=manager,
+            wrapper=wrapper,
+            request_information=RequestInformation(
+                request_id=request_id, request_started_at=time.perf_counter()
+            ),
+        )
+
+    assert wrapper.calls == ["prepare", "llm_call_start", "prepare", "llm_call_start"]

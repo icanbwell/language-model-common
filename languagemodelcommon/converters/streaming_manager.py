@@ -21,6 +21,7 @@ See Also:
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import (
     Any,
@@ -369,6 +370,22 @@ class LangGraphStreamingManager(StreamContextMixin):
         # no guaranteed whitespace against what was already streamed -- see
         # StreamBufferManager.mark_new_invocation_boundary.
         self._stream_buffer_manager.mark_new_invocation_boundary()
+
+        # One "prepare" item per turn, ahead of the first llm_call: the time
+        # from request receipt to the first model call (BAI-1440). The flag
+        # lives on the per-request RequestInformation, not on this singleton.
+        if (
+            request_information.request_started_at is not None
+            and not request_information.prepare_event_emitted
+        ):
+            request_information.prepare_event_emitted = True
+            yield chat_request_wrapper.create_prepare_sse_event(
+                request_id=request_information.request_id,
+                runtime_seconds=max(
+                    0.0, time.perf_counter() - request_information.request_started_at
+                ),
+            )
+
         self._stream_debug_output_manager.start_streamed_output(
             event_name="on_chat_model_start",
             start_time=datetime.now(tz=timezone.utc),
