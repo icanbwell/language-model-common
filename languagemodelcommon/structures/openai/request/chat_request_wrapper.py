@@ -421,9 +421,8 @@ class ChatRequestWrapper(abc.ABC):
         stable identifier for the invocation (the LangChain run id) so the
         start and done items pair up even when invocations overlap.
 
-        A start item with no matching done item means the invocation did not
-        complete (for example the provider call failed); clients should close
-        any open item on the terminal response event.
+        An invocation whose attempt fails or is retried is closed with a done
+        item whose status is ``"failed"``.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit
@@ -438,6 +437,7 @@ class ChatRequestWrapper(abc.ABC):
         response_text: str | None,
         runtime_seconds: float | None = None,
         llm_call_id: str | None = None,
+        status: str = "completed",
     ) -> str | None:
         """Emit an SSE event when one individual model invocation finishes.
 
@@ -447,6 +447,8 @@ class ChatRequestWrapper(abc.ABC):
         content must not be sent (debug logging off). ``runtime_seconds`` is
         the duration of the invocation, or ``None`` when it is unknown.
         ``llm_call_id`` matches the value passed to the start event.
+        ``status`` is ``"completed"`` normally, or ``"failed"`` when the
+        invocation was abandoned because its attempt raised or was retried.
 
         The default implementation returns None (no-op).  Subclasses that
         support structured events (e.g. Responses API) override this to emit

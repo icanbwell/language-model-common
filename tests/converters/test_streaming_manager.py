@@ -13,7 +13,10 @@ from languagemodelcommon.converters.stream_buffer import StreamBufferManager
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
-from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
+from languagemodelcommon.converters.streaming_manager import (
+    LLM_CALLS_ABANDONED_EVENT,
+    LangGraphStreamingManager,
+)
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.file_managers.file_writer import FileWriter
 from languagemodelcommon.schema.openai.responses import ResponsesRequest
@@ -1122,3 +1125,63 @@ async def test_manager_with_real_responses_wrapper_pairs_items_and_times_them(
     assert "request" not in llm_start
     assert "output" not in llm_done
     assert "secret" not in "".join(f for f in frames if f)
+
+
+class _StatusRecordingChatRequestWrapper(_FakeChatRequestWrapper):
+    def __init__(self) -> None:
+        super().__init__(enable_debug_logging=False)
+        self.end_calls: list[tuple[str | None, float | None, str]] = []
+
+    def create_llm_call_end_sse_event(
+        self,
+        *,
+        request_id: str,
+        response_text: str | None,
+        runtime_seconds: float | None = None,
+        llm_call_id: str | None = None,
+        status: str = "completed",
+    ) -> str | None:
+        self.end_calls.append((llm_call_id, runtime_seconds, status))
+        return f"end:{llm_call_id}:{status}"
+
+
+@pytest.mark.asyncio
+async def test_abandoned_event_closes_only_open_llm_calls_as_failed(
+    streaming_manager_factory: Callable[[], LangGraphStreamingManager],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed or retried attempt must not leave llm_call items in_progress:
+    calls that already ended are untouched, open ones are closed as failed."""
+    clock = iter([0.0, 1.0, 2.0, 12.0])
+    monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+    manager = streaming_manager_factory()
+    wrapper = _StatusRecordingChatRequestWrapper()
+    cast_wrapper = cast(ChatRequestWrapper, wrapper)
+    request_information = RequestInformation(request_id="req-1")
+
+    async def _send(*, event_name: str, run_id: str) -> list[str]:
+        event: StandardStreamEvent | CustomStreamEvent = cast(
+            StandardStreamEvent,
+            {"event": event_name, "run_id": run_id, "data": {}},
+        )
+        return [
+            chunk
+            async for chunk in manager.handle_langchain_event(
+                event=event,
+                chat_request_wrapper=cast_wrapper,
+                request_information=request_information,
+                tool_start_times={},
+                user_id=None,
+            )
+        ]
+
+    await _send(event_name="on_chat_model_start", run_id="run-a")  # t=0
+    await _send(event_name="on_chat_model_start", run_id="run-b")  # t=1
+    ended = await _send(event_name="on_chat_model_end", run_id="run-a")  # t=2
+    abandoned = await _send(event_name=LLM_CALLS_ABANDONED_EVENT, run_id="")  # t=12
+    again = await _send(event_name=LLM_CALLS_ABANDONED_EVENT, run_id="")
+
+    assert ended == ["end:run-a:completed"]
+    assert abandoned == ["end:run-b:failed"]
+    assert again == []
+    assert wrapper.end_calls[-1] == ("run-b", 11.0, "failed")

@@ -521,6 +521,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
         response_text: str | None,
         runtime_seconds: float | None = None,
         llm_call_id: str | None = None,
+        status: str = "completed",
     ) -> str | None:
         """Emit a ``response.output_item.done`` event with an ``llm_call`` item.
 
@@ -533,7 +534,7 @@ class ResponsesApiRequestWrapper(ChatRequestWrapper):
             "id": self._llm_call_item_id(
                 request_id=request_id, llm_call_id=llm_call_id
             ),
-            "status": "completed",
+            "status": status,
         }
         if runtime_seconds is not None:
             item["runtime_seconds"] = runtime_seconds

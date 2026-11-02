@@ -699,6 +699,26 @@ class TestCreateLlmCallSseEvents:
         else:
             assert item["output"] == expected_output
 
+    def test_end_event_status_defaults_to_completed_and_can_be_failed(self) -> None:
+        wrapper = _make_wrapper()
+        completed_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1", response_text=None
+        )
+        failed_raw = wrapper.create_llm_call_end_sse_event(
+            request_id="req-1",
+            response_text=None,
+            runtime_seconds=3.0,
+            llm_call_id="run-a",
+            status="failed",
+        )
+        assert completed_raw is not None and failed_raw is not None
+        assert (
+            json.loads(completed_raw[len("data: ") :])["item"]["status"] == "completed"
+        )
+        failed_item = json.loads(failed_raw[len("data: ") :])["item"]
+        assert failed_item["status"] == "failed"
+        assert failed_item["runtime_seconds"] == 3.0
+
     def test_start_and_done_share_item_id_when_llm_call_id_given(self) -> None:
         wrapper = _make_wrapper()
         start_raw = wrapper.create_llm_call_start_sse_event(

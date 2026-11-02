@@ -67,6 +67,26 @@ from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
 from languagemodelcommon.utilities.request_information import RequestInformation
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 
+# Synthetic event the converter emits when a graph attempt fails, so the
+# streaming manager can close llm_call items that never got an end event.
+LLM_CALLS_ABANDONED_EVENT = "llm_calls_abandoned"
+
+
+def create_llm_calls_abandoned_event() -> CustomStreamEvent:
+    """Build the synthetic event that closes llm_call items left open by a failed attempt."""
+    return cast(
+        CustomStreamEvent,
+        {
+            "event": LLM_CALLS_ABANDONED_EVENT,
+            "name": LLM_CALLS_ABANDONED_EVENT,
+            "run_id": "",
+            "tags": [],
+            "metadata": {},
+            "data": {},
+        },
+    )
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS.LLM)
 
@@ -239,6 +259,13 @@ class LangGraphStreamingManager(StreamContextMixin):
                     ):
                         if chunk:
                             yield chunk
+                case _ if event_type == LLM_CALLS_ABANDONED_EVENT:
+                    async for chunk in self._handle_llm_calls_abandoned(
+                        chat_request_wrapper=chat_request_wrapper,
+                        request_information=request_information,
+                    ):
+                        if chunk:
+                            yield chunk
                 case "on_custom_event":
                     async for chunk in self._handle_on_custom_event(
                         event=event,
@@ -356,6 +383,25 @@ class LangGraphStreamingManager(StreamContextMixin):
                 source="on_chain_end",
             )
         self._stream_debug_output_manager.clear()
+
+    async def _handle_llm_calls_abandoned(
+        self,
+        *,
+        chat_request_wrapper: ChatRequestWrapper,
+        request_information: RequestInformation,
+    ) -> AsyncGenerator[str | None, None]:
+        # An attempt raised or is being retried, so these invocations will
+        # never see on_chat_model_end: close each open llm_call item as failed
+        # instead of leaving it in_progress for the client (BAI-1440).
+        open_runtimes = self._stream_debug_output_manager.pop_open_llm_call_runtimes()
+        for run_id, runtime_seconds in open_runtimes.items():
+            yield chat_request_wrapper.create_llm_call_end_sse_event(
+                request_id=request_information.request_id,
+                response_text=None,
+                runtime_seconds=runtime_seconds,
+                llm_call_id=run_id,
+                status="failed",
+            )
 
     async def _handle_on_chat_model_start(
         self,

@@ -6,6 +6,9 @@ from botocore.exceptions import TokenRetrievalError
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 
+from languagemodelcommon.converters.streaming_manager import (
+    LLM_CALLS_ABANDONED_EVENT,
+)
 from languagemodelcommon.converters.langgraph_to_openai_converter import (
     LangGraphToOpenAIConverter,
 )
@@ -108,6 +111,15 @@ class _FakeCompiledStateGraph:
         if self.error is not None and self.fail_count == 0:
             raise self.error
         return {"messages": []}
+
+
+class _NoopStreamingManager:
+    """Streaming-manager stand-in for tests that only exercise the converter's
+    error handling: it swallows every event."""
+
+    async def handle_langchain_event(self, **_: Any) -> AsyncGenerator[str, None]:
+        return
+        yield ""
 
 
 def _build_converter(
@@ -382,8 +394,12 @@ async def test_stream_graph_compacts_and_retries_on_input_too_long(
         )
     ]
 
-    # The retry succeeded and yielded events
-    assert len(events) == 1
+    # The retry succeeded and yielded events; the failed first attempt also
+    # closed its open llm_call items via a synthetic event.
+    assert [e["event"] for e in events] == [
+        LLM_CALLS_ABANDONED_EVENT,
+        "on_chain_start",
+    ]
     assert fake_graph._call_count == 2
 
 
@@ -575,7 +591,11 @@ async def test_stream_retries_on_rate_limit_before_first_token(
         )
     ]
 
-    assert len(events) == 1
+    # Each failed attempt closes its open llm_call items via a synthetic event.
+    assert [e["event"] for e in events].count(LLM_CALLS_ABANDONED_EVENT) == 2
+    assert [e for e in events if e["event"] != LLM_CALLS_ABANDONED_EVENT] == [
+        {"event": "on_chain_start"}
+    ]
     assert fake_graph._call_count == 3
 
 
@@ -649,6 +669,7 @@ async def test_stream_resp_async_generator_reports_rate_limit_after_retries_exha
     monkeypatch.setenv("RATE_LIMIT_MAX_RETRIES", "1")
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     converter = _build_converter(monkeypatch)
+    converter.streaming_manager = _NoopStreamingManager()  # type: ignore[assignment]
 
     fake_graph = _FakeCompiledStateGraph(
         error=_AnthropicRateLimitError(),
@@ -792,3 +813,26 @@ async def test_run_graph_does_not_reexecute_completed_tool_call_on_rate_limit(
         )
 
     assert tool_call_count["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_attempt_emits_abandoned_event_before_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any non-retryable failure also closes the attempt's open llm_call items,
+    and the abandoned event does not count as streamed output (BAI-1440)."""
+    converter = _build_converter(monkeypatch)
+    fake_graph = _FakeCompiledStateGraph(error=ValueError("boom"))
+    events: list[str] = []
+
+    with pytest.raises(Exception):
+        async for event in converter._stream_graph_with_messages_async(
+            messages=[HumanMessage(content="hi")],
+            compiled_state_graph=fake_graph,  # type: ignore[arg-type]
+            request_information=_request_information(),
+            config=None,
+            state=None,
+        ):
+            events.append(event["event"])
+
+    assert events == [LLM_CALLS_ABANDONED_EVENT]

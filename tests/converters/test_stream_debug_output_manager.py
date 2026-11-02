@@ -1,4 +1,7 @@
+import time
 from datetime import datetime, timezone
+
+import pytest
 
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
@@ -48,3 +51,39 @@ class TestStreamDebugOutputManager:
         output = manager.pop_streamed_output()
         assert output is not None
         assert manager.pop_streamed_output() is None
+
+
+class TestLlmCallTiming:
+    """Per-run timing used by the llm_call stream items (BAI-1440)."""
+
+    def test_pop_open_llm_call_runtimes_returns_and_forgets_open_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = iter([0.0, 10.0, 25.0, 25.0])
+        monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+        manager = StreamDebugOutputManager()
+        manager.record_llm_call_start(run_id="run-a")
+        manager.record_llm_call_start(run_id="run-b")
+
+        open_runtimes = manager.pop_open_llm_call_runtimes()
+
+        assert open_runtimes == {"run-a": 25.0, "run-b": 15.0}
+        assert manager.pop_open_llm_call_runtimes() == {}
+
+    def test_clear_does_not_drop_in_flight_llm_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clock = iter([0.0, 4.0])
+        monkeypatch.setattr(time, "perf_counter", lambda: next(clock))
+        manager = StreamDebugOutputManager()
+        manager.record_llm_call_start(run_id="run-a")
+
+        manager.clear()
+
+        assert manager.pop_llm_call_runtime_seconds(run_id="run-a") == 4.0
+
+    def test_unknown_run_id_has_no_runtime(self) -> None:
+        assert (
+            StreamDebugOutputManager().pop_llm_call_runtime_seconds(run_id="missing")
+            is None
+        )

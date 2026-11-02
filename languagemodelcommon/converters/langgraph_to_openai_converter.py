@@ -50,7 +50,10 @@ from languagemodelcommon.converters.stream_context_mixin import StreamContextMix
 from languagemodelcommon.converters.stream_debug_output_manager import (
     StreamDebugOutputManager,
 )
-from languagemodelcommon.converters.streaming_manager import LangGraphStreamingManager
+from languagemodelcommon.converters.streaming_manager import (
+    LangGraphStreamingManager,
+    create_llm_calls_abandoned_event,
+)
 from languagemodelcommon.exceptions.bailey_exception import BaileyException
 from languagemodelcommon.exceptions.rate_limit_exception import RateLimitException
 from languagemodelcommon.converters.history_cache_middleware import (
@@ -884,6 +887,10 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                     yield event
                 return
             except RateLimitException as e:
+                # This attempt's open model calls will never end: close their
+                # llm_call items. Not counted in yielded_any, so the
+                # pre-first-token retry below is unaffected (BAI-1440).
+                yield create_llm_calls_abandoned_event()
                 # Only safe to retry before the first token is streamed to the
                 # client; once partial output is sent, re-running would duplicate it.
                 if (
@@ -909,6 +916,7 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                 rate_limit_attempt += 1
                 continue
             except BaileyException as e:
+                yield create_llm_calls_abandoned_event()
                 if "context window" not in str(e):
                     raise
 
@@ -938,12 +946,19 @@ class LangGraphToOpenAIConverter(StreamContextMixin):
                         yield event
                     return
                 except BaileyException:
+                    yield create_llm_calls_abandoned_event()
                     raise
                 except Exception as retry_error:
+                    yield create_llm_calls_abandoned_event()
                     raise BaileyException(
                         "The conversation input exceeds the model's context window "
                         "even after compaction. Please start a new conversation."
                     ) from retry_error
+            except Exception:
+                # Any other failure (authorization, credentials, tool errors)
+                # also leaves model calls open.
+                yield create_llm_calls_abandoned_event()
+                raise
 
     def _compute_rate_limit_backoff(
         self,

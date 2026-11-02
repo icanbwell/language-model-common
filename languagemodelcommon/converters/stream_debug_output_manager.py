@@ -38,6 +38,19 @@ class StreamDebugOutputManager:
             return None
         return elapsed_seconds_since(started=started)
 
+    def pop_open_llm_call_runtimes(self) -> dict[str, float]:
+        """Return the seconds each still-open invocation has run, then forget them.
+
+        Used when an attempt fails or is retried and the open invocations will
+        never see an ``on_chat_model_end``.
+        """
+        open_runtimes = {
+            run_id: elapsed_seconds_since(started=started)
+            for run_id, started in self._llm_call_started.items()
+        }
+        self._llm_call_started.clear()
+        return open_runtimes
+
     def start_streamed_output(self, *, event_name: str, start_time: datetime) -> None:
         self._streamed_output = StreamedOutput(
             event_name=event_name, start_time=start_time
