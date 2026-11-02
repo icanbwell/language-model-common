@@ -135,6 +135,7 @@ class TestParameterSubstitution:
             ("a" * 20, "a" * 20),
             ("a" * 21, "a" * 19 + "…"),
             ("blood pressure trends over time", "blood pressure tren…"),
+            ("a" * 18 + " bcdefg", "a" * 18 + "…"),
         ],
     )
     def test_long_value_truncated_with_ellipsis(
