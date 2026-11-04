@@ -447,6 +447,15 @@ class ChatModelConfig(BaseModel):
         None, description="System prompts for the model."
     )
 
+    safety_rules_prompts: List[PromptConfig] | None = Field(
+        None,
+        description=(
+            "Prompts holding the model's safety rules, in order. Same entry shape as "
+            "system_prompts, and resolved when the config is read. Specified separately from "
+            "system_prompts; the consumer decides where in the assembled system prompt they go."
+        ),
+    )
+
     follow_up_suggestion_prompts: List[PromptConfig] | None = Field(
         None,
         description=(

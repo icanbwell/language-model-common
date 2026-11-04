@@ -253,6 +253,65 @@ async def test_prompt_name_resolves_from_library(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_safety_rules_prompts_resolve_from_library_separately_from_system_prompts(
+    tmp_path: Any,
+) -> None:
+    prompt_library = tmp_path / "prompt_library" / "prompt_library" / "prompts"
+    prompt_library.mkdir(parents=True)
+    (prompt_library / "main_prompt.txt").write_text("MAIN", encoding="utf-8")
+    (prompt_library / "rules_one.txt").write_text("RULES-ONE", encoding="utf-8")
+    (prompt_library / "rules_two.txt").write_text("RULES-TWO", encoding="utf-8")
+    (tmp_path / "model.json").write_text(
+        '{"id": "model-a", "name": "Model A", '
+        '"model": {"provider": "openai", "model": "gpt-4o-mini"}, '
+        '"system_prompts": [{"name": "main_prompt"}], '
+        '"safety_rules_prompts": [{"name": "rules_one"}, {"name": "rules_two"}]}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        prompt_library_manager=PromptLibraryManager(
+            environment_variables=_StubPromptLibraryEnv(str(prompt_library))
+        ),
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    configs = await reader.read_model_configs_async()
+
+    assert configs[0].system_prompts is not None
+    assert [p.content for p in configs[0].system_prompts] == ["MAIN"]
+    assert configs[0].safety_rules_prompts is not None
+    assert [p.content for p in configs[0].safety_rules_prompts] == [
+        "RULES-ONE",
+        "RULES-TWO",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_safety_rules_prompt_fails_the_config_load(
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
+) -> None:
+    # Unlike the follow-up lists, the main safety rules are essential, so a missing prompt must
+    # not silently produce a model without them.
+    (tmp_path / "model.json").write_text(
+        '{"id": "model-a", "name": "Model A", '
+        '"model": {"provider": "openai", "model": "gpt-4o-mini"}, '
+        '"safety_rules_prompts": [{"name": "does_not_exist"}]}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    with pytest.raises(ValueError, match="does_not_exist"):
+        await reader.read_model_configs_async()
+
+
+@pytest.mark.asyncio
 async def test_follow_up_prompt_lists_are_read_separately_and_left_unresolved(
     tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
@@ -304,6 +363,7 @@ async def test_follow_up_prompt_lists_default_to_none(
 
     assert configs[0].follow_up_suggestion_prompts is None
     assert configs[0].follow_up_safety_rules_prompts is None
+    assert configs[0].safety_rules_prompts is None
 
 
 @pytest.mark.asyncio
