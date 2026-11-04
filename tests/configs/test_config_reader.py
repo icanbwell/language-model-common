@@ -253,6 +253,60 @@ async def test_prompt_name_resolves_from_library(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_follow_up_prompt_lists_are_read_separately_and_left_unresolved(
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
+) -> None:
+    # A name missing from the prompt library must not fail the model config: the consumer
+    # resolves these lists per turn, so a missing file only turns follow-up suggestions off.
+    (tmp_path / "model.json").write_text(
+        '{"id": "model-a", "name": "Model A", '
+        '"model": {"provider": "openai", "model": "gpt-4o-mini"}, '
+        '"follow_up_suggestion_prompts": [{"name": "task_one"}, {"content": "inline"}], '
+        '"follow_up_safety_rules_prompts": [{"name": "rules_one"}]}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    configs = await reader.read_model_configs_async()
+
+    assert configs[0].follow_up_suggestion_prompts is not None
+    assert [(p.name, p.content) for p in configs[0].follow_up_suggestion_prompts] == [
+        ("task_one", None),
+        (None, "inline"),
+    ]
+    assert configs[0].follow_up_safety_rules_prompts is not None
+    assert [p.name for p in configs[0].follow_up_safety_rules_prompts] == ["rules_one"]
+    assert configs[0].system_prompts is None
+
+
+@pytest.mark.asyncio
+async def test_follow_up_prompt_lists_default_to_none(
+    tmp_path: Any, prompt_library_manager: PromptLibraryManager
+) -> None:
+    (tmp_path / "model.json").write_text(
+        '{"id": "model-a", "name": "Model A", '
+        '"model": {"provider": "openai", "model": "gpt-4o-mini"}}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    configs = await reader.read_model_configs_async()
+
+    assert configs[0].follow_up_suggestion_prompts is None
+    assert configs[0].follow_up_safety_rules_prompts is None
+
+
+@pytest.mark.asyncio
 async def test_override_does_not_clobber_default_fields(
     tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:

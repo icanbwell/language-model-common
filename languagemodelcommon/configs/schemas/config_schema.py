@@ -447,6 +447,26 @@ class ChatModelConfig(BaseModel):
         None, description="System prompts for the model."
     )
 
+    follow_up_suggestion_prompts: List[PromptConfig] | None = Field(
+        None,
+        description=(
+            "Prompts that make up the follow-up suggester's task instructions, in order. Same "
+            "entry shape as system_prompts (name from the prompt library, or inline content). "
+            "Not resolved when the config is read: the consumer resolves them when it runs the "
+            "suggester, so a missing prompt turns follow-up suggestions off for that turn "
+            "instead of failing the model config."
+        ),
+    )
+
+    follow_up_safety_rules_prompts: List[PromptConfig] | None = Field(
+        None,
+        description=(
+            "Prompts holding the safety rules the follow-up suggester applies, in order. Same "
+            "entry shape and resolution as follow_up_suggestion_prompts, and specified "
+            "separately from it."
+        ),
+    )
+
     model_parameters: List[ModelParameterConfig] | None = Field(
         None,
         description="Model parameters (e.g., temperature, max_tokens).",
