@@ -56,7 +56,7 @@ _OVERRIDE_REFRESH_RETRY_AFTER_SECONDS = 15.0
 
 
 class ConfigReader:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,
@@ -1068,6 +1068,7 @@ class ConfigReader:
 
         for model in models:
             await self._resolve_prompt_list_async(model.system_prompts)
+            await self._resolve_prompt_list_async(model.safety_rules_prompts)
             await self._resolve_prompt_list_async(model.example_prompts)
 
     async def _discover_prompts_path(self, config_path: str) -> str | None:
