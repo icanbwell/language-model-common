@@ -56,7 +56,7 @@ _OVERRIDE_REFRESH_RETRY_AFTER_SECONDS = 15.0
 
 
 class ConfigReader:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(
         self,

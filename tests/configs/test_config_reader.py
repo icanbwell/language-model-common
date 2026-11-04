@@ -736,6 +736,22 @@ def test_model_config_cache_key_differs_by_config_path(
     assert key_a.endswith(":bailey")
 
 
+def test_model_config_cache_key_does_not_reuse_rows_written_before_safety_rules_prompts(
+    prompt_library_manager: PromptLibraryManager,
+) -> None:
+    # Rows cached under v1 lack safety_rules_prompts and would read back as "no safety rules".
+    reader = ConfigReader(
+        prompt_library_manager=prompt_library_manager,
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    key = reader._model_config_cache_key(
+        config_path="github://org/repo/configs?ref=1.0.0", model_name="bailey"
+    )
+
+    assert key.startswith("v2:")
+
+
 @pytest.mark.asyncio
 async def test_model_config_cache_none_store_skips_entirely(
     prompt_library_manager: PromptLibraryManager,
