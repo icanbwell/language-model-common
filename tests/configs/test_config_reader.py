@@ -289,6 +289,54 @@ async def test_safety_rules_prompts_resolve_from_library_separately_from_system_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_entries", "override_entries", "expected_contents"),
+    [
+        # A client override replaces the whole list, whether entries are named or inline, so it
+        # cannot leave base safety rules behind.
+        ('[{"name": "rules_one"}]', '[{"name": "rules_two"}]', ["RULES-TWO"]),
+        ('[{"content": "BASE"}]', '[{"content": "OVERRIDE"}]', ["OVERRIDE"]),
+    ],
+)
+async def test_client_override_replaces_safety_rules_prompts(
+    tmp_path: Any,
+    base_entries: str,
+    override_entries: str,
+    expected_contents: list[str],
+) -> None:
+    prompt_library = tmp_path / "prompt_library" / "prompt_library" / "prompts"
+    prompt_library.mkdir(parents=True)
+    (prompt_library / "rules_one.txt").write_text("RULES-ONE", encoding="utf-8")
+    (prompt_library / "rules_two.txt").write_text("RULES-TWO", encoding="utf-8")
+    client_dir = tmp_path / "clients" / "client-a"
+    client_dir.mkdir(parents=True)
+    model_prefix = (
+        '{"id": "model-a", "name": "Model A", '
+        '"model": {"provider": "openai", "model": "gpt-4o-mini"}, '
+    )
+    (tmp_path / "model.json").write_text(
+        model_prefix + f'"safety_rules_prompts": {base_entries}}}', encoding="utf-8"
+    )
+    (client_dir / "model.json").write_text(
+        model_prefix + f'"safety_rules_prompts": {override_entries}}}',
+        encoding="utf-8",
+    )
+    os.environ["MODELS_OFFICIAL_PATH"] = str(tmp_path)
+    os.environ.pop("MODELS_TESTING_PATH", None)
+    reader = ConfigReader(
+        prompt_library_manager=PromptLibraryManager(
+            environment_variables=_StubPromptLibraryEnv(str(prompt_library))
+        ),
+        environment_variables=LanguageModelCommonEnvironmentVariables(),
+    )
+
+    configs = await reader.read_model_configs_async(client_id="client-a")
+
+    assert configs[0].safety_rules_prompts is not None
+    assert [p.content for p in configs[0].safety_rules_prompts] == expected_contents
+
+
+@pytest.mark.asyncio
 async def test_a_missing_safety_rules_prompt_fails_the_config_load(
     tmp_path: Any, prompt_library_manager: PromptLibraryManager
 ) -> None:
