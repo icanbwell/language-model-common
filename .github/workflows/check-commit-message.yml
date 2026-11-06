@@ -8,6 +8,14 @@ on:
 jobs:
   check-commit-message:
     name: Check Commit Message
+    # Dependabot opens no Jira ticket, so its PRs are exempt, and so is the squash commit one leaves
+    # on main (the author stays dependabot[bot]). The PR author, not the actor, so a human's push to a
+    # Dependabot branch does not turn the gate back on. A push is exempt only when it is that one
+    # commit: the checker reads every commit in a push, so a Dependabot tip must not hide human
+    # commits beneath it. A skipped job reports as passing.
+    if: >-
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      (github.event.head_commit.author.name != 'dependabot[bot]' || github.event.commits[1] != null)
     runs-on: ubuntu-latest
     steps:
       - name: Check For Issue Key
