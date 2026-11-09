@@ -226,6 +226,24 @@ class TestResolveMcpServers:
         assert config.tools is not None
         assert config.tools[0].auth == "pass_through"
 
+    def test_identity_assertion_auth_is_kept_as_is(self) -> None:
+        config = ChatModelConfig(
+            **_make_model_config("vendor", mcp_server="vendor-server")
+        )
+        mcp = McpJsonConfig(
+            mcpServers={
+                "vendor-server": McpServerEntry(
+                    url="https://mcp.example.invalid/vendor/",
+                    auth="identity_assertion",
+                )
+            }
+        )
+
+        resolve_mcp_servers(configs=[config], mcp_config=mcp)
+
+        assert config.tools is not None
+        assert config.tools[0].auth == "identity_assertion"
+
     def test_mcp_json_overrides_inline_auth(self) -> None:
         """mcp_server resolution always uses .mcp.json values."""
         config = ChatModelConfig(
