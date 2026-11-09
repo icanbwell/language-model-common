@@ -293,11 +293,19 @@ class AuthenticationConfig(BaseModel):
         None, description="Headers to pass with requests (map of header name to value)."
     )
 
-    auth: Literal["None", "jwt_token", "pass_through", "oauth", "headers"] | None = (
-        Field(
-            None,
-            description="Authentication mode. 'pass_through' forwards the caller's token to the MCP server as-is, without verifying it or running OAuth discovery. Auto-set to 'jwt_token' when oauth is present, or 'headers' when headers contain an Authorization key.",
-        )
+    auth: (
+        Literal[
+            "None",
+            "jwt_token",
+            "pass_through",
+            "oauth",
+            "headers",
+            "identity_assertion",
+        ]
+        | None
+    ) = Field(
+        None,
+        description="Authentication mode. 'pass_through' forwards the caller's token to the MCP server as-is, without verifying it or running OAuth discovery. 'identity_assertion' asks the consuming service to send the server a short-lived token it signs itself, carrying only the person id and addressed to that server, instead of the caller's own token; this library only carries the value and the consumer implements it. Auto-set to 'jwt_token' when oauth is present, or 'headers' when headers contain an Authorization key.",
     )
 
     auth_optional: bool | None = Field(

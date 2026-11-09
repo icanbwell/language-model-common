@@ -52,13 +52,24 @@ class McpServerEntry(BaseModel):
         "When an Authorization header is present and auth is not set, auth is automatically set to 'headers'.",
     )
 
-    auth: Literal["None", "jwt_token", "pass_through", "oauth", "headers"] | None = (
-        Field(
-            None,
-            description="Authentication mode. 'pass_through' forwards the caller's token "
-            "directly without OAuth or token exchange. Auto-set to 'jwt_token' when oauth "
-            "is present, or 'headers' when headers contains an Authorization key.",
-        )
+    auth: (
+        Literal[
+            "None",
+            "jwt_token",
+            "pass_through",
+            "oauth",
+            "headers",
+            "identity_assertion",
+        ]
+        | None
+    ) = Field(
+        None,
+        description="Authentication mode. 'pass_through' forwards the caller's token "
+        "directly without OAuth or token exchange. 'identity_assertion' asks the consuming "
+        "service to send a short-lived token it signs itself, carrying only the person id "
+        "and addressed to this server, instead of the caller's token; this library only "
+        "carries the value. Auto-set to 'jwt_token' when oauth is present, or 'headers' "
+        "when headers contains an Authorization key.",
     )
 
     auth_optional: bool | None = Field(
