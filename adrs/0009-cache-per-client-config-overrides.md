@@ -1,6 +1,6 @@
 # Cache per-client config overrides in the shared model-config store
 
-* Status: proposed (a human accepts it; the cache ships behind a flag, default off)
+* Status: accepted (2026-11-09, Imran Qureshi; the cache ships behind a flag, default off)
 * Deciders: language-model-common maintainers, baileyai maintainers
 * Ticket: BAI-1380 (this design); source analysis is Finding 1 of baileyai PR #603 (`docs/latency-analysis.md`)
 * Date: 2026-10-30
