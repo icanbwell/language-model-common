@@ -443,4 +443,30 @@ Follow whatever linter, formatter, and static analysis configuration exists in t
 <!-- REPO-SPECIFIC ADDENDUM -->
 ## Repo-specific addendum
 
-Read playbooks/README.md first for where to look, how to deploy and review, and what this repo depends on. Propose updates to it by PR.
+<!-- playbooks-block-version: 1.1.0 -->
+- **`playbooks/README.md`**: the index of this repo's operational playbooks. Open it first for any
+  investigation, incident or triage task, then follow the trigger that matches what you are doing:
+  - Changing log statements: read `playbooks/LOGGING.md`.
+  - Changing something other services depend on, or something this repo calls: read
+    `playbooks/RELATIONSHIPS.md`, then do an impact assessment before you implement. It applies when a
+    change alters a value, field, header, URL, config key, schema, scope or timeout that crosses a
+    boundary: sent to another service, read from one, or relied on by a caller.
+    1. Hypothesize. For each upstream and downstream neighbor the change could reach, write one line: the
+       neighbor, the exact value it will now receive or return, and the failure you expect (a 400, 401,
+       403, 404, 409, 413, 422 or 429, a parse error, a timeout). Start from the `RELATIONSHIPS.md` rows
+       and its "If you change X, check Y" entries, then go past them. A harmless-looking value is the
+       usual cause (type, case, format, enum member, empty versus missing, trailing slash, scheme, unit,
+       id shape, scope, issuer, audience, header name), either because the other side validates it
+       strictly or because the same value must change in several places that do not read each other.
+    2. Test each hypothesis against the neighbor's own validation: its schema, allowlist or handler, a
+       contract test, or a request to dev. Mark it confirmed, refuted or unverified.
+    3. Put the result in the PR description under `## Impact assessment`. If nothing crosses a boundary,
+       write that in one line instead. If a check showed a neighbor fact that `RELATIONSHIPS.md` lacks,
+       propose the row by PR.
+  - Reviewing a PR, or getting one reviewed: read `playbooks/REVIEW.md`.
+  - Merging a PR: read `playbooks/MERGING.md`, then `playbooks/DEPLOYMENT.md`.
+  - Releasing, deploying, or comparing test results before and after a deploy: read `playbooks/DEPLOYMENT.md`.
+  - Investigating an error, timeout or failed deploy: read `playbooks/TROUBLESHOOTING.md`, then `playbooks/MONITORING.md`.
+  - Looking for logs, dashboards, monitors, databases or the deployment namespace: read `playbooks/MONITORING.md`.
+
+  Propose updates to the playbooks by PR.
