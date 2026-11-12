@@ -1,6 +1,8 @@
+import pytest
+
 from languagemodelcommon.utilities.tool_display_name_mapper import (
-    LearnedTitleCache,
     ToolDisplayNameMapper,
+    is_storable_title,
 )
 
 
@@ -12,24 +14,43 @@ def _call_tool_line(
     )
 
 
-class TestLearnedTitlesSharedAcrossRequests:
-    """A title learned by one request's mapper must reach the *first*
-    ``call_tool`` start line of a later request (no ``search_tools`` first),
-    without the singleton's own config dict ever being mutated.
-    """
+class TestTitlesAreRequestScoped:
+    """No title is shared between mapper instances: not through the singleton,
+    not through a process-wide cache (BAI-1732, ADR 0011)."""
 
-    def test_later_request_renders_title_learned_by_earlier_request(self) -> None:
+    def test_two_mappers_never_share_learned_titles(self) -> None:
         singleton = ToolDisplayNameMapper()
         request_a = singleton.with_tools(tools=[])
-        request_a.register_title(
-            tool_name="get_vitals", title="🩺 Checking your vitals: {vitals|all}"
-        )
+        request_a.register_title(tool_name="get_vitals", title="🩺 Vitals")
 
         request_b = singleton.with_tools(tools=[])
 
         assert (
+            _call_tool_line(mapper=request_b, name="get_vitals", arguments={})
+            == "Get Vitals"
+        )
+
+    def test_independently_constructed_mappers_never_share_titles(self) -> None:
+        ToolDisplayNameMapper().register_title(
+            tool_name="get_vitals", title="🩺 Vitals"
+        )
+
+        assert (
             _call_tool_line(
-                mapper=request_b,
+                mapper=ToolDisplayNameMapper(), name="get_vitals", arguments={}
+            )
+            == "Get Vitals"
+        )
+
+    def test_title_learned_in_a_request_renders_with_placeholders(self) -> None:
+        request = ToolDisplayNameMapper().with_tools(tools=[])
+        request.register_title(
+            tool_name="get_vitals", title="🩺 Checking your vitals: {vitals|all}"
+        )
+
+        assert (
+            _call_tool_line(
+                mapper=request,
                 name="get_vitals",
                 arguments={"vitals": ["bmi", "weight"]},
             )
@@ -38,11 +59,12 @@ class TestLearnedTitlesSharedAcrossRequests:
 
     def test_singleton_config_dict_is_not_mutated(self) -> None:
         singleton = ToolDisplayNameMapper()
-        singleton.with_tools(tools=[]).register_title(
-            tool_name="get_vitals", title="🩺 Vitals"
-        )
+        request = singleton.with_tools(tools=[])
+        request.register_title(tool_name="get_vitals", title="🩺 Vitals")
+        request.note_store_lookup_miss(tool_name="other_tool")
 
         assert singleton._name_to_display_name == {}
+        assert not singleton.has_missed_store_lookup(tool_name="other_tool")
 
     def test_static_config_still_wins_over_learned_title(self) -> None:
         singleton = ToolDisplayNameMapper(
@@ -56,41 +78,6 @@ class TestLearnedTitlesSharedAcrossRequests:
             == "📋 From config"
         )
 
-    def test_unrelated_mapper_does_not_see_learned_titles(self) -> None:
-        ToolDisplayNameMapper().with_tools(tools=[]).register_title(
-            tool_name="get_vitals", title="🩺 Vitals"
-        )
-
-        assert (
-            _call_tool_line(
-                mapper=ToolDisplayNameMapper(), name="get_vitals", arguments={}
-            )
-            == "Get Vitals"
-        )
-
-    def test_cache_is_bounded_and_evicts_least_recently_used(self) -> None:
-        cache = LearnedTitleCache(max_entries=2)
-        cache.put(tool_name="a", title="A")
-        cache.put(tool_name="b", title="B")
-        assert cache.get(tool_name="a") == "A"
-        cache.put(tool_name="c", title="C")
-
-        assert cache.get(tool_name="b") is None
-        assert cache.get(tool_name="a") == "A"
-        assert cache.get(tool_name="c") == "C"
-
-    def test_overlong_title_is_not_cached(self) -> None:
-        cache = LearnedTitleCache()
-        cache.put(tool_name="a", title="x" * 1000)
-
-        assert cache.get(tool_name="a") is None
-
-    def test_overlong_tool_name_is_not_cached(self) -> None:
-        cache = LearnedTitleCache()
-        cache.put(tool_name="n" * 1000, title="T")
-
-        assert cache.get(tool_name="n" * 1000) is None
-
     def test_learned_title_does_not_relabel_directly_bound_tool(self) -> None:
         singleton = ToolDisplayNameMapper()
         singleton.with_tools(tools=[]).register_title(
@@ -102,14 +89,26 @@ class TestLearnedTitlesSharedAcrossRequests:
             == "🛠️ Search"
         )
 
+    def test_store_lookup_miss_is_remembered_per_mapper_only(self) -> None:
+        first = ToolDisplayNameMapper()
+        first.note_store_lookup_miss(tool_name="untitled")
 
-class TestLearnedTitleCacheExpiry:
-    def test_entry_expires_after_ttl(self) -> None:
-        now = [0.0]
-        cache = LearnedTitleCache(ttl_seconds=10, clock=lambda: now[0])
-        cache.put(tool_name="get_vitals", title="🩺 Vitals")
+        assert first.has_missed_store_lookup(tool_name="untitled")
+        assert not first.with_tools(tools=[]).has_missed_store_lookup(
+            tool_name="untitled"
+        )
 
-        now[0] = 9.9
-        assert cache.get(tool_name="get_vitals") == "🩺 Vitals"
-        now[0] = 10.0
-        assert cache.get(tool_name="get_vitals") is None
+
+class TestIsStorableTitle:
+    @pytest.mark.parametrize(
+        ("tool_name", "title", "expected"),
+        [
+            ("get_vitals", "🩺 Vitals", True),
+            ("get_vitals", "x" * 256, True),
+            ("get_vitals", "x" * 257, False),
+            ("n" * 128, "T", True),
+            ("n" * 129, "T", False),
+        ],
+    )
+    def test_length_caps(self, tool_name: str, title: str, expected: bool) -> None:
+        assert is_storable_title(tool_name=tool_name, title=title) is expected

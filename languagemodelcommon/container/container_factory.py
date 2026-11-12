@@ -52,6 +52,7 @@ from languagemodelcommon.utilities.environment.language_model_common_environment
     LanguageModelCommonEnvironmentVariables,
 )
 from languagemodelcommon.utilities.learned_title_store import LearnedTitleStore
+from languagemodelcommon.utilities.tool_title_warmer import ToolTitleWarmer
 from languagemodelcommon.utilities.token_reducer.token_reducer import TokenReducer
 from languagemodelcommon.utilities.tool_display_name_mapper import (
     ToolDisplayNameMapper,
@@ -271,10 +272,26 @@ class LanguageModelCommonContainerFactory:
                 collection=env.learned_title_store_collection,
                 ttl_seconds=float(env.learned_title_store_ttl_seconds),
                 timeout_seconds=env.learned_title_store_timeout_seconds,
+                bulk_timeout_seconds=env.learned_title_store_bulk_timeout_seconds,
             )
 
         container.singleton(
             service_type=LearnedTitleStore, factory=_create_learned_title_store
+        )
+
+        def _create_tool_title_warmer(c: Any) -> ToolTitleWarmer | None:
+            store = c.resolve(LearnedTitleStore)
+            if store is None:
+                return None
+            env = c.resolve(LanguageModelCommonEnvironmentVariables)
+            return ToolTitleWarmer(
+                store=store,
+                timeout_seconds=env.tool_title_warm_timeout_seconds,
+                max_titles=env.tool_title_warm_max_titles,
+            )
+
+        container.singleton(
+            service_type=ToolTitleWarmer, factory=_create_tool_title_warmer
         )
 
         container.singleton(

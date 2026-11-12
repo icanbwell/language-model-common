@@ -1,11 +1,8 @@
 import json
 import logging
 import re
-import threading
-import time
-from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Sequence
+from typing import Any, Dict, Mapping, Sequence
 
 from langchain_core.tools import BaseTool
 from languagemodelcommon.utilities.logger.log_levels import SRC_LOG_LEVELS
@@ -20,74 +17,24 @@ MCP_DISCOVERY_SEARCH_TOOLS_NAME = "search_tools"
 MCP_DISCOVERY_CALL_TOOL_NAME = "call_tool"
 
 
-_LEARNED_TITLE_CACHE_MAX_ENTRIES = 1024
 # Default cap on one substituted placeholder value; sized to fit a list such as
 # "Problem List, Results Summary, History of Procedures, Vital Signs, ...".
 _DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS = 128
 _ELLIPSIS = "…"
 _LEARNED_TITLE_MAX_CHARS = 256
 _LEARNED_TITLE_NAME_MAX_CHARS = 128
-_LEARNED_TITLE_TTL_SECONDS = 3600.0
 
 
-class LearnedTitleCache:
-    """Bounded, thread-safe, process-wide LRU of MCP tool titles learned at runtime.
+def is_storable_title(*, tool_name: str, title: str) -> bool:
+    """Whether a tool name and title template are within the length caps.
 
-    A tool reached through the ``call_tool`` discovery meta-tool is never bound
-    as a LangChain tool, so its title is only learned from a ``search_tools`` or
-    ``call_tool`` result. Per-request mappers learn it too late for the *first*
-    ``call_tool`` start event of a request that did not search first. Titles are
-    catalog metadata (tool name -> title template), never per-user data, so
-    sharing them across requests only lets a later request render a tool's
-    start line with the title an earlier request already saw. Placeholders are
-    substituted per call from that call's own arguments; nothing from a
-    request's arguments or results is stored here.
+    Shared by the persistent ``LearnedTitleStore`` and the ``ToolTitleWarmer`` so
+    every write path enforces one limit.
     """
-
-    def __init__(
-        self,
-        *,
-        max_entries: int = _LEARNED_TITLE_CACHE_MAX_ENTRIES,
-        ttl_seconds: float = _LEARNED_TITLE_TTL_SECONDS,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._max_entries = max_entries
-        self._ttl_seconds = ttl_seconds
-        self._clock = clock
-        # name -> (title, expires_at). Entries expire so a title changed on the
-        # server (or in the persistent store) is picked up without a restart.
-        self._titles: "OrderedDict[str, tuple[str, float]]" = OrderedDict()
-        self._lock = threading.Lock()
-
-    def get(self, *, tool_name: str) -> str | None:
-        with self._lock:
-            entry = self._titles.get(tool_name)
-            if entry is None:
-                return None
-            title, expires_at = entry
-            if self._clock() >= expires_at:
-                del self._titles[tool_name]
-                return None
-            self._titles.move_to_end(tool_name)
-            return title
-
-    @staticmethod
-    def is_storable(*, tool_name: str, title: str) -> bool:
-        """Whether a learned title is within the length caps (shared with
-        the persistent ``LearnedTitleStore`` so both enforce one limit)."""
-        return (
-            len(title) <= _LEARNED_TITLE_MAX_CHARS
-            and len(tool_name) <= _LEARNED_TITLE_NAME_MAX_CHARS
-        )
-
-    def put(self, *, tool_name: str, title: str) -> None:
-        if not self.is_storable(tool_name=tool_name, title=title):
-            return
-        with self._lock:
-            self._titles[tool_name] = (title, self._clock() + self._ttl_seconds)
-            self._titles.move_to_end(tool_name)
-            while len(self._titles) > self._max_entries:
-                self._titles.popitem(last=False)
+    return (
+        len(title) <= _LEARNED_TITLE_MAX_CHARS
+        and len(tool_name) <= _LEARNED_TITLE_NAME_MAX_CHARS
+    )
 
 
 class ToolDisplayNameMapper:
@@ -97,7 +44,6 @@ class ToolDisplayNameMapper:
         self,
         *,
         name_to_display_name: Dict[str, str] | None = None,
-        learned_titles: LearnedTitleCache | None = None,
         max_substituted_value_length: int = _DEFAULT_MAX_SUBSTITUTED_VALUE_CHARS,
     ) -> None:
         self._max_substituted_value_length = max_substituted_value_length
@@ -106,36 +52,30 @@ class ToolDisplayNameMapper:
             for name, display_name in (name_to_display_name or {}).items()
             if display_name is not None
         }
-        self._learned_titles: LearnedTitleCache = (
-            learned_titles if learned_titles is not None else LearnedTitleCache()
-        )
+        # Tool names whose persistent-store lookup already missed in this
+        # request, so an untitled tool costs one read per request, not per call.
+        self._store_lookup_misses: set[str] = set()
 
     def _call_tool_target_name(self, *, tool_name: str) -> str | None:
-        """Static config / live tool titles first, then titles learned earlier.
+        """Title for a ``call_tool`` target from this mapper's own dict only.
 
-        Only used for the ``call_tool`` target, whose title can only be learned
-        at runtime. Directly-bound tools never consult the shared cache so a
-        title learned for one catalog cannot relabel an unrelated bound tool
-        that happens to share its name.
+        Nothing is shared between mapper instances: titles live in this
+        instance's dict (static config, live tool titles, then titles learned or
+        read from the persistent store during this request).
         """
-        configured = self._name_to_display_name.get(tool_name)
-        if configured is not None:
-            return configured
-        return self._learned_titles.get(tool_name=tool_name)
+        return self._name_to_display_name.get(tool_name)
 
     def has_title_for_call_tool_target(self, *, tool_name: str) -> bool:
         """Whether a ``call_tool`` start line for ``tool_name`` already has a title."""
         return self._call_tool_target_name(tool_name=tool_name) is not None
 
-    def remember_shared_title(self, *, tool_name: str, title: str) -> None:
-        """Fill the process-wide learned-title cache only (no request-scoped entry).
+    def has_missed_store_lookup(self, *, tool_name: str) -> bool:
+        """Whether the persistent store already had no title for this tool in this request."""
+        return tool_name in self._store_lookup_misses
 
-        Used to hydrate from the persistent store; the request's own config
-        dict is left untouched so static config and live tool titles still win.
-        """
-        stripped_title = title.strip()
-        if stripped_title:
-            self._learned_titles.put(tool_name=tool_name, title=stripped_title)
+    def note_store_lookup_miss(self, *, tool_name: str) -> None:
+        """Remember, for this request only, that the store had no title for the tool."""
+        self._store_lookup_misses.add(tool_name)
 
     @classmethod
     def from_mapping(
@@ -213,7 +153,6 @@ class ToolDisplayNameMapper:
         stripped_title = title.strip()
         if stripped_title:
             self._name_to_display_name[tool_name] = stripped_title
-            self._learned_titles.put(tool_name=tool_name, title=stripped_title)
 
     def with_tools(self, *, tools: Sequence[BaseTool]) -> "ToolDisplayNameMapper":
         """Return a new mapper with this request's live tool titles merged in.
@@ -227,7 +166,6 @@ class ToolDisplayNameMapper:
         """
         merged = ToolDisplayNameMapper(
             name_to_display_name=dict(self._name_to_display_name),
-            learned_titles=self._learned_titles,
             max_substituted_value_length=self._max_substituted_value_length,
         )
         merged.register_from_tools(tools)

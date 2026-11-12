@@ -6,6 +6,7 @@ from languagemodelcommon.container.container_factory import (
 )
 from languagemodelcommon.converters.tool_event_handlers import ToolEventHandler
 from languagemodelcommon.utilities.learned_title_store import LearnedTitleStore
+from languagemodelcommon.utilities.tool_title_warmer import ToolTitleWarmer
 
 
 def _container() -> SimpleContainer:
@@ -37,3 +38,24 @@ class TestLearnedTitleStoreContainerWiring:
         assert isinstance(store, LearnedTitleStore)
         assert store._collection == "titles_under_test"
         assert container.resolve(LearnedTitleStore) is store
+
+
+class TestToolTitleWarmerWiring:
+    def test_no_mongo_uri_registers_no_warmer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MONGO_LLM_STORAGE_URI", raising=False)
+        monkeypatch.delenv("MONGO_URI", raising=False)
+
+        assert _container().resolve(ToolTitleWarmer) is None
+
+    def test_mongo_uri_registers_a_warmer_with_env_bounds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MONGO_LLM_STORAGE_URI", "mongodb://localhost:27017")
+        monkeypatch.setenv("TOOL_TITLE_WARM_MAX_TITLES", "7")
+
+        warmer = _container().resolve(ToolTitleWarmer)
+
+        assert isinstance(warmer, ToolTitleWarmer)
+        assert warmer._max_titles == 7
