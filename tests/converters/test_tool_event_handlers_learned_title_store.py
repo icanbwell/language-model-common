@@ -30,7 +30,7 @@ from tests.converters.test_tool_event_handlers import _FakeChatRequestWrapper
 def _pod(
     *, store: LearnedTitleStoreProtocol | None
 ) -> tuple[ToolEventHandler, ToolDisplayNameMapper]:
-    """One pod: its own singleton mapper (and in-process cache) and handler."""
+    """One pod: its own singleton mapper and handler."""
     singleton = ToolDisplayNameMapper()
     handler = ToolEventHandler(
         debug_file_writer=AsyncMock(spec=FileWriter),
@@ -166,7 +166,7 @@ class TestLearnedTitleStoreWiring:
         missing.get_title.assert_awaited_once_with(tool_name="get_vitals")
 
     @pytest.mark.asyncio
-    async def test_store_is_not_read_once_the_in_process_cache_has_the_title(
+    async def test_store_is_read_once_per_request_then_held_in_the_request_mapper(
         self,
     ) -> None:
         counting: Any = AsyncMock(spec=LearnedTitleStoreProtocol)
@@ -180,6 +180,60 @@ class TestLearnedTitleStoreWiring:
         await _call_tool_start_line(handler=pod, request_information=info)
 
         assert counting.get_title.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_new_request_reads_the_store_again(self) -> None:
+        counting: Any = AsyncMock(spec=LearnedTitleStoreProtocol)
+        counting.get_title.return_value = "🩺 Checking vitals: {vitals|all}"
+        pod, singleton = _pod(store=counting)
+
+        for request_id in ("r1", "r2"):
+            await _call_tool_start_line(
+                handler=pod,
+                request_information=RequestInformation(
+                    request_id=request_id,
+                    tool_display_name_mapper=singleton.with_tools(tools=[]),
+                ),
+            )
+
+        assert counting.get_title.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_miss_is_held_for_the_request_only(self) -> None:
+        missing: Any = AsyncMock(spec=LearnedTitleStoreProtocol)
+        missing.get_title.return_value = None
+        pod, singleton = _pod(store=missing)
+        info = RequestInformation(
+            request_id="b", tool_display_name_mapper=singleton.with_tools(tools=[])
+        )
+
+        await _call_tool_start_line(handler=pod, request_information=info)
+        await _call_tool_start_line(handler=pod, request_information=info)
+        await _call_tool_start_line(
+            handler=pod,
+            request_information=RequestInformation(
+                request_id="c", tool_display_name_mapper=singleton.with_tools(tools=[])
+            ),
+        )
+
+        assert missing.get_title.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_wide_singleton_is_never_mutated_by_a_store_hit(
+        self,
+    ) -> None:
+        store = _shared_store()
+        await store.put_titles(titles={"get_vitals": "🩺 From store"})
+        pod, singleton = _pod(store=store)
+
+        # No request mapper: the handler falls back to the singleton.
+        line = await _call_tool_start_line(
+            handler=pod, request_information=RequestInformation(request_id="b")
+        )
+
+        assert line == "🩺 From store"
+        assert singleton._name_to_display_name == {}
+        assert not singleton.has_missed_store_lookup(tool_name="get_vitals")
 
     @pytest.mark.asyncio
     async def test_static_config_wins_over_stored_title(self) -> None:

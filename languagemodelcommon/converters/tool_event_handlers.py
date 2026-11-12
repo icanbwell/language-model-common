@@ -267,26 +267,34 @@ class ToolEventHandler(StreamContextMixin):
         mapper: ToolDisplayNameMapper,
         tool_name: str,
         tool_input: Optional[Dict[str, Any]],
-    ) -> None:
-        """Fill the in-process cache from the persistent store on a cold miss.
+    ) -> ToolDisplayNameMapper:
+        """Read the stored title for a ``call_tool`` target with no title yet.
 
-        Only for a ``call_tool`` start whose target has no title yet (BAI-1306),
-        so a freshly started pod still renders the real title on the first
-        start line. Store failures and timeouts are absorbed by the store; the
-        line then falls back to the humanized name.
+        Mongo is the only shared store (no in-process cache). A hit is held in
+        a request-scoped mapper only, never in the process-wide singleton: when
+        ``mapper`` is the singleton a throwaway scoped copy is used for this
+        event. Store failures and timeouts are absorbed by the store; the line
+        then falls back to the humanized name. Returns the mapper to render with.
         """
         if self._learned_title_store is None:
-            return
+            return mapper
         if tool_name != MCP_DISCOVERY_CALL_TOOL_NAME:
-            return
+            return mapper
         target_name = _call_tool_target_name(tool_input=tool_input)
         if target_name is None:
-            return
+            return mapper
         if mapper.has_title_for_call_tool_target(tool_name=target_name):
-            return
+            return mapper
+        if mapper.has_missed_store_lookup(tool_name=target_name):
+            return mapper
+        if mapper is self._tool_display_name_mapper:
+            mapper = mapper.with_tools(tools=())
         title = await self._learned_title_store.get_title(tool_name=target_name)
         if title:
-            mapper.remember_shared_title(tool_name=target_name, title=title)
+            mapper.register_title(tool_name=target_name, title=title)
+        else:
+            mapper.note_store_lookup_miss(tool_name=target_name)
+        return mapper
 
     async def handle_tool_start(
         self,
@@ -316,7 +324,7 @@ class ToolEventHandler(StreamContextMixin):
             mapper = self._resolve_display_name_mapper(
                 request_information=request_information
             )
-            await self._hydrate_call_tool_target_title(
+            mapper = await self._hydrate_call_tool_target_title(
                 mapper=mapper, tool_name=tool_name, tool_input=tool_input
             )
             display_name: str = mapper.get_name_for_tool(

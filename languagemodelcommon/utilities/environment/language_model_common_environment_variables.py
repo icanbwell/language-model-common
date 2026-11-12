@@ -374,6 +374,24 @@ class LanguageModelCommonEnvironmentVariables(
         return float(os.environ.get("LEARNED_TITLE_STORE_TIMEOUT_SECONDS", "0.5"))
 
     @property
+    def learned_title_store_bulk_timeout_seconds(self) -> float:
+        """Timeout in seconds for replacing or clearing the stored tool titles
+        (BAI-1732). Defaults to 10; these run on a reload, not on a stream."""
+        return float(os.environ.get("LEARNED_TITLE_STORE_BULK_TIMEOUT_SECONDS", "10"))
+
+    @property
+    def tool_title_warm_timeout_seconds(self) -> float:
+        """Timeout in seconds for the catalog's ``list_tool_titles`` call.
+        Defaults to 10."""
+        return float(os.environ.get("TOOL_TITLE_WARM_TIMEOUT_SECONDS", "10"))
+
+    @property
+    def tool_title_warm_max_titles(self) -> int:
+        """Most titles one warm accepts; a larger catalog response is rejected
+        whole (never truncated). Defaults to 5000."""
+        return int(os.environ.get("TOOL_TITLE_WARM_MAX_TITLES", "5000"))
+
+    @property
     def mongo_db_token_collection_name(self) -> Optional[str]:
         return os.environ.get("MONGO_DB_TOKEN_COLLECTION_NAME")
 
