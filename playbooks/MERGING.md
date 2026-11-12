@@ -8,7 +8,7 @@ is in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Before you merge
 
-1. Commit messages start with a JIRA issue key, for example `BAI-1129 ...`. Enforced by `.github/workflows/check-commit-message.yml` (exempt: `Bump`, `Merge`, `Revert`, `Reapply`, `fix(security):`, `[Aikido]`, `build(deps): bump`; Dependabot PRs, and a lone Dependabot commit pushed to `main`, skip the key check). The same workflow rejects AI attribution in commits and the PR description.
+1. Commit messages start with a JIRA issue key, for example `BAI-1129 ...`. Enforced by `.github/workflows/check-commit-message.yml` (exempt: `Bump`, `Merge`, `Revert`, `Reapply`, `fix(security):`, `[Aikido]`, `build(deps): bump`; Dependabot PRs skip the key check, pushes are always checked). The same workflow rejects AI attribution in commits and the PR description.
 2. `Build and Test` is green by convention; the ruleset has no `required_status_checks`, so GitHub does not block a merge on it: pre-commit (ruff, mypy `--strict`, bandit, detect-secrets), then the pytest suite (`.github/workflows/build_and_test.yml`, `.pre-commit-config.yaml`).
 3. `PR Architecture Review` has run (`.github/workflows/pr-architecture-review.yml`, reusable workflow from `icanbwell/.github`). It does not block merge by ruleset (no `required_status_checks`).
 4. A change to `AGENTS.md` or `CLAUDE.md` needs `@icanbwell/enterprise-architecture` review (`CODEOWNERS`). That is a convention, not enforced: the `main` ruleset has `require_code_owner_review: false`, so another person's approval satisfies GitHub, but request the owner anyway (`gh api repos/icanbwell/language-model-common/rules/branches/main`, 2026-10-11).
