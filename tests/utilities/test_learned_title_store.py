@@ -32,6 +32,9 @@ class _FailingStore:
     async def get(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("store down")
 
+    async def get_many(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("store down")
+
     async def put_many(self, *args: Any, **kwargs: Any) -> None:
         raise RuntimeError("store down")
 
@@ -47,6 +50,9 @@ class _SlowStore:
         await asyncio.sleep(5)
 
     async def get(self, *args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(5)
+
+    async def get_many(self, *args: Any, **kwargs: Any) -> Any:
         await asyncio.sleep(5)
 
     async def put_many(self, *args: Any, **kwargs: Any) -> None:
@@ -316,3 +322,22 @@ class TestClear:
         await store.replace_titles(titles={"a_tool": "A"})
 
         assert await store.get_title(tool_name="__warmed_titles_manifest__") is None
+
+
+class TestLearnedWriteDoesNotReadManifest:
+    @pytest.mark.asyncio
+    async def test_put_titles_never_reads_the_manifest_key(self) -> None:
+        reads: list[str] = []
+
+        class _Spy(MemoryStore):
+            async def get(self, key: str, *args: Any, **kwargs: Any) -> Any:
+                reads.append(key)
+                return await super().get(key, *args, **kwargs)
+
+        store = _make_store(store=_Spy())
+        await store.replace_titles(titles={"warmed_tool": "W"})
+        reads.clear()
+
+        await store.put_titles(titles={"a_tool": "A", "warmed_tool": "X"})
+
+        assert "__warmed_titles_manifest__" not in reads

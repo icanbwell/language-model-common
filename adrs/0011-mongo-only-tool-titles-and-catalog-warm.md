@@ -86,8 +86,9 @@ writes the new manifest, then deletes names that were in the old manifest and
 not in the new set. Write-then-delete means a concurrent reader never sees an
 empty window. `clear()` deletes the manifest names and the manifest.
 Search-learned entries are not in the manifest; they carry a TTL and age out.
-`put_titles` skips names present in the manifest so a `search_tools` write cannot
-replace a warmed entry with an expiring one.
+Warmed entries carry `warmed: true`; `put_titles` reads just the entries it is about
+to write (`get_many`, never the manifest) and skips warmed ones, so a `search_tools`
+write cannot replace a warmed entry with an expiring one.
 
 `prune=False` upserts and keeps every previously warmed name. The warmer uses it
 when the catalog response is partial (see below).

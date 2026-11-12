@@ -38,6 +38,8 @@ _DEFAULT_BULK_TIMEOUT_SECONDS = 10.0
 # the model-supplied name check in ``get_title`` never reads it.
 _MANIFEST_KEY = "__warmed_titles_manifest__"
 _MANIFEST_FIELD = "names"
+# Marks an entry written by a warm (no TTL); learned writes never replace it.
+_WARMED_FIELD = "warmed"
 
 
 @dataclass(frozen=True)
@@ -94,8 +96,9 @@ class LearnedTitleStore:
     async def put_titles(self, *, titles: Mapping[str, str]) -> None:
         """Persist learned titles concurrently; one timeout bounds the batch.
 
-        Names the last warm wrote are skipped: the warmed entry has no TTL and
-        a learned write would replace it with an expiring one.
+        Names that already hold a warmed entry are skipped: the warmed entry has
+        no TTL and a learned write would replace it with an expiring one. The
+        check reads only the entries being written (never the manifest).
         """
         pending: dict[str, str] = {}
         for name, title in titles.items():
@@ -119,7 +122,13 @@ class LearnedTitleStore:
             )
 
     async def _put_learned(self, *, pending: dict[str, str]) -> None:
-        warmed = await self._read_manifest()
+        names = list(pending)
+        existing = await self._store.get_many(names, collection=self._collection)
+        warmed = {
+            name
+            for name, entry in zip(names, existing, strict=True)
+            if entry and entry.get(_WARMED_FIELD) is True
+        }
         await asyncio.gather(
             *(
                 self._store.put(
@@ -196,7 +205,7 @@ class LearnedTitleStore:
         if valid:
             await self._store.put_many(
                 list(valid),
-                [{"title": title} for title in valid.values()],
+                [{"title": title, _WARMED_FIELD: True} for title in valid.values()],
                 collection=self._collection,
                 ttl=None,
             )

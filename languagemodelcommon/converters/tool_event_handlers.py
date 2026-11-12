@@ -287,14 +287,15 @@ class ToolEventHandler(StreamContextMixin):
             return mapper
         if mapper.has_missed_store_lookup(tool_name=target_name):
             return mapper
+        scoped_mapper = mapper
         if mapper is self._tool_display_name_mapper:
-            mapper = mapper.with_tools(tools=())
+            scoped_mapper = mapper.with_tools(tools=())
         title = await self._learned_title_store.get_title(tool_name=target_name)
         if title:
-            mapper.register_title(tool_name=target_name, title=title)
+            scoped_mapper.register_title(tool_name=target_name, title=title)
         else:
-            mapper.note_store_lookup_miss(tool_name=target_name)
-        return mapper
+            scoped_mapper.note_store_lookup_miss(tool_name=target_name)
+        return scoped_mapper
 
     async def handle_tool_start(
         self,
